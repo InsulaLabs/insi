@@ -1,0 +1,1 @@
+o clean -modcache && export GOPRIVATE="github.com/InsulaLabs/*" && export GONOSUMDB="github.com/InsulaLabs/*" && go mod tidy

@@ -1,0 +1,37 @@
+# A SHA256 hash of the instance secret is the "admin" api key
+instanceSecret: "secret-value-shared-by-all-nodes"
+
+# If first time launch, non-leaders will auto-follow this leader
+defaultLeader: "node0"
+
+# Directory for storing insudb data
+insudbDir: "/home/bosley/.config/insudb"
+
+# TLS will be in same spot on all nodes
+tls:
+  cert: /home/bosley/.config/tekxus/keys/cert.pem
+  key: /home/bosley/.config/tekxus/keys/key.pem
+
+clientSkipVerify: true
+serverMustUseTLS: true
+
+cache:
+  standard-ttl: 60m
+  secure-ttl:   10m
+
+nodes:
+  node0:
+    host: 127.0.0.1
+    raftPort: 2222
+    httpPort: 8443
+    nodeSecret: "node0-secret"
+  node1:
+    host: 127.0.0.1
+    raftPort: 2223
+    httpPort: 8444
+    nodeSecret: "node1-secret"
+  node2:
+    host: 127.0.0.1
+    raftPort: 2224
+    httpPort: 8445
+    nodeSecret: "node2-secret"
