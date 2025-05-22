@@ -3,14 +3,18 @@ package rft
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/hashicorp/raft"
+	"github.com/jellydator/ttlcache/v3"
 )
 
 const (
-	dbTypeValues = "values"
-	dbTypeTags   = "tags"
+	dbTypeValues    = "values"
+	dbTypeTags      = "tags"
+	cacheTypeStd    = "std"
+	cacheTypeSecure = "secure"
 )
 
 // snapshotEntry is used to store entries in the snapshot with a DB type.
@@ -18,11 +22,17 @@ type snapshotEntry struct {
 	DBType string // "values" or "tags"
 	Key    string
 	Value  string
+
+	TTL         float64 // not present for std db entries, only for caches
+	TimeEncoded int64   // not present for std db entries, only for caches - so we dont reconstruct dead entries
 }
 
 type badgerFSMSnapshot struct {
 	valuesDb *badger.DB
 	tagsDb   *badger.DB
+
+	stdCache    *ttlcache.Cache[string, string]
+	secureCache *ttlcache.Cache[string, []byte]
 }
 
 func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
@@ -47,12 +57,22 @@ func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
 						Value:  string(valCopy),
 					}
 					if errEnc := encoder.Encode(entry); errEnc != nil {
-						return fmt.Errorf("failed to encode snapshot entry for %s (key: %s): %w", dbType, string(key), errEnc)
+						return fmt.Errorf(
+							"failed to encode snapshot entry for %s (key: %s): %w",
+							dbType,
+							string(key),
+							errEnc,
+						)
 					}
 					return nil
 				})
 				if err != nil {
-					return fmt.Errorf("failed to get value for snapshot from %s (key: %s): %w", dbType, string(key), err)
+					return fmt.Errorf(
+						"failed to get value for snapshot from %s (key: %s): %w",
+						dbType,
+						string(key),
+						err,
+					)
 				}
 			}
 			return nil
@@ -69,6 +89,60 @@ func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
 	if err := persistDb(b.tagsDb, dbTypeTags); err != nil {
 		sink.Cancel()
 		return fmt.Errorf("failed to persist snapshot for tagsDb: %w", err)
+	}
+
+	persistStdCache := func(cache *ttlcache.Cache[string, string], cacheType string) error {
+		for _, item := range cache.Items() {
+			entry := snapshotEntry{
+				DBType:      cacheType,
+				Key:         item.Key(),
+				Value:       item.Value(),
+				TTL:         item.TTL().Seconds(),
+				TimeEncoded: time.Now().Unix(),
+			}
+			if errEnc := encoder.Encode(entry); errEnc != nil {
+				return fmt.Errorf(
+					"failed to encode snapshot entry for %s (key: %s): %w",
+					cacheType,
+					item.Key(),
+					errEnc,
+				)
+			}
+			return nil
+		}
+		return nil
+	}
+
+	if err := persistStdCache(b.stdCache, cacheTypeStd); err != nil {
+		sink.Cancel()
+		return fmt.Errorf("failed to persist snapshot for stdCache: %w", err)
+	}
+
+	persistSecureCache := func(cache *ttlcache.Cache[string, []byte], cacheType string) error {
+		for _, item := range cache.Items() {
+			entry := snapshotEntry{
+				DBType:      cacheType,
+				Key:         item.Key(),
+				Value:       string(item.Value()),
+				TTL:         item.TTL().Seconds(),
+				TimeEncoded: time.Now().Unix(),
+			}
+			if errEnc := encoder.Encode(entry); errEnc != nil {
+				return fmt.Errorf(
+					"failed to encode snapshot entry for %s (key: %s): %w",
+					cacheType,
+					item.Key(),
+					errEnc,
+				)
+			}
+			return nil
+		}
+		return nil
+	}
+
+	if err := persistSecureCache(b.secureCache, cacheTypeSecure); err != nil {
+		sink.Cancel()
+		return fmt.Errorf("failed to persist snapshot for secureCache: %w", err)
 	}
 
 	if errClose := sink.Close(); errClose != nil {

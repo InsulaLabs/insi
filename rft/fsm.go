@@ -250,8 +250,10 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 func (kf *kvFsm) Snapshot() (raft.FSMSnapshot, error) {
 	kf.logger.Info("Creating FSM snapshot")
 	return &badgerFSMSnapshot{
-		valuesDb: kf.tkv.GetDataDB(),
-		tagsDb:   kf.tkv.GetTagDB(),
+		valuesDb:    kf.tkv.GetDataDB(),
+		tagsDb:      kf.tkv.GetTagDB(),
+		stdCache:    kf.tkv.GetCache(),
+		secureCache: kf.tkv.GetSecureCache(),
 	}, nil
 }
 
@@ -269,8 +271,13 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 	tagsBatch := kf.tkv.GetTagDB().NewWriteBatch()
 	defer tagsBatch.Cancel()
 
+	stdCache := kf.tkv.GetCache()
+	secureCache := kf.tkv.GetSecureCache()
+
 	valuesCount := 0
 	tagsCount := 0
+	stdCacheCount := 0
+	secureCacheCount := 0
 	for {
 		var entry snapshotEntry // Defined in snapshot.go
 		if err := decoder.Decode(&entry); err == io.EOF {
@@ -293,6 +300,28 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 				return fmt.Errorf("could not set value from snapshot in tagsDb batch (key: %s): %w", entry.Key, err)
 			}
 			tagsCount++
+		case cacheTypeStd:
+			// Get the time of encoding, add the TTL. If we are past that time dont add
+			timeOfEncoding := time.Unix(entry.TimeEncoded, 0)
+			timeOfEncodingPlusTTL := timeOfEncoding.Add(time.Duration(entry.TTL) * time.Second)
+			if time.Now().After(timeOfEncodingPlusTTL) {
+				kf.logger.Warn("Skipping std cache entry because it is past its TTL", "key", entry.Key, "ttl", entry.TTL)
+				continue
+			}
+			remainingTTL := time.Until(timeOfEncodingPlusTTL)
+			stdCache.Set(entry.Key, entry.Value, remainingTTL)
+			stdCacheCount++
+		case cacheTypeSecure:
+			// Get the time of encoding, add the TTL. If we are past that time dont add
+			timeOfEncoding := time.Unix(entry.TimeEncoded, 0)
+			timeOfEncodingPlusTTL := timeOfEncoding.Add(time.Duration(entry.TTL) * time.Second)
+			if time.Now().After(timeOfEncodingPlusTTL) {
+				kf.logger.Warn("Skipping secure cache entry because it is past its TTL", "key", entry.Key, "ttl", entry.TTL)
+				continue
+			}
+			remainingTTL := time.Until(timeOfEncodingPlusTTL)
+			secureCache.Set(entry.Key, []byte(entry.Value), remainingTTL)
+			secureCacheCount++
 		default:
 			kf.logger.Warn("Unknown DBType in snapshot entry during restore, skipping", "db_type", entry.DBType, "key", entry.Key)
 		}
@@ -306,7 +335,18 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 		kf.logger.Error("Failed to flush tagsDb batch during restore", "error", err)
 		return fmt.Errorf("failed to flush tagsDb batch during restore: %w", err)
 	}
-	kf.logger.Info("FSM restored successfully from snapshot", "values_restored", valuesCount, "tags_restored", tagsCount)
+
+	kf.logger.Info(
+		"FSM restored successfully from snapshot",
+		"values_restored",
+		valuesCount,
+		"tags_restored",
+		tagsCount,
+		"std_cache_restored",
+		stdCacheCount,
+		"secure_cache_restored",
+		secureCacheCount,
+	)
 	return nil
 }
 
