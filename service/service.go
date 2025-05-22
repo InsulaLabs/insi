@@ -23,7 +23,6 @@ type Service struct {
 	tkv       tkv.TKV
 	identity  badge.Badge
 	fsm       rft.FSMInstance
-	asNodeId  string
 	authToken string
 }
 
@@ -67,12 +66,18 @@ func NewService(
 // Run forever until the context is cancelled
 func (s *Service) Run() {
 
+	// Values handlers
 	http.HandleFunc("/set", s.setHandler)
 	http.HandleFunc("/get", s.getHandler)
+	http.HandleFunc("/unset", s.unsetHandler)
+	http.HandleFunc("/iterate/prefix", s.iterateKeysByPrefixHandler)
+
+	// Tagging handlers
 	http.HandleFunc("/tag", s.tagHandler)
 	http.HandleFunc("/untag", s.untagHandler)
-	http.HandleFunc("/unset", s.unsetHandler)
-	http.HandleFunc("/getTag", s.getTagHandler)
+	http.HandleFunc("/iterate/tags", s.iterateKeysByTagsHandler)
+
+	// System handlers
 	http.HandleFunc("/join", s.joinHandler)
 
 	httpListenAddr := ":" + s.nodeCfg.HttpPort
@@ -104,5 +109,4 @@ func (s *Service) Run() {
 			s.logger.Error("HTTP server error", "error", err)
 		}
 	}
-
 }

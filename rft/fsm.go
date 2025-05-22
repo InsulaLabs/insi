@@ -1,3 +1,13 @@
+/*
+	Bosley:	5/22/2025
+
+	This is the "finite state machine" for raft.
+
+	Whenever a "write" goes to an ingestion medium it is applied via the FSM.
+	We tell the FSM to do it, it sends the command to the raft instance, and the raft instance
+	applies the command to the system. We, then, in "Apply" do the actual work.
+*/
+
 package rft
 
 import (
@@ -14,8 +24,8 @@ import (
 
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insula/tkv"
-
 	"github.com/dgraph-io/badger/v3"
+
 	"github.com/hashicorp/raft"
 )
 
@@ -29,9 +39,10 @@ type FSMInstance interface {
 	GetValue(key string) (string, error)
 	DeleteValue(key string) error
 
-	SetTag(kvp KVPayload) error
-	GetTag(key string) (string, error)
-	DeleteTag(key string) error
+	Tag(kvp KVPayload) error
+	Untag(kvp KVPayload) error
+	GetAllKeysWithTag(tag string, offset int, limit int) ([]string, error)
+	Iterate(prefix string, offset int, limit int) ([]string, error)
 
 	Join(followerId string, followerAddress string) error
 
@@ -64,14 +75,6 @@ type Settings struct {
 	NodeCfg *config.Node
 	NodeId  string
 	TkvDb   tkv.TKV
-}
-
-func getMapKeys(m map[string]config.Node) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }
 
 func New(settings Settings) (FSMInstance, error) {
@@ -340,29 +343,6 @@ func (kf *kvFsm) SetValue(kvp KVPayload) error {
 	return nil
 }
 
-func (kf *kvFsm) GetValue(key string) (string, error) {
-	kf.logger.Debug("GetValue called", "key", key)
-	var value string
-	err := kf.tkv.GetDataDB().View(func(txn *badger.Txn) error {
-		item, errGet := txn.Get([]byte(key))
-		if errGet != nil {
-			return errGet
-		}
-		return item.Value(func(val []byte) error {
-			value = string(val)
-			return nil
-		})
-	})
-	if err != nil {
-		if err != badger.ErrKeyNotFound {
-			kf.logger.Error("Failed to get value from valuesDb", "key", key, "error", err)
-		}
-		return "", err
-	}
-	kf.logger.Debug("GetValue successful", "key", key)
-	return value, nil
-}
-
 func (kf *kvFsm) DeleteValue(key string) error {
 	kf.logger.Debug("DeleteValue called", "key", key)
 	payload := KeyPayload{Key: key}
@@ -397,12 +377,12 @@ func (kf *kvFsm) DeleteValue(key string) error {
 	return nil
 }
 
-func (kf *kvFsm) SetTag(kvp KVPayload) error {
-	kf.logger.Debug("SetTag called", "key", kvp.Key)
+func (kf *kvFsm) Tag(kvp KVPayload) error {
+	kf.logger.Debug("Tag called", "key", kvp.Key)
 	payloadBytes, err := json.Marshal(kvp)
 	if err != nil {
-		kf.logger.Error("Could not marshal payload for set_tag", "key", kvp.Key, "error", err)
-		return fmt.Errorf("could not marshal payload for set_tag: %w", err)
+		kf.logger.Error("Could not marshal payload for tag", "key", kvp.Key, "error", err)
+		return fmt.Errorf("could not marshal payload for tag: %w", err)
 	}
 	cmd := RaftCommand{
 		Type:    CmdSetTag,
@@ -410,55 +390,31 @@ func (kf *kvFsm) SetTag(kvp KVPayload) error {
 	}
 	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
-		kf.logger.Error("Could not marshal raft command for set_tag", "key", kvp.Key, "error", err)
-		return fmt.Errorf("could not marshal raft command for set_tag: %w", err)
+		kf.logger.Error("Could not marshal raft command for tag", "key", kvp.Key, "error", err)
+		return fmt.Errorf("could not marshal raft command for tag: %w", err)
 	}
 
 	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
 	if err := future.Error(); err != nil {
-		kf.logger.Error("Raft Apply failed for SetTag", "key", kvp.Key, "error", err)
-		return fmt.Errorf("raft Apply for SetTag failed (key %s): %w", kvp.Key, err)
+		kf.logger.Error("Raft Apply failed for Tag", "key", kvp.Key, "error", err)
+		return fmt.Errorf("raft Apply for Tag failed (key %s): %w", kvp.Key, err)
 	}
 
 	response := future.Response()
 	if responseErr, ok := response.(error); ok && responseErr != nil {
-		kf.logger.Error("FSM application error for SetTag", "key", kvp.Key, "error", responseErr)
-		return fmt.Errorf("fsm application error for SetTag (key %s): %w", kvp.Key, responseErr)
+		kf.logger.Error("FSM application error for Tag", "key", kvp.Key, "error", responseErr)
+		return fmt.Errorf("fsm application error for Tag (key %s): %w", kvp.Key, responseErr)
 	}
-	kf.logger.Info("SetTag Raft Apply successful", "key", kvp.Key)
+	kf.logger.Info("Tag Raft Apply successful", "key", kvp.Key)
 	return nil
 }
 
-func (kf *kvFsm) GetTag(key string) (string, error) {
-	kf.logger.Debug("GetTag called", "key", key)
-	var value string
-	err := kf.tkv.GetTagDB().View(func(txn *badger.Txn) error {
-		item, errGet := txn.Get([]byte(key))
-		if errGet != nil {
-			return errGet
-		}
-		return item.Value(func(val []byte) error {
-			value = string(val)
-			return nil
-		})
-	})
+func (kf *kvFsm) Untag(kvp KVPayload) error {
+	kf.logger.Debug("Untag called", "key", kvp.Key)
+	payloadBytes, err := json.Marshal(kvp)
 	if err != nil {
-		if err != badger.ErrKeyNotFound {
-			kf.logger.Error("Failed to get value from tagsDb", "key", key, "error", err)
-		}
-		return "", err
-	}
-	kf.logger.Debug("GetTag successful", "key", key)
-	return value, nil
-}
-
-func (kf *kvFsm) DeleteTag(key string) error {
-	kf.logger.Debug("DeleteTag called", "key", key)
-	payload := KeyPayload{Key: key}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		kf.logger.Error("Could not marshal payload for delete_tag", "key", key, "error", err)
-		return fmt.Errorf("could not marshal payload for delete_tag: %w", err)
+		kf.logger.Error("Could not marshal payload for untag", "key", kvp.Key, "error", err)
+		return fmt.Errorf("could not marshal payload for untag: %w", err)
 	}
 
 	cmd := RaftCommand{
@@ -467,22 +423,22 @@ func (kf *kvFsm) DeleteTag(key string) error {
 	}
 	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
-		kf.logger.Error("Could not marshal raft command for delete_tag", "key", key, "error", err)
-		return fmt.Errorf("could not marshal raft command for delete_tag: %w", err)
+		kf.logger.Error("Could not marshal raft command for untag", "key", kvp.Key, "error", err)
+		return fmt.Errorf("could not marshal raft command for untag: %w", err)
 	}
 
 	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
 	if err := future.Error(); err != nil {
-		kf.logger.Error("Raft Apply failed for DeleteTag", "key", key, "error", err)
-		return fmt.Errorf("raft Apply for DeleteTag failed (key %s): %w", key, err)
+		kf.logger.Error("Raft Apply failed for Untag", "key", kvp.Key, "error", err)
+		return fmt.Errorf("raft Apply for Untag failed (key %s): %w", kvp.Key, err)
 	}
 
 	response := future.Response()
 	if responseErr, ok := response.(error); ok && responseErr != nil {
-		kf.logger.Error("FSM application error for DeleteTag", "key", key, "error", responseErr)
-		return fmt.Errorf("fsm application error for DeleteTag (key %s): %w", key, responseErr)
+		kf.logger.Error("FSM application error for Untag", "key", kvp.Key, "error", responseErr)
+		return fmt.Errorf("fsm application error for Untag (key %s): %w", kvp.Key, responseErr)
 	}
-	kf.logger.Info("DeleteTag Raft Apply successful", "key", key)
+	kf.logger.Info("Untag Raft Apply successful", "key", kvp.Key)
 	return nil
 }
 
@@ -503,6 +459,54 @@ func (kf *kvFsm) Join(followerId string, followerAddress string) error {
 	kf.logger.Info("Successfully added follower/voter to Raft cluster", "follower_id", followerId, "follower_addr", followerAddress)
 	return nil
 }
+
+// ------------
+
+// [values]
+
+func (kf *kvFsm) GetValue(key string) (string, error) {
+	kf.logger.Debug("GetValue called", "key", key)
+	var value string
+	value, err := kf.tkv.Get(key)
+	if err != nil {
+		if err != badger.ErrKeyNotFound {
+			kf.logger.Error("Failed to get value from valuesDb", "key", key, "error", err)
+		}
+		return "", err
+	}
+	kf.logger.Debug("GetValue successful", "key", key)
+	return value, nil
+}
+
+func (kf *kvFsm) Iterate(prefix string, offset int, limit int) ([]string, error) {
+	kf.logger.Debug("Iterate called", "prefix", prefix, "offset", offset, "limit", limit)
+	var value []string
+	value, err := kf.tkv.Iterate(prefix, offset, limit)
+	if err != nil {
+		kf.logger.Error("Failed to iterate", "prefix", prefix, "offset", offset, "limit", limit, "error", err)
+		return nil, err
+	}
+	kf.logger.Debug("Iterate successful", "prefix", prefix, "offset", offset, "limit", limit)
+	return value, nil
+}
+
+// [tags]
+
+func (kf *kvFsm) GetAllKeysWithTag(tag string, offset int, limit int) ([]string, error) {
+	kf.logger.Debug("GetAllKeysWithTag called", "tag", tag, "offset", offset, "limit", limit)
+	var value []string
+	value, err := kf.tkv.GetAllKeysWithTag(tag, offset, limit)
+	if err != nil {
+		if err != badger.ErrKeyNotFound {
+			kf.logger.Error("Failed to get value from tagsDb", "tag", tag, "offset", offset, "limit", limit, "error", err)
+		}
+		return nil, err
+	}
+	kf.logger.Debug("GetAllKeysWithTag successful", "tag", tag, "offset", offset, "limit", limit)
+	return value, nil
+}
+
+// ------------
 
 type BadgerLogger struct {
 	slogger *slog.Logger
