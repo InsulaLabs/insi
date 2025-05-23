@@ -15,10 +15,9 @@ const (
 )
 
 type Node struct {
-	Host       string `yaml:"host"`
-	RaftPort   string `yaml:"raftPort"`
-	HttpPort   string `yaml:"httpPort"`
-	NodeSecret string `yaml:"nodeSecret"`
+	RaftBinding string `yaml:"raftBinding"`
+	HttpBinding string `yaml:"httpBinding"`
+	NodeSecret  string `yaml:"nodeSecret"`
 }
 
 type Cache struct {
@@ -78,6 +77,9 @@ func LoadConfig(configFile string) (*Cluster, error) {
 
 	seenNodeSecrets := make(map[string]bool)
 	for _, node := range cfg.Nodes {
+		if node.RaftBinding == "" || node.HttpBinding == "" {
+			return nil, errors.New("raftBinding and httpBinding are required for each node")
+		}
 		if seenNodeSecrets[node.NodeSecret] {
 			return nil, ErrDuplicateNodeSecret
 		}

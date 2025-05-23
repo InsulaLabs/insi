@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 
@@ -130,7 +129,7 @@ func New(settings Settings) (FSMInstance, error) {
 		thisNode: settings.NodeId,
 	}
 
-	currentRaftAdvertiseAddr := net.JoinHostPort(settings.NodeCfg.Host, settings.NodeCfg.RaftPort)
+	currentRaftAdvertiseAddr := settings.NodeCfg.RaftBinding
 	isDefaultLeader := settings.NodeId == settings.Config.DefaultLeader
 
 	raftInstance, err := setupRaft(
@@ -156,12 +155,12 @@ func New(settings Settings) (FSMInstance, error) {
 	}
 
 	if isFirstLaunch {
-		lockFile, errCreate := os.Create(lockFilePath)
-		if errCreate != nil {
-			return nil, fmt.Errorf("CRITICAL: failed to create lock file %s: %v", lockFilePath, errCreate)
+		file, err := os.Create(lockFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create lock file %s: %v", lockFilePath, err)
 		}
-		lockFile.Close()
-		logger.Info("Created lock file", "path", lockFilePath)
+		file.Close()
+		logger.Info("Lock file created", "path", lockFilePath)
 	}
 
 	logger.Info("kvFsm and Raft initialized successfully")
@@ -735,25 +734,38 @@ func (kf *kvFsm) IsLeader() bool {
 	return kf.r.State() == raft.Leader
 }
 
-func (kf *kvFsm) LeaderHTTPAddress() (string, error) {
-	leaderRaftAddr := kf.r.Leader() // This returns address like "host:raft_port"
-	if leaderRaftAddr == "" {
-		kf.logger.Info("LeaderHTTPAddress: No leader currently elected or visible.")
-		return "", fmt.Errorf("no current leader in the cluster")
+func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {
+	leaderAddr := fsm.r.Leader()
+	if leaderAddr == "" {
+		return "", fmt.Errorf("no current leader")
 	}
 
-	// Find the node in our static config that matches this Raft address
-	for nodeID, nodeCfg := range kf.cfg.Nodes {
-		configuredRaftAddr := net.JoinHostPort(nodeCfg.Host, nodeCfg.RaftPort)
-		if string(leaderRaftAddr) == configuredRaftAddr {
-			// Found the leader's config. Construct its HTTPs address.
-			scheme := "https" // Always use https for redirection target
-			leaderHttpAddr := fmt.Sprintf("%s://%s:%s", scheme, nodeCfg.Host, nodeCfg.HttpPort)
-			kf.logger.Debug("Determined leader HTTP address for redirection", "leader_node_id", nodeID, "leader_raft_addr", leaderRaftAddr, "http_addr", leaderHttpAddr)
-			return leaderHttpAddr, nil
+	// The leader address from Raft is the Raft advertise address (host:raft_port).
+	// We need to find the corresponding node ID to get its HTTP binding.
+	var leaderNodeID string
+	var leaderNodeConfig config.Node
+	found := false
+	for nodeID, nodeCfg := range fsm.cfg.Nodes {
+		if nodeCfg.RaftBinding == string(leaderAddr) {
+			leaderNodeID = nodeID
+			leaderNodeConfig = nodeCfg
+			found = true
+			break
 		}
 	}
 
-	kf.logger.Error("Leader Raft address found by Raft but does not match any node in static cluster configuration", "leader_raft_addr", string(leaderRaftAddr))
-	return "", fmt.Errorf("leader Raft address '%s' not found in cluster configuration", string(leaderRaftAddr))
+	if !found {
+		return "", fmt.Errorf("leader Raft address '%s' not found in cluster configuration", leaderAddr)
+	}
+
+	// Construct the full HTTP URL
+	scheme := "http"
+	if fsm.cfg.ServerMustUseTLS && fsm.cfg.TLS.Cert != "" && fsm.cfg.TLS.Key != "" {
+		scheme = "https"
+	}
+
+	// HttpBinding already contains host:port
+	fullAddr := fmt.Sprintf("%s://%s", scheme, leaderNodeConfig.HttpBinding)
+	fsm.logger.Debug("Determined leader HTTP address", "leader_node_id", leaderNodeID, "leader_raft_addr", leaderAddr, "leader_http_addr", fullAddr)
+	return fullAddr, nil
 }

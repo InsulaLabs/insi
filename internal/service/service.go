@@ -85,7 +85,7 @@ func (s *Service) Run() {
 	// System handlers
 	http.HandleFunc("/join", s.joinHandler)
 
-	httpListenAddr := ":" + s.nodeCfg.HttpPort
+	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
 
 	srv := &http.Server{

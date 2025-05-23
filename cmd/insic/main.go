@@ -61,14 +61,13 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 		return nil, fmt.Errorf("node ID '%s' not found in configuration", nodeToConnect)
 	}
 
-	hostPort := nodeDetails.Host + ":" + nodeDetails.HttpPort
 	clientLogger := logger.WithGroup("client")
 
-	c, err := client.NewClient(hostPort, cfg.InstanceSecret, cfg.ClientSkipVerify, clientLogger)
+	c, err := client.NewClient(nodeDetails.HttpBinding, cfg.InstanceSecret, cfg.ClientSkipVerify, clientLogger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, hostPort, err)
+		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.HttpBinding, err)
 	}
-	logger.Info("Client created successfully", "target_node", nodeToConnect, "hostport", hostPort)
+	logger.Info("Client created successfully", "target_node", nodeToConnect, "hostport", nodeDetails.HttpBinding)
 	return c, nil
 }
 
@@ -373,10 +372,9 @@ func handleJoin(args []string) {
 	}
 
 	// The Join method in the client expects the Raft address of the follower
-	followerRaftAddr := followerDetails.Host + ":" + followerDetails.RaftPort
-	logger.Info("Attempting to join follower", "follower_id", followerNodeID, "follower_raft_addr", followerRaftAddr, "via_leader", leaderNodeID)
+	logger.Info("Attempting to join follower", "follower_id", followerNodeID, "follower_raft_addr", followerDetails.RaftBinding, "via_leader", leaderNodeID)
 
-	err = leaderClient.Join(followerNodeID, followerRaftAddr)
+	err = leaderClient.Join(followerNodeID, followerDetails.RaftBinding)
 	if err != nil {
 		logger.Error("Join failed", "leader_node", leaderNodeID, "follower_node", followerNodeID, "error", err)
 		fmt.Println("Error:", err)

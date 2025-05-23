@@ -39,16 +39,16 @@ func attemptAutoJoin(
 		return fmt.Errorf("default leader node '%s' configuration not found in cluster config", leaderNodeId)
 	}
 
-	log.Printf("Node %s is not the default leader. Attempting to join leader %s (%s:%s).",
-		currentNodeId, leaderNodeId, leaderNodeCfg.Host, leaderNodeCfg.HttpPort)
+	log.Printf("Node %s is not the default leader. Attempting to join leader %s (%s).",
+		currentNodeId, leaderNodeId, leaderNodeCfg.HttpBinding)
 
 	// Construct join URL. Ensure scheme is https if TLS is used.
 	scheme := "http"
 	if clusterCfg.TLS.Cert != "" && clusterCfg.TLS.Key != "" {
 		scheme = "https"
 	}
-	joinURL := fmt.Sprintf("%s://%s:%s/join?followerId=%s&followerAddr=%s",
-		scheme, leaderNodeCfg.Host, leaderNodeCfg.HttpPort, currentNodeId, myRaftAddr)
+	joinURL := fmt.Sprintf("%s://%s/join?followerId=%s&followerAddr=%s",
+		scheme, leaderNodeCfg.HttpBinding, currentNodeId, myRaftAddr)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	tlsConfig := &tls.Config{}

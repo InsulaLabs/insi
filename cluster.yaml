@@ -21,17 +21,14 @@ cache:
 
 nodes:
   node0:
-    host: 127.0.0.1
-    raftPort: 2222
-    httpPort: 8443
+    raftBinding: 127.0.0.1:2222
+    httpBinding: 127.0.0.1:8443
     nodeSecret: "node0-secret"
   node1:
-    host: 127.0.0.1
-    raftPort: 2223
-    httpPort: 8444
+    raftBinding: 127.0.0.1:2223
+    httpBinding: 127.0.0.1:8444
     nodeSecret: "node1-secret"
   node2:
-    host: 127.0.0.1
-    raftPort: 2224
-    httpPort: 8445
+    raftBinding: 127.0.0.1:2224
+    httpBinding: 127.0.0.1:8445
     nodeSecret: "node2-secret"
