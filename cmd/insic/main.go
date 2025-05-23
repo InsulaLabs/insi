@@ -126,6 +126,10 @@ func main() {
 		handleCache(cli, cmdArgs)
 	case "join":
 		handleJoin(cmdArgs) // Special handling as it targets a specific leader
+	case "api":
+		handleApi(cli, cmdArgs)
+	case "ping":
+		handlePing(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -149,6 +153,10 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  cache get <key>\n")
 	fmt.Fprintf(os.Stderr, "  cache delete <key>\n")
 	fmt.Fprintf(os.Stderr, "  join <leaderNodeID> <followerNodeID>\n")
+	fmt.Fprintf(os.Stderr, "  api add <entity_name>\n")
+	fmt.Fprintf(os.Stderr, "  api delete <api_key_value>\n")
+	fmt.Fprintf(os.Stderr, "  api verify <api_key_value>\n")
+	fmt.Fprintf(os.Stderr, "  ping\n")
 }
 
 // Placeholder for command handlers - to be implemented next
@@ -390,4 +398,130 @@ func handleJoin(args []string) {
 	}
 	logger.Info("Join successful", "leader_node", leaderNodeID, "follower_node", followerNodeID)
 	fmt.Println("OK")
+}
+
+func handleApi(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("api: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "add":
+		handleAddApiKey(c, subArgs)
+	case "delete":
+		handleDeleteApiKey(c, subArgs)
+	case "verify":
+		handleVerifyApiKey(clusterCfg, subArgs)
+	default:
+		logger.Error("api: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleAddApiKey(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("api add: requires <entity_name>")
+		printUsage()
+		os.Exit(1)
+	}
+	entityName := args[0]
+	apiKey, err := c.NewAPIKey(entityName)
+	if err != nil {
+		logger.Error("API key creation failed", "entity", entityName, "error", err)
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+	logger.Info("API key created successfully", "entity", entityName)
+	fmt.Printf("API Key: %s\n", apiKey)
+}
+
+func handleDeleteApiKey(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("api delete: requires <api_key_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	apiKey := args[0]
+	err := c.DeleteAPIKey(apiKey)
+	if err != nil {
+		logger.Error("API key deletion failed", "key", apiKey, "error", err)
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+	logger.Info("API key deleted successfully", "key", apiKey)
+	fmt.Println("OK")
+}
+
+func handleVerifyApiKey(cfg *config.Cluster, args []string) {
+	if len(args) != 1 {
+		logger.Error("api verify: requires <api_key_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	apiKeyToVerify := args[0]
+
+	// Create a new client instance specifically for this verification,
+	// using the provided API key as the authToken.
+	// We assume the default leader for verification for simplicity.
+	nodeToConnect := cfg.DefaultLeader
+	if nodeToConnect == "" {
+		// This case should ideally be caught by getClient if no targetNodeID is passed,
+		// but good to have a check here too.
+		logger.Error("Cannot verify API key: DefaultLeader not set in config and no target node specified.")
+		os.Exit(1)
+	}
+	nodeDetails, ok := cfg.Nodes[nodeToConnect]
+	if !ok {
+		logger.Error("Cannot verify API key: DefaultLeader node details not found in configuration.", "node_id", nodeToConnect)
+		os.Exit(1)
+	}
+
+	verificationClientLogger := logger.WithGroup("api-verify-client")
+	verificationClient, err := client.NewClient(nodeDetails.HttpBinding, apiKeyToVerify, cfg.ClientSkipVerify, verificationClientLogger)
+	if err != nil {
+		// This typically means the apiKeyToVerify was not in the correct format (e.g. hex encoded sha256)
+		// or hostPort was invalid, NewClient would catch empty apiKeyToVerify but good to be mindful.
+		logger.Error("Failed to create client for API key verification", "error", err)
+		fmt.Println("Error: Could not initialize client for verification. Ensure API key is valid and server is reachable.")
+		os.Exit(1)
+	}
+
+	resp, err := verificationClient.Ping()
+	if err != nil {
+		logger.Error("API key verification ping failed", "key", apiKeyToVerify, "error", err)
+		fmt.Printf("API Key '%s' is NOT valid or server is unreachable. Error: %s\n", apiKeyToVerify, err)
+		os.Exit(1)
+	}
+
+	logger.Info("API key verification ping successful", "key", apiKeyToVerify)
+	fmt.Printf("API Key '%s' IS valid.\n", apiKeyToVerify)
+	fmt.Println("Ping Response from server:")
+	for k, v := range resp {
+		fmt.Printf("  %s: %s\n", k, v)
+	}
+}
+
+func handlePing(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("ping: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+	resp, err := c.Ping()
+	if err != nil {
+		logger.Error("Ping failed", "error", err)
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+	logger.Info("Ping successful")
+	// Pretty print the map
+	fmt.Println("Ping Response:")
+	for k, v := range resp {
+		fmt.Printf("  %s: %s\n", k, v)
+	}
 }

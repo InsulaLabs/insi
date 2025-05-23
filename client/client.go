@@ -281,3 +281,38 @@ func (c *Client) Join(followerID, followerAddr string) error {
 	// The /join endpoint is a GET request but needs auth and carries parameters in the query string.
 	return c.doRequest(http.MethodGet, "/join", params, nil, nil)
 }
+
+// NewAPIKey requests the server to generate a new API key for the given entity.
+func (c *Client) NewAPIKey(entityName string) (string, error) {
+	if entityName == "" {
+		return "", fmt.Errorf("entityName cannot be empty")
+	}
+	params := map[string]string{"entity": entityName}
+	var response struct {
+		APIKey string `json:"apiKey"`
+	}
+	err := c.doRequest(http.MethodGet, "/new-api-key", params, nil, &response)
+	if err != nil {
+		return "", err
+	}
+	return response.APIKey, nil
+}
+
+// DeleteAPIKey requests the server to delete an existing API key.
+func (c *Client) DeleteAPIKey(apiKey string) error {
+	if apiKey == "" {
+		return fmt.Errorf("apiKey cannot be empty")
+	}
+	params := map[string]string{"key": apiKey}
+	return c.doRequest(http.MethodGet, "/delete-api-key", params, nil, nil)
+}
+
+// Ping sends a ping request to the server and returns the response.
+func (c *Client) Ping() (map[string]string, error) {
+	var response map[string]string
+	err := c.doRequest(http.MethodGet, "/ping", nil, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
+}

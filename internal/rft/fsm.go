@@ -36,6 +36,7 @@ type RaftIF interface {
 	Restore(rc io.ReadCloser) error
 
 	Join(followerId string, followerAddress string) error
+	Leader() string
 	IsLeader() bool
 	LeaderHTTPAddress() (string, error) // Returns full URL: "https://host:http_port"
 }
@@ -732,6 +733,10 @@ func (bl *BadgerLogger) Debugf(format string, args ...any) {
 
 func (kf *kvFsm) IsLeader() bool {
 	return kf.r.State() == raft.Leader
+}
+
+func (kf *kvFsm) Leader() string {
+	return string(kf.r.Leader())
 }
 
 func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {

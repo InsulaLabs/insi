@@ -10,10 +10,13 @@ import (
 
 func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
-	if !s.validateToken(r) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("GetHandler", "entity", entity)
 
 	key := r.URL.Query().Get("key")
 	if key == "" {
@@ -45,10 +48,13 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Request) {
 
-	if !s.validateToken(r) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("IterateKeysByTagsHandler", "entity", entity)
 
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {
@@ -101,10 +107,13 @@ func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Reques
 
 func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
 
-	if !s.validateToken(r) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("IterateKeysByPrefixHandler", "entity", entity)
 
 	prefix := r.URL.Query().Get("prefix")
 	if prefix == "" {
@@ -157,10 +166,13 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 
 func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	if !s.validateToken(r) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("GetCacheHandler", "entity", entity)
 
 	key := r.URL.Query().Get("key")
 	if key == "" {

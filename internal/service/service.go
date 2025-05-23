@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -25,6 +24,8 @@ type Service struct {
 	identity  badge.Badge
 	fsm       rft.FSMInstance
 	authToken string
+
+	startedAt time.Time
 }
 
 func NewService(
@@ -64,13 +65,6 @@ func NewService(
 	}, nil
 }
 
-func (s *Service) validateToken(r *http.Request) bool {
-	authHeader := r.Header.Get("Authorization")
-
-	fmt.Println("Validating token", "auth_header", authHeader, "expected_token", s.authToken)
-	return authHeader == s.authToken
-}
-
 // Run forever until the context is cancelled
 func (s *Service) Run() {
 
@@ -92,6 +86,9 @@ func (s *Service) Run() {
 
 	// System handlers
 	http.HandleFunc("/join", s.joinHandler)
+	http.HandleFunc("/new-api-key", s.newApiKeyHandler)
+	http.HandleFunc("/delete-api-key", s.deleteApiKeyHandler)
+	http.HandleFunc("/ping", s.authedPing)
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
@@ -109,6 +106,8 @@ func (s *Service) Run() {
 			s.logger.Error("Server shutdown error", "error", err)
 		}
 	}()
+
+	s.startedAt = time.Now()
 
 	if s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != "" {
 		s.logger.Info("Starting HTTPS server", "cert", s.cfg.TLS.Cert, "key", s.cfg.TLS.Key)
