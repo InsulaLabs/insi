@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/InsulaLabs/insi/rft"
+	"github.com/InsulaLabs/insi/models"
 )
 
 /*
@@ -21,7 +21,7 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p rft.KVPayload
+	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for set request", "error", err)
 		http.Error(w, "Invalid JSON payload for set: "+err.Error(), http.StatusBadRequest)
@@ -50,7 +50,7 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p rft.KVPayload
+	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for unset request", "error", err)
 		http.Error(w, "Invalid JSON payload for unset: "+err.Error(), http.StatusBadRequest)
@@ -83,7 +83,7 @@ func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p rft.KVPayload
+	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for untag request", "error", err)
 		http.Error(w, "Invalid JSON payload for untag: "+err.Error(), http.StatusBadRequest)
@@ -112,7 +112,7 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p rft.KVPayload
+	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for tag request", "error", err)
 		http.Error(w, "Invalid JSON payload for tag: "+err.Error(), http.StatusBadRequest)
@@ -141,7 +141,7 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p rft.CachePayload
+	var p models.CachePayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for set cache request", "error", err)
 		http.Error(w, "Invalid JSON payload for set cache: "+err.Error(), http.StatusBadRequest)
@@ -170,7 +170,7 @@ func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p rft.KeyPayload
+	var p models.KeyPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for delete cache request", "error", err)
 		http.Error(w, "Invalid JSON payload for delete cache: "+err.Error(), http.StatusBadRequest)

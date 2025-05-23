@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/rft"
+	"github.com/InsulaLabs/insi/internal/config"
+	"github.com/InsulaLabs/insi/internal/rft"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/InsulaLabs/insula/tkv"
 )

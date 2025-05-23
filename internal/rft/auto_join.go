@@ -15,7 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/InsulaLabs/insi/config"
+	"github.com/InsulaLabs/insi/internal/config"
 
 	"github.com/hashicorp/raft"
 )
