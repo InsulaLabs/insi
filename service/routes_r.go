@@ -16,12 +16,14 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	value, err := s.fsm.Get(key)
-	if err == badger.ErrKeyNotFound {
+	if err != nil {
+		s.logger.Info("FSM Get for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
 		return
-	} else if err != nil {
-		s.logger.Error("Could not read key via FSM", "key", key, "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
+	if value == "" {
+		s.logger.Info("FSM Get for key returned empty value, treating as Not Found", "key", key)
+		http.NotFound(w, r)
 		return
 	}
 
@@ -143,12 +145,9 @@ func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	value, err := s.fsm.GetCache(key)
-	if err == badger.ErrKeyNotFound {
+	if err != nil {
+		s.logger.Info("FSM GetCache for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
-		return
-	} else if err != nil {
-		s.logger.Error("Could not read cache via FSM", "key", key, "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -157,9 +156,8 @@ func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 		Data string `json:"data"`
 	}{Data: value}
 
-	if err := json.NewEncoder(w).Encode(rsp); err != nil {
-		s.logger.Error("Could not encode response for cache", "key", key, "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	if errEnc := json.NewEncoder(w).Encode(rsp); errEnc != nil {
+		s.logger.Error("Could not encode response for cache", "key", key, "error", errEnc)
 		return
 	}
 

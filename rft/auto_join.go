@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"crypto/sha256"
+	"encoding/hex"
+
 	"github.com/InsulaLabs/insi/config"
 
 	"github.com/hashicorp/raft"
@@ -103,9 +106,17 @@ func attemptAutoJoin(
 				return ctx.Err()
 			}
 		}
-		// Consider adding authentication headers if the join endpoint expects them
-		// req.Header.Set("X-Node-Secret", clusterCfg.Nodes[currentNodeId].NodeSecret)
-		// req.Header.Set("X-Instance-Secret", clusterCfg.InstanceSecret)
+
+		// Add Authorization header
+		if clusterCfg.InstanceSecret != "" {
+			hasher := sha256.New()
+			hasher.Write([]byte(clusterCfg.InstanceSecret))
+			authToken := hex.EncodeToString(hasher.Sum(nil))
+			req.Header.Set("Authorization", authToken)
+			log.Printf("Node %s: Added Authorization header for auto-join.", currentNodeId)
+		} else {
+			log.Printf("Node %s: InstanceSecret is empty, cannot add Authorization header for auto-join. This might lead to join failures if the leader requires auth.", currentNodeId)
+		}
 
 		resp, err := httpClient.Do(req)
 		if err != nil {

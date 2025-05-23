@@ -497,10 +497,15 @@ func (kf *kvFsm) Tag(kvp KVPayload) error {
 }
 
 func (kf *kvFsm) Untag(kvp KVPayload) error {
-	kf.logger.Debug("Untag called", "key", kvp.Key)
-	payloadBytes, err := json.Marshal(kvp)
+	kf.logger.Debug("Untag called", "key", kvp.Key, "tag", kvp.Value)
+	// Create TagPayload using Value from KVPayload as the Tag
+	payload := TagPayload{
+		Key: kvp.Key,
+		Tag: kvp.Value, // Assuming kvp.Value holds the tag to be deleted
+	}
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		kf.logger.Error("Could not marshal payload for untag", "key", kvp.Key, "error", err)
+		kf.logger.Error("Could not marshal payload for untag", "key", kvp.Key, "tag", kvp.Value, "error", err)
 		return fmt.Errorf("could not marshal payload for untag: %w", err)
 	}
 
@@ -597,6 +602,9 @@ func (kf *kvFsm) GetAllKeysWithTag(tag string, offset int, limit int) ([]string,
 
 func (kf *kvFsm) SetCache(payload CachePayload) error {
 	kf.logger.Debug("SetCache called", "key", payload.Key)
+
+	// Set SetAt to the current time just before proposing to Raft
+	payload.SetAt = time.Now()
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
