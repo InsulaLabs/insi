@@ -306,3 +306,13 @@ func (c *Client) DeleteAPIKey(apiKey string) error {
 	params := map[string]string{"key": apiKey}
 	return c.doRequest(http.MethodGet, "/delete-api-key", params, nil, nil)
 }
+
+// Ping sends a ping request to the server and returns the response.
+func (c *Client) Ping() (map[string]string, error) {
+	var response map[string]string
+	err := c.doRequest(http.MethodGet, "/ping", nil, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
+}

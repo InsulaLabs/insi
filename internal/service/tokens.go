@@ -13,9 +13,11 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool)
 
 	authHeader := r.Header.Get("Authorization")
 	if mustBeRoot {
+		fmt.Println("mustBeRoot", authHeader, s.authToken)
 		return "root", authHeader == s.authToken
 	}
 
+	fmt.Println("validateToken", authHeader, s.authToken)
 	if authHeader == s.authToken {
 		return "root", true
 	}
@@ -27,12 +29,18 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool)
 
 	value, err := s.fsm.Get(pstk)
 	if err != nil {
+		fmt.Println("error getting", pstk, err)
 		return "", false
 	}
 
+	fmt.Println("value", value)
+
 	if value == "" {
+		fmt.Println("value is empty")
 		return "", false
 	}
+
+	fmt.Println("deconstructing", authHeader)
 
 	// Deconstruct the key using sentinel and validate the entity and secret passworc encoded in it (s.cfg.InstanceSecret)
 	keyMan := sentinel.NewSentinel(
@@ -41,20 +49,12 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool)
 		[]byte(s.cfg.InstanceSecret),
 	)
 
-	deconstructed, err := keyMan.DeconstructApiKey(value)
+	entity, err := keyMan.DeconstructApiKey(authHeader)
 	if err != nil {
+		s.logger.Error("Failed to deconstruct API key during validation", "key", authHeader, "error", err)
 		return "", false
 	}
 
-	// The parts are: entity:uuid. This is for randomness.
-	// If we are able to deconstruct they key it was made with the same secret
-	// as it is encrypted with it
-	parts := strings.Split(deconstructed, ":")
-	if len(parts) != 2 {
-		return "", false
-	}
-
-	entity := parts[0]
 	return entity, true
 }
 
