@@ -86,12 +86,11 @@ func main() {
 	}
 
 	kvm, err := tkv.New(tkv.Config{
-		Identity:       badge,
-		Logger:         nodeLogger,
-		Directory:      nodeDir, // actual nodes specific dir
-		AppCtx:         appCtx,
-		CacheTTL:       clusterCfg.Cache.StandardTTL,
-		SecureCacheTTL: clusterCfg.Cache.SecureTTL,
+		Identity:  badge,
+		Logger:    nodeLogger,
+		Directory: nodeDir, // actual nodes specific dir
+		AppCtx:    appCtx,
+		CacheTTL:  clusterCfg.Cache.StandardTTL,
 	})
 	if err != nil {
 		nodeLogger.Error("Failed to create KV manager", "error", err)

@@ -23,7 +23,6 @@ type Node struct {
 
 type Cache struct {
 	StandardTTL time.Duration `yaml:"standard-ttl"`
-	SecureTTL   time.Duration `yaml:"secure-ttl"`
 }
 
 type TLS struct {

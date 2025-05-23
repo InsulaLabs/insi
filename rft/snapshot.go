@@ -11,10 +11,9 @@ import (
 )
 
 const (
-	dbTypeValues    = "values"
-	dbTypeTags      = "tags"
-	cacheTypeStd    = "std"
-	cacheTypeSecure = "secure"
+	dbTypeValues = "values"
+	dbTypeTags   = "tags"
+	cacheType    = "cache"
 )
 
 // snapshotEntry is used to store entries in the snapshot with a DB type.
@@ -31,8 +30,7 @@ type badgerFSMSnapshot struct {
 	valuesDb *badger.DB
 	tagsDb   *badger.DB
 
-	stdCache    *ttlcache.Cache[string, string]
-	secureCache *ttlcache.Cache[string, []byte]
+	stdCache *ttlcache.Cache[string, string]
 }
 
 func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
@@ -113,36 +111,9 @@ func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
 		return nil
 	}
 
-	if err := persistStdCache(b.stdCache, cacheTypeStd); err != nil {
+	if err := persistStdCache(b.stdCache, cacheType); err != nil {
 		sink.Cancel()
 		return fmt.Errorf("failed to persist snapshot for stdCache: %w", err)
-	}
-
-	persistSecureCache := func(cache *ttlcache.Cache[string, []byte], cacheType string) error {
-		for _, item := range cache.Items() {
-			entry := snapshotEntry{
-				DBType:      cacheType,
-				Key:         item.Key(),
-				Value:       string(item.Value()),
-				TTL:         item.TTL().Seconds(),
-				TimeEncoded: time.Now().Unix(),
-			}
-			if errEnc := encoder.Encode(entry); errEnc != nil {
-				return fmt.Errorf(
-					"failed to encode snapshot entry for %s (key: %s): %w",
-					cacheType,
-					item.Key(),
-					errEnc,
-				)
-			}
-			return nil
-		}
-		return nil
-	}
-
-	if err := persistSecureCache(b.secureCache, cacheTypeSecure); err != nil {
-		sink.Cancel()
-		return fmt.Errorf("failed to persist snapshot for secureCache: %w", err)
 	}
 
 	if errClose := sink.Close(); errClose != nil {

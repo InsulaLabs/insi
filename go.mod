@@ -3,7 +3,7 @@ module github.com/InsulaLabs/insi
 go 1.24.2
 
 require (
-	github.com/InsulaLabs/insula v0.0.0-20250522213411-9333c52328f7
+	github.com/InsulaLabs/insula v0.0.0-20250523004812-8351972ccb70
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb v0.0.0-20250225060035-8f7048cdfa53

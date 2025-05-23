@@ -32,7 +32,7 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.fsm.SetValue(p)
+	err = s.fsm.Set(p)
 	if err != nil {
 		s.logger.Error("Could not write key-value via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -61,7 +61,7 @@ func (s *Service) unsetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.fsm.DeleteValue(p.Key)
+	err = s.fsm.Delete(p.Key)
 	if err != nil {
 		s.logger.Error("Could not unset value via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -131,3 +131,7 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 }
+
+// TODO: CACHE SET
+
+// TODO: CACHE DELETE

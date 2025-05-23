@@ -15,7 +15,7 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := s.fsm.GetValue(key)
+	value, err := s.fsm.Get(key)
 	if err == badger.ErrKeyNotFound {
 		http.NotFound(w, r)
 		return
@@ -36,9 +36,9 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Query().Get("key")
-	if key == "" {
-		http.Error(w, "Missing key parameter", http.StatusBadRequest)
+	tag := r.URL.Query().Get("tag")
+	if tag == "" {
+		http.Error(w, "Missing tag parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -65,12 +65,12 @@ func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Reques
 		offsetInt = 0
 	}
 
-	value, err := s.fsm.GetAllKeysWithTag(key, offsetInt, limitInt)
+	value, err := s.fsm.GetAllKeysWithTag(tag, offsetInt, limitInt)
 	if err == badger.ErrKeyNotFound {
 		http.NotFound(w, r)
 		return
 	} else if err != nil {
-		s.logger.Error("Could not read tag key via FSM", "key", key, "error", err)
+		s.logger.Error("Could not read tag key via FSM", "tag", tag, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -81,7 +81,7 @@ func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Reques
 	}{Data: value}
 
 	if err := json.NewEncoder(w).Encode(rsp); err != nil {
-		s.logger.Error("Could not encode response for tag key", "key", key, "error", err)
+		s.logger.Error("Could not encode response for tag key", "tag", tag, "error", err)
 	}
 }
 
@@ -134,3 +134,5 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 		s.logger.Error("Could not encode response for iterate keys by prefix", "prefix", prefix, "error", err)
 	}
 }
+
+// TODO: CACHE GET
