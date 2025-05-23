@@ -3,7 +3,7 @@ module github.com/InsulaLabs/insi
 go 1.24.2
 
 require (
-	github.com/InsulaLabs/insula v0.0.0-20250523113339-940049ebd5a7
+	github.com/InsulaLabs/insula v0.0.0-20250523135902-f80e9bc4b986
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb v0.0.0-20250225060035-8f7048cdfa53
@@ -40,6 +40,7 @@ require (
 	github.com/rogpeppe/go-internal v1.12.0 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
 	go.opencensus.io v0.22.5 // indirect
+	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
