@@ -51,7 +51,7 @@ type TagStoreIF interface {
 }
 
 type CacheStoreIF interface {
-	SetCache(key string, value string, ttl time.Duration) error
+	SetCache(kvp CachePayload) error
 	GetCache(key string) (string, error)
 	DeleteCache(key string) error
 }
@@ -594,18 +594,12 @@ func (kf *kvFsm) GetAllKeysWithTag(tag string, offset int, limit int) ([]string,
 
 // [cache]
 
-func (kf *kvFsm) SetCache(key string, value string, ttl time.Duration) error {
-	kf.logger.Debug("SetCache called", "key", key)
+func (kf *kvFsm) SetCache(payload CachePayload) error {
+	kf.logger.Debug("SetCache called", "key", payload.Key)
 
-	payload := CachePayload{
-		Key:   key,
-		Value: value,
-		TTL:   ttl,
-		SetAt: time.Now(),
-	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		kf.logger.Error("Could not marshal payload for set_cache", "key", key, "error", err)
+		kf.logger.Error("Could not marshal payload for set_cache", "key", payload.Key, "error", err)
 		return fmt.Errorf("could not marshal payload for set_cache: %w", err)
 	}
 
@@ -615,22 +609,22 @@ func (kf *kvFsm) SetCache(key string, value string, ttl time.Duration) error {
 	}
 	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
-		kf.logger.Error("Could not marshal payload for set_cache", "key", key, "error", err)
+		kf.logger.Error("Could not marshal payload for set_cache", "key", payload.Key, "error", err)
 		return fmt.Errorf("could not marshal payload for set_cache: %w", err)
 	}
 
 	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
 	if err := future.Error(); err != nil {
-		kf.logger.Error("Raft Apply failed for SetCache", "key", key, "error", err)
-		return fmt.Errorf("raft Apply for SetCache failed (key %s): %w", key, err)
+		kf.logger.Error("Raft Apply failed for SetCache", "key", payload.Key, "error", err)
+		return fmt.Errorf("raft Apply for SetCache failed (key %s): %w", payload.Key, err)
 	}
 
 	response := future.Response()
 	if responseErr, ok := response.(error); ok && responseErr != nil {
-		kf.logger.Error("FSM application error for SetCache", "key", key, "error", responseErr)
-		return fmt.Errorf("fsm application error for SetCache (key %s): %w", key, responseErr)
+		kf.logger.Error("FSM application error for SetCache", "key", payload.Key, "error", responseErr)
+		return fmt.Errorf("fsm application error for SetCache (key %s): %w", payload.Key, responseErr)
 	}
-	kf.logger.Info("SetCache Raft Apply successful", "key", key)
+	kf.logger.Info("SetCache Raft Apply successful", "key", payload.Key)
 	return nil
 }
 

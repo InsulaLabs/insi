@@ -77,6 +77,11 @@ func (s *Service) Run() {
 	http.HandleFunc("/untag", s.untagHandler)
 	http.HandleFunc("/iterate/tags", s.iterateKeysByTagsHandler)
 
+	// Cache handlers
+	http.HandleFunc("/cache/set", s.setCacheHandler)
+	http.HandleFunc("/cache/get", s.getCacheHandler)
+	http.HandleFunc("/cache/delete", s.deleteCacheHandler)
+
 	// System handlers
 	http.HandleFunc("/join", s.joinHandler)
 

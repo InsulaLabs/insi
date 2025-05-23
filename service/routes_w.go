@@ -134,4 +134,62 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 
 // TODO: CACHE SET
 
+func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for set cache request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var p rft.CachePayload
+	if err := json.Unmarshal(bodyBytes, &p); err != nil {
+		s.logger.Error("Invalid JSON payload for set cache request", "error", err)
+		http.Error(w, "Invalid JSON payload for set cache: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if p.Key == "" {
+		http.Error(w, "Missing key in set cache request payload", http.StatusBadRequest)
+		return
+	}
+
+	err = s.fsm.SetCache(p)
+	if err != nil {
+		s.logger.Error("Could not set cache via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // TODO: CACHE DELETE
+
+func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for delete cache request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var p rft.KeyPayload
+	if err := json.Unmarshal(bodyBytes, &p); err != nil {
+		s.logger.Error("Invalid JSON payload for delete cache request", "error", err)
+		http.Error(w, "Invalid JSON payload for delete cache: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if p.Key == "" {
+		http.Error(w, "Missing key in delete cache request payload", http.StatusBadRequest)
+		return
+	}
+
+	err = s.fsm.DeleteCache(p.Key)
+	if err != nil {
+		s.logger.Error("Could not delete cache via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}

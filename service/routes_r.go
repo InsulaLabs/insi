@@ -135,4 +135,33 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// TODO: CACHE GET
+func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		http.Error(w, "Missing key parameter", http.StatusBadRequest)
+		return
+	}
+
+	value, err := s.fsm.GetCache(key)
+	if err == badger.ErrKeyNotFound {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		s.logger.Error("Could not read cache via FSM", "key", key, "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	rsp := struct {
+		Data string `json:"data"`
+	}{Data: value}
+
+	if err := json.NewEncoder(w).Encode(rsp); err != nil {
+		s.logger.Error("Could not encode response for cache", "key", key, "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
