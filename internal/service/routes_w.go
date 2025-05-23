@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/InsulaLabs/insi/rft"
+	"github.com/InsulaLabs/insi/models"
 )
 
 /*
@@ -21,7 +21,7 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p rft.KVPayload
+	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for set request", "error", err)
 		http.Error(w, "Invalid JSON payload for set: "+err.Error(), http.StatusBadRequest)
@@ -41,16 +41,16 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Service) unsetHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for unset request", "error", err)
+		s.logger.Error("Could not read body for delete request", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	var p rft.KVPayload
+	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for unset request", "error", err)
 		http.Error(w, "Invalid JSON payload for unset: "+err.Error(), http.StatusBadRequest)
@@ -83,7 +83,7 @@ func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p rft.KVPayload
+	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for untag request", "error", err)
 		http.Error(w, "Invalid JSON payload for untag: "+err.Error(), http.StatusBadRequest)
@@ -112,7 +112,7 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p rft.KVPayload
+	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		s.logger.Error("Invalid JSON payload for tag request", "error", err)
 		http.Error(w, "Invalid JSON payload for tag: "+err.Error(), http.StatusBadRequest)
@@ -132,6 +132,60 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// TODO: CACHE SET
+func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for set cache request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
 
-// TODO: CACHE DELETE
+	var p models.CachePayload
+	if err := json.Unmarshal(bodyBytes, &p); err != nil {
+		s.logger.Error("Invalid JSON payload for set cache request", "error", err)
+		http.Error(w, "Invalid JSON payload for set cache: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if p.Key == "" {
+		http.Error(w, "Missing key in set cache request payload", http.StatusBadRequest)
+		return
+	}
+
+	err = s.fsm.SetCache(p)
+	if err != nil {
+		s.logger.Error("Could not set cache via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for delete cache request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var p models.KeyPayload
+	if err := json.Unmarshal(bodyBytes, &p); err != nil {
+		s.logger.Error("Invalid JSON payload for delete cache request", "error", err)
+		http.Error(w, "Invalid JSON payload for delete cache: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if p.Key == "" {
+		http.Error(w, "Missing key in delete cache request payload", http.StatusBadRequest)
+		return
+	}
+
+	err = s.fsm.DeleteCache(p.Key)
+	if err != nil {
+		s.logger.Error("Could not delete cache via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}

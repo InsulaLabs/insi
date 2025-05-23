@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/service"
+	"github.com/InsulaLabs/insi/internal/config"
+	"github.com/InsulaLabs/insi/internal/service"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/InsulaLabs/insula/tkv"
 )

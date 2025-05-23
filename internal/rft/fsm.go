@@ -22,11 +22,13 @@ import (
 
 	"time"
 
-	"github.com/InsulaLabs/insi/config"
+	"github.com/InsulaLabs/insi/internal/config"
 	"github.com/InsulaLabs/insula/tkv"
 	"github.com/dgraph-io/badger/v3"
 
 	"github.com/hashicorp/raft"
+
+	"github.com/InsulaLabs/insi/models"
 )
 
 type RaftIF interface {
@@ -38,20 +40,20 @@ type RaftIF interface {
 }
 
 type ValueStoreIF interface {
-	Set(kvp KVPayload) error
+	Set(kvp models.KVPayload) error
 	Get(key string) (string, error)
 	Delete(key string) error
 	Iterate(prefix string, offset int, limit int) ([]string, error)
 }
 
 type TagStoreIF interface {
-	Tag(kvp KVPayload) error
-	Untag(kvp KVPayload) error
+	Tag(kvp models.KVPayload) error
+	Untag(kvp models.KVPayload) error
 	GetAllKeysWithTag(tag string, offset int, limit int) ([]string, error)
 }
 
 type CacheStoreIF interface {
-	SetCache(key string, value string, ttl time.Duration) error
+	SetCache(kvp models.CachePayload) error
 	GetCache(key string) (string, error)
 	DeleteCache(key string) error
 }
@@ -68,10 +70,11 @@ type FSMInstance interface {
 
 // Constants for FSM commands (distinct from snapshot db types)
 const (
-	CmdSetValue   = "set_value"
-	CmdSetTag     = "set_tag"
-	CmdDeleteTag  = "delete_tag"
-	CmdUnsetValue = "unset_value"
+	CmdSetValue    = "set_value"
+	CmdDeleteValue = "delete_value"
+
+	CmdSetTag    = "set_tag"
+	CmdDeleteTag = "delete_tag"
 
 	CmdSetCache    = "set_cache"
 	CmdDeleteCache = "delete_cache"
@@ -177,27 +180,6 @@ type RaftCommand struct {
 	Payload []byte `json:"payload"`
 }
 
-type KVPayload struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-type TagPayload struct {
-	Key string `json:"key"`
-	Tag string `json:"tag"`
-}
-
-type KeyPayload struct {
-	Key string `json:"key"`
-}
-
-type CachePayload struct {
-	Key   string        `json:"key"`
-	Value string        `json:"value"`
-	TTL   time.Duration `json:"ttl"`
-	SetAt time.Time     `json:"set_at"` // check if setAt + TTL > NOW and ignore if so
-}
-
 func (kf *kvFsm) Apply(l *raft.Log) any {
 	kf.logger.Debug("FSM Apply called", "log_type", l.Type.String(), "index", l.Index, "term", l.Term)
 	switch l.Type {
@@ -210,7 +192,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 
 		switch cmd.Type {
 		case CmdSetValue:
-			var p KVPayload
+			var p models.KVPayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 				kf.logger.Error("Could not unmarshal set_value payload", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal set_value payload: %w", err)
@@ -223,7 +205,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 			kf.logger.Info("FSM applied set_value", "key", p.Key)
 			return nil
 		case CmdSetTag:
-			var p KVPayload
+			var p models.KVPayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 				kf.logger.Error("Could not unmarshal set_tag payload", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal set_tag payload: %w", err)
@@ -236,7 +218,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 			kf.logger.Info("FSM applied set_tag", "key", p.Key)
 			return nil
 		case CmdDeleteTag:
-			var p TagPayload
+			var p models.TagPayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 				kf.logger.Error("Could not unmarshal delete_tag payload", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal delete_tag payload: %w", err)
@@ -248,21 +230,21 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 			}
 			kf.logger.Info("FSM applied delete_tag", "key", p.Key)
 			return nil
-		case CmdUnsetValue:
-			var p KeyPayload
+		case CmdDeleteValue:
+			var p models.KeyPayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-				kf.logger.Error("Could not unmarshal unset_value payload", "error", err, "payload", string(cmd.Payload))
-				return fmt.Errorf("could not unmarshal unset_value payload: %w", err)
+				kf.logger.Error("Could not unmarshal delete_value payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal delete_value payload: %w", err)
 			}
 			err := kf.tkv.Delete(p.Key)
 			if err != nil {
 				kf.logger.Error("TKV Delete failed for valuesDb", "key", p.Key, "error", err)
 				return fmt.Errorf("tkv Delete failed for valuesDb (key %s): %w", p.Key, err)
 			}
-			kf.logger.Info("FSM applied unset_value", "key", p.Key)
+			kf.logger.Info("FSM applied delete_value", "key", p.Key)
 			return nil
 		case CmdSetCache:
-			var p CachePayload
+			var p models.CachePayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 				kf.logger.Error("Could not unmarshal set_std_cache payload", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal set_std_cache payload: %w", err)
@@ -283,7 +265,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 			kf.logger.Info("FSM applied set_std_cache", "key", p.Key)
 			return nil
 		case CmdDeleteCache:
-			var p KeyPayload
+			var p models.KeyPayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 				kf.logger.Error("Could not unmarshal delete_cache payload", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal delete_cache payload: %w", err)
@@ -396,7 +378,7 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 	return nil
 }
 
-func (kf *kvFsm) Set(kvp KVPayload) error {
+func (kf *kvFsm) Set(kvp models.KVPayload) error {
 	kf.logger.Debug("SetValue called", "key", kvp.Key)
 	cmd := RaftCommand{
 		Type: CmdSetValue,
@@ -431,21 +413,21 @@ func (kf *kvFsm) Set(kvp KVPayload) error {
 
 func (kf *kvFsm) Delete(key string) error {
 	kf.logger.Debug("Delete called", "key", key)
-	payload := KeyPayload{Key: key}
+	payload := models.KeyPayload{Key: key}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		kf.logger.Error("Could not marshal payload for unset_value", "key", key, "error", err)
-		return fmt.Errorf("could not marshal payload for unset_value: %w", err)
+		kf.logger.Error("Could not marshal payload for delete_value", "key", key, "error", err)
+		return fmt.Errorf("could not marshal payload for delete_value: %w", err)
 	}
 
 	cmd := RaftCommand{
-		Type:    CmdUnsetValue,
+		Type:    CmdDeleteValue,
 		Payload: payloadBytes,
 	}
 	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
-		kf.logger.Error("Could not marshal raft command for unset_value", "key", key, "error", err)
-		return fmt.Errorf("could not marshal raft command for unset_value: %w", err)
+		kf.logger.Error("Could not marshal raft command for delete_value", "key", key, "error", err)
+		return fmt.Errorf("could not marshal raft command for delete_value: %w", err)
 	}
 
 	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
@@ -463,7 +445,7 @@ func (kf *kvFsm) Delete(key string) error {
 	return nil
 }
 
-func (kf *kvFsm) Tag(kvp KVPayload) error {
+func (kf *kvFsm) Tag(kvp models.KVPayload) error {
 	kf.logger.Debug("Tag called", "key", kvp.Key)
 	payloadBytes, err := json.Marshal(kvp)
 	if err != nil {
@@ -495,11 +477,16 @@ func (kf *kvFsm) Tag(kvp KVPayload) error {
 	return nil
 }
 
-func (kf *kvFsm) Untag(kvp KVPayload) error {
-	kf.logger.Debug("Untag called", "key", kvp.Key)
-	payloadBytes, err := json.Marshal(kvp)
+func (kf *kvFsm) Untag(kvp models.KVPayload) error {
+	kf.logger.Debug("Untag called", "key", kvp.Key, "tag", kvp.Value)
+	// Create TagPayload using Value from KVPayload as the Tag
+	payload := models.TagPayload{
+		Key: kvp.Key,
+		Tag: kvp.Value, // Assuming kvp.Value holds the tag to be deleted
+	}
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		kf.logger.Error("Could not marshal payload for untag", "key", kvp.Key, "error", err)
+		kf.logger.Error("Could not marshal payload for untag", "key", kvp.Key, "tag", kvp.Value, "error", err)
 		return fmt.Errorf("could not marshal payload for untag: %w", err)
 	}
 
@@ -594,18 +581,15 @@ func (kf *kvFsm) GetAllKeysWithTag(tag string, offset int, limit int) ([]string,
 
 // [cache]
 
-func (kf *kvFsm) SetCache(key string, value string, ttl time.Duration) error {
-	kf.logger.Debug("SetCache called", "key", key)
+func (kf *kvFsm) SetCache(payload models.CachePayload) error {
+	kf.logger.Debug("SetCache called", "key", payload.Key)
 
-	payload := CachePayload{
-		Key:   key,
-		Value: value,
-		TTL:   ttl,
-		SetAt: time.Now(),
-	}
+	// Set SetAt to the current time just before proposing to Raft
+	payload.SetAt = time.Now()
+
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		kf.logger.Error("Could not marshal payload for set_cache", "key", key, "error", err)
+		kf.logger.Error("Could not marshal payload for set_cache", "key", payload.Key, "error", err)
 		return fmt.Errorf("could not marshal payload for set_cache: %w", err)
 	}
 
@@ -615,22 +599,22 @@ func (kf *kvFsm) SetCache(key string, value string, ttl time.Duration) error {
 	}
 	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
-		kf.logger.Error("Could not marshal payload for set_cache", "key", key, "error", err)
+		kf.logger.Error("Could not marshal payload for set_cache", "key", payload.Key, "error", err)
 		return fmt.Errorf("could not marshal payload for set_cache: %w", err)
 	}
 
 	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
 	if err := future.Error(); err != nil {
-		kf.logger.Error("Raft Apply failed for SetCache", "key", key, "error", err)
-		return fmt.Errorf("raft Apply for SetCache failed (key %s): %w", key, err)
+		kf.logger.Error("Raft Apply failed for SetCache", "key", payload.Key, "error", err)
+		return fmt.Errorf("raft Apply for SetCache failed (key %s): %w", payload.Key, err)
 	}
 
 	response := future.Response()
 	if responseErr, ok := response.(error); ok && responseErr != nil {
-		kf.logger.Error("FSM application error for SetCache", "key", key, "error", responseErr)
-		return fmt.Errorf("fsm application error for SetCache (key %s): %w", key, responseErr)
+		kf.logger.Error("FSM application error for SetCache", "key", payload.Key, "error", responseErr)
+		return fmt.Errorf("fsm application error for SetCache (key %s): %w", payload.Key, responseErr)
 	}
-	kf.logger.Info("SetCache Raft Apply successful", "key", key)
+	kf.logger.Info("SetCache Raft Apply successful", "key", payload.Key)
 	return nil
 }
 
@@ -639,7 +623,7 @@ func (kf *kvFsm) GetCache(key string) (string, error) {
 }
 
 func (kf *kvFsm) DeleteCache(key string) error {
-	payload := KeyPayload{Key: key}
+	payload := models.KeyPayload{Key: key}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		kf.logger.Error("Could not marshal payload for delete_cache", "key", key, "error", err)

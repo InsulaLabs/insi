@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/rft"
+	"github.com/InsulaLabs/insi/internal/config"
+	"github.com/InsulaLabs/insi/internal/rft"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/InsulaLabs/insula/tkv"
 )
@@ -69,13 +69,18 @@ func (s *Service) Run() {
 	// Values handlers
 	http.HandleFunc("/set", s.setHandler)
 	http.HandleFunc("/get", s.getHandler)
-	http.HandleFunc("/unset", s.unsetHandler)
+	http.HandleFunc("/delete", s.deleteHandler)
 	http.HandleFunc("/iterate/prefix", s.iterateKeysByPrefixHandler)
 
 	// Tagging handlers
 	http.HandleFunc("/tag", s.tagHandler)
 	http.HandleFunc("/untag", s.untagHandler)
 	http.HandleFunc("/iterate/tags", s.iterateKeysByTagsHandler)
+
+	// Cache handlers
+	http.HandleFunc("/cache/set", s.setCacheHandler)
+	http.HandleFunc("/cache/get", s.getCacheHandler)
+	http.HandleFunc("/cache/delete", s.deleteCacheHandler)
 
 	// System handlers
 	http.HandleFunc("/join", s.joinHandler)
