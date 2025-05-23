@@ -9,6 +9,12 @@ import (
 )
 
 func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
+
+	if !s.validateToken(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	key := r.URL.Query().Get("key")
 	if key == "" {
 		http.Error(w, "Missing key parameter", http.StatusBadRequest)
@@ -38,6 +44,12 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Request) {
+
+	if !s.validateToken(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {
 		http.Error(w, "Missing tag parameter", http.StatusBadRequest)
@@ -88,6 +100,12 @@ func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
+
+	if !s.validateToken(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	prefix := r.URL.Query().Get("prefix")
 	if prefix == "" {
 		http.Error(w, "Missing prefix parameter", http.StatusBadRequest)
@@ -138,6 +156,12 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
+
+	if !s.validateToken(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	key := r.URL.Query().Get("key")
 	if key == "" {
 		http.Error(w, "Missing key parameter", http.StatusBadRequest)

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -63,7 +65,13 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 
 	clientLogger := logger.WithGroup("client")
 
-	c, err := client.NewClient(nodeDetails.HttpBinding, cfg.InstanceSecret, cfg.ClientSkipVerify, clientLogger)
+	clientLogger.Info("Client is using instanceSecret for token generation", "secret_value", cfg.InstanceSecret)
+
+	secretHash := sha256.New()
+	secretHash.Write([]byte(cfg.InstanceSecret))
+	secret := hex.EncodeToString(secretHash.Sum(nil))
+
+	c, err := client.NewClient(nodeDetails.HttpBinding, secret, cfg.ClientSkipVerify, clientLogger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.HttpBinding, err)
 	}

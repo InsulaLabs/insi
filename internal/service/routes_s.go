@@ -17,8 +17,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != s.authToken {
+	if !s.validateToken(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}

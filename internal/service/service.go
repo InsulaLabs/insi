@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -61,6 +62,13 @@ func NewService(
 		fsm:       fsm,
 		authToken: authToken,
 	}, nil
+}
+
+func (s *Service) validateToken(r *http.Request) bool {
+	authHeader := r.Header.Get("Authorization")
+
+	fmt.Println("Validating token", "auth_header", authHeader, "expected_token", s.authToken)
+	return authHeader == s.authToken
 }
 
 // Run forever until the context is cancelled

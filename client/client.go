@@ -2,9 +2,7 @@ package client
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -28,25 +26,22 @@ type Client struct {
 
 // NewClient creates a new insi API client.
 // hostPort is the target server, e.g., "127.0.0.1:8443".
-// instanceSecret is the shared secret for the cluster, used to generate the auth token for system routes.
+// authToken is the access token for the cluster, used to authenticate system routes.
 // clientSkipVerifySetting controls whether the client skips verification of the server's TLS certificate, read from config.
-// logger is the structured logger.
-func NewClient(hostPort string, instanceSecret string, clientSkipVerifySetting bool, logger *slog.Logger) (*Client, error) {
+func NewClient(hostPort string, authToken string, clientSkipVerifySetting bool, logger *slog.Logger) (*Client, error) {
 	if hostPort == "" {
 		return nil, fmt.Errorf("hostPort cannot be empty")
 	}
-	if instanceSecret == "" {
-		return nil, fmt.Errorf("instanceSecret cannot be empty")
+	if authToken == "" {
+		return nil, fmt.Errorf("authToken cannot be empty")
 	}
 	if logger == nil {
-		logger = slog.Default() // Or handle appropriately
+		logger = slog.Default()
 	}
 	clientLogger := logger.WithGroup("insi_client")
 
-	// Always use HTTPS
-	scheme := "https"
-
-	baseURLStr := fmt.Sprintf("%s://%s", scheme, hostPort)
+	// We ENFORCE HTTPS - NEVER PERMIT HTTP
+	baseURLStr := fmt.Sprintf("https://%s", hostPort)
 	baseURL, err := url.Parse(baseURLStr)
 	if err != nil {
 		clientLogger.Error("Failed to parse base URL", "url", baseURLStr, "error", err)
@@ -62,10 +57,6 @@ func NewClient(hostPort string, instanceSecret string, clientSkipVerifySetting b
 		Timeout:   defaultTimeout,
 	}
 
-	secHash := sha256.New()
-	secHash.Write([]byte(instanceSecret))
-	authToken := hex.EncodeToString(secHash.Sum(nil))
-
 	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", clientSkipVerifySetting)
 
 	return &Client{
@@ -77,7 +68,7 @@ func NewClient(hostPort string, instanceSecret string, clientSkipVerifySetting b
 }
 
 // internal request helper
-func (c *Client) doRequest(method, path string, queryParams map[string]string, body interface{}, target interface{}, needsAuth bool) error {
+func (c *Client) doRequest(method, path string, queryParams map[string]string, body interface{}, target interface{}) error {
 	fullURL := c.baseURL.ResolveReference(&url.URL{Path: path})
 
 	q := fullURL.Query()
@@ -103,11 +94,9 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if needsAuth {
-		req.Header.Set("Authorization", c.authToken)
-	}
+	req.Header.Set("Authorization", c.authToken)
 
-	c.logger.Debug("Sending request", "method", method, "url", fullURL.String(), "needs_auth", needsAuth)
+	c.logger.Debug("Sending request", "method", method, "url", fullURL.String())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -143,7 +132,7 @@ func (c *Client) Get(key string) (string, error) {
 	var response struct {
 		Data string `json:"data"`
 	}
-	err := c.doRequest(http.MethodGet, "/get", params, nil, &response, false)
+	err := c.doRequest(http.MethodGet, "/get", params, nil, &response)
 	if err != nil {
 		return "", err
 	}
@@ -156,7 +145,7 @@ func (c *Client) Set(key, value string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key, "value": value}
-	return c.doRequest(http.MethodPost, "/set", nil, payload, nil, false)
+	return c.doRequest(http.MethodPost, "/set", nil, payload, nil)
 }
 
 // Delete removes a key and its value.
@@ -165,7 +154,7 @@ func (c *Client) Delete(key string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key}
-	return c.doRequest(http.MethodPost, "/delete", nil, payload, nil, false)
+	return c.doRequest(http.MethodPost, "/delete", nil, payload, nil)
 }
 
 // IterateByPrefix retrieves a list of keys matching a given prefix.
@@ -181,7 +170,7 @@ func (c *Client) IterateByPrefix(prefix string, offset, limit int) ([]string, er
 	var response struct {
 		Data []string `json:"data"`
 	}
-	err := c.doRequest(http.MethodGet, "/iterate/prefix", params, nil, &response, false)
+	err := c.doRequest(http.MethodGet, "/iterate/prefix", params, nil, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +188,7 @@ func (c *Client) Tag(key, tag string) error {
 		return fmt.Errorf("tag cannot be empty")
 	}
 	payload := map[string]string{"key": key, "value": tag} // Server expects "value" for the tag
-	return c.doRequest(http.MethodPost, "/tag", nil, payload, nil, false)
+	return c.doRequest(http.MethodPost, "/tag", nil, payload, nil)
 }
 
 // Untag removes a tag association from a key.
@@ -212,7 +201,7 @@ func (c *Client) Untag(key, tag string) error {
 	}
 	// Server's untagHandler expects KVPayload {Key: key, Value: tag}
 	payload := map[string]string{"key": key, "value": tag}
-	return c.doRequest(http.MethodPost, "/untag", nil, payload, nil, false)
+	return c.doRequest(http.MethodPost, "/untag", nil, payload, nil)
 }
 
 // IterateByTag retrieves a list of keys associated with a given tag.
@@ -228,7 +217,7 @@ func (c *Client) IterateByTag(tag string, offset, limit int) ([]string, error) {
 	var response struct {
 		Data []string `json:"data"`
 	}
-	err := c.doRequest(http.MethodGet, "/iterate/tags", params, nil, &response, false)
+	err := c.doRequest(http.MethodGet, "/iterate/tags", params, nil, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +236,7 @@ func (c *Client) SetCache(key, value string, ttl time.Duration) error {
 		"value": value,
 		"ttl":   ttl.Seconds(), // Server expects TTL in seconds
 	}
-	return c.doRequest(http.MethodPost, "/cache/set", nil, payload, nil, false)
+	return c.doRequest(http.MethodPost, "/cache/set", nil, payload, nil)
 }
 
 // GetCache retrieves a value from the cache by its key.
@@ -259,7 +248,7 @@ func (c *Client) GetCache(key string) (string, error) {
 	var response struct {
 		Data string `json:"data"`
 	}
-	err := c.doRequest(http.MethodGet, "/cache/get", params, nil, &response, false)
+	err := c.doRequest(http.MethodGet, "/cache/get", params, nil, &response)
 	if err != nil {
 		return "", err
 	}
@@ -272,7 +261,7 @@ func (c *Client) DeleteCache(key string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key}
-	return c.doRequest(http.MethodPost, "/cache/delete", nil, payload, nil, false)
+	return c.doRequest(http.MethodPost, "/cache/delete", nil, payload, nil)
 }
 
 // --- System Operations ---
@@ -290,5 +279,5 @@ func (c *Client) Join(followerID, followerAddr string) error {
 		"followerAddr": followerAddr,
 	}
 	// The /join endpoint is a GET request but needs auth and carries parameters in the query string.
-	return c.doRequest(http.MethodGet, "/join", params, nil, nil, true)
+	return c.doRequest(http.MethodGet, "/join", params, nil, nil)
 }
