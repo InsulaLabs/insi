@@ -8,25 +8,36 @@ BOLD   := $(shell tput bold)
 
 # Build settings
 BUILD_DIR := build
-BINARY := insid
+BINARY_SERVER := insid
+BINARY_CLIENT := insic
 CONFIG := cluster.yaml
 
-.PHONY: all clean build test
+.PHONY: all clean server client test
 
-all: build
+all: server client
+	@echo "$(GREEN)✅ All builds complete! Binaries available at ${BUILD_DIR}/$(RESET)"
 
 clean:
 	@echo "$(YELLOW)🧹 Cleaning up...$(RESET)"
 	@rm -rf ${BUILD_DIR}
 	@echo "$(GREEN)✨ Cleanup complete!$(RESET)"
 
-build: ${BUILD_DIR}
-	@echo "$(BLUE)🚀 Building $(BINARY)...$(RESET)"
-	@echo "$(PURPLE)   Compiling Go code...$(RESET)"
-	@go build -o ${BUILD_DIR}/${BINARY} cmd/insid/*.go
-	@echo "$(PURPLE)   Copying configuration...$(RESET)"
+server: ${BUILD_DIR}
+	@echo "$(BLUE)🚀 Building server $(BINARY_SERVER)...$(RESET)"
+	@echo "$(PURPLE)   Compiling Go code for $(BINARY_SERVER)...$(RESET)"
+	@go build -o ${BUILD_DIR}/${BINARY_SERVER} cmd/insid/*.go
+	@echo "$(PURPLE)   Copying configuration for $(BINARY_SERVER)...$(RESET)"
 	@cp ${CONFIG} ${BUILD_DIR}/
-	@echo "$(GREEN)✅ Build complete! Binary available at ${BUILD_DIR}/${BINARY}$(RESET)"
+	@echo "$(GREEN)✅ Server $(BINARY_SERVER) build complete! Available at ${BUILD_DIR}/${BINARY_SERVER}$(RESET)"
+
+client: ${BUILD_DIR}
+	@echo "$(BLUE)🚀 Building client $(BINARY_CLIENT)...$(RESET)"
+	@echo "$(PURPLE)   Compiling Go code for $(BINARY_CLIENT)...$(RESET)"
+	@go build -o ${BUILD_DIR}/${BINARY_CLIENT} cmd/insic/*.go
+	@echo "$(GREEN)✅ Client $(BINARY_CLIENT) build complete! Available at ${BUILD_DIR}/${BINARY_CLIENT}$(RESET)"
+
+${BUILD_DIR}:
+	@mkdir -p ${BUILD_DIR}
 
 test:
 	@echo "$(BLUE)🧪 Running tests...$(RESET)"
