@@ -116,7 +116,7 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 	s.logger.Debug("IterateKeysByPrefixHandler", "entity", entity)
 
 	prefix := r.URL.Query().Get("prefix")
-	if prefix == "" {
+	if entity != EntityRoot && prefix == "" {
 		http.Error(w, "Missing prefix parameter", http.StatusBadRequest)
 		return
 	}

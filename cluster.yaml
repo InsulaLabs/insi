@@ -17,7 +17,7 @@ serverMustUseTLS: true
 
 cache:
   standard-ttl: 60m
-  secure-ttl:   10m
+  keys: 1m # We dont bumb ttl here - its to avoid the db hit for 1 minute after an auth
 
 nodes:
   node0:
