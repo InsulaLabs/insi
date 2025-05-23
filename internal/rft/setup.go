@@ -42,8 +42,8 @@ func setupRaft(nodeDir, nodeId, raftAdvertiseAddress string, kf *kvFsm, clusterC
 		return nil, fmt.Errorf("could not resolve raft advertise address %s: %w", raftAdvertiseAddress, err)
 	}
 
-	// Bind to 0.0.0.0 on the raft port, advertise the configured host and port
-	bindAddress := fmt.Sprintf("0.0.0.0:%d", parsedRaftAddr.Port)
+	// Bind to the configured host and port
+	bindAddress := raftAdvertiseAddress // Changed from fmt.Sprintf("0.0.0.0:%d", parsedRaftAddr.Port)
 
 	transport, err := raft.NewTCPTransport(bindAddress, parsedRaftAddr, 3, 10*time.Second, os.Stderr)
 	if err != nil {
