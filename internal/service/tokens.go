@@ -3,7 +3,6 @@ package service
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insula/security/sentinel"
@@ -13,11 +12,9 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool)
 
 	authHeader := r.Header.Get("Authorization")
 	if mustBeRoot {
-		fmt.Println("mustBeRoot", authHeader, s.authToken)
 		return "root", authHeader == s.authToken
 	}
 
-	fmt.Println("validateToken", authHeader, s.authToken)
 	if authHeader == s.authToken {
 		return "root", true
 	}
@@ -29,20 +26,15 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool)
 
 	value, err := s.fsm.Get(pstk)
 	if err != nil {
-		fmt.Println("error getting", pstk, err)
+		s.logger.Error("Failed to get value from valuesDb", "error", err)
 		return "", false
 	}
-
-	fmt.Println("value", value)
 
 	if value == "" {
-		fmt.Println("value is empty")
+		s.logger.Error("Value is empty", "key", pstk)
 		return "", false
 	}
 
-	fmt.Println("deconstructing", authHeader)
-
-	// Deconstruct the key using sentinel and validate the entity and secret passworc encoded in it (s.cfg.InstanceSecret)
 	keyMan := sentinel.NewSentinel(
 		s.logger,
 		apiKeyIdentifier,
@@ -60,41 +52,35 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool)
 
 func (s *Service) deleteApiKey(targetKey string) error {
 
-	// Deconstruct the key using sentinel and validate the entity and secret passworc encoded in it (s.cfg.InstanceSecret)
 	keyMan := sentinel.NewSentinel(
 		s.logger,
 		apiKeyIdentifier,
 		[]byte(s.cfg.InstanceSecret),
 	)
 
-	deconstructed, err := keyMan.DeconstructApiKey(targetKey)
+	// Ensure that its valid and created by our secret
+	_, err := keyMan.DeconstructApiKey(targetKey)
 	if err != nil {
 		return err
 	}
 
-	parts := strings.Split(deconstructed, ":")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid key")
-	}
-
-	pstk := fmt.Sprintf("%s:%s", s.authToken, parts[1])
+	storedAs := fmt.Sprintf("%s:%s", s.authToken, targetKey)
 
 	if s.fsm.IsLeader() {
-		err = s.fsm.Delete(pstk)
+		err = s.fsm.Delete(storedAs)
 		if err != nil {
 			return err
 		}
 	} else {
-		s.logger.Info("Deleting api key from follower node => forwarding to leader", "key", pstk)
+		s.logger.Info("Deleting api key from follower node => forwarding to leader", "key", targetKey)
 		c, err := client.NewClient(s.nodeCfg.HttpBinding, s.cfg.InstanceSecret, s.cfg.ClientSkipVerify, s.logger)
 		if err != nil {
 			return err
 		}
-		err = c.Delete(pstk)
+		err = c.Delete(storedAs)
 		if err != nil {
 			return err
 		}
 	}
-
 	return nil
 }

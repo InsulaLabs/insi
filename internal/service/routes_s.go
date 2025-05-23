@@ -13,12 +13,8 @@ import (
 const apiKeyIdentifier = "insi_"
 
 func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
-
-	fmt.Println("authedPing")
-
 	storedRootEntity, ok := s.validateToken(r, false) // <----- NOTE: Not root only for system
 	if !ok {
-		fmt.Println("Unauthorized")
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -131,10 +127,6 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to store key: [tag] %s", err), http.StatusInternalServerError)
 		return
 	}
-
-	fmt.Println("key", key)
-	fmt.Println("keyForStorage", keyForStorage)
-	fmt.Println("entityTag", entityTag)
 
 	// respond with the json key
 	json.NewEncoder(w).Encode(map[string]string{"apiKey": key})
