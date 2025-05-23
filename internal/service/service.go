@@ -24,6 +24,8 @@ type Service struct {
 	identity  badge.Badge
 	fsm       rft.FSMInstance
 	authToken string
+
+	startedAt time.Time
 }
 
 func NewService(
@@ -86,6 +88,7 @@ func (s *Service) Run() {
 	http.HandleFunc("/join", s.joinHandler)
 	http.HandleFunc("/new-api-key", s.newApiKeyHandler)
 	http.HandleFunc("/delete-api-key", s.deleteApiKeyHandler)
+	http.HandleFunc("/ping", s.authedPing)
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
@@ -103,6 +106,8 @@ func (s *Service) Run() {
 			s.logger.Error("Server shutdown error", "error", err)
 		}
 	}()
+
+	s.startedAt = time.Now()
 
 	if s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != "" {
 		s.logger.Info("Starting HTTPS server", "cert", s.cfg.TLS.Cert, "key", s.cfg.TLS.Key)

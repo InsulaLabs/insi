@@ -126,6 +126,8 @@ func main() {
 		handleCache(cli, cmdArgs)
 	case "join":
 		handleJoin(cmdArgs) // Special handling as it targets a specific leader
+	case "api":
+		handleApi(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -149,6 +151,8 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  cache get <key>\n")
 	fmt.Fprintf(os.Stderr, "  cache delete <key>\n")
 	fmt.Fprintf(os.Stderr, "  join <leaderNodeID> <followerNodeID>\n")
+	fmt.Fprintf(os.Stderr, "  api add <entity_name>\n")
+	fmt.Fprintf(os.Stderr, "  api delete <api_key_value>\n")
 }
 
 // Placeholder for command handlers - to be implemented next
@@ -389,5 +393,60 @@ func handleJoin(args []string) {
 		os.Exit(1)
 	}
 	logger.Info("Join successful", "leader_node", leaderNodeID, "follower_node", followerNodeID)
+	fmt.Println("OK")
+}
+
+func handleApi(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("api: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "add":
+		handleAddApiKey(c, subArgs)
+	case "delete":
+		handleDeleteApiKey(c, subArgs)
+	default:
+		logger.Error("api: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleAddApiKey(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("api add: requires <entity_name>")
+		printUsage()
+		os.Exit(1)
+	}
+	entityName := args[0]
+	apiKey, err := c.NewAPIKey(entityName)
+	if err != nil {
+		logger.Error("API key creation failed", "entity", entityName, "error", err)
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+	logger.Info("API key created successfully", "entity", entityName)
+	fmt.Printf("API Key: %s\n", apiKey)
+}
+
+func handleDeleteApiKey(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("api delete: requires <api_key_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	apiKey := args[0]
+	err := c.DeleteAPIKey(apiKey)
+	if err != nil {
+		logger.Error("API key deletion failed", "key", apiKey, "error", err)
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+	logger.Info("API key deleted successfully", "key", apiKey)
 	fmt.Println("OK")
 }

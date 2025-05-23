@@ -12,6 +12,25 @@ import (
 
 const apiKeyIdentifier = "insi_"
 
+func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
+	storedRootEntity, ok := s.validateToken(r, false) // <----- NOTE: Not root only for system
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	uptime := time.Since(s.startedAt).String()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":        "ok",
+		"entity":        storedRootEntity,
+		"node-badge-id": s.identity.GetID(),
+		"leader":        s.fsm.Leader(),
+		"uptime":        uptime,
+	})
+}
+
 /*
 	Handlers that are meant for system-level operations (not data-level operations)
 */
@@ -51,7 +70,6 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to join follower: %s", err), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +104,8 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// store the key in the db
-	c, err := client.NewClient(s.nodeCfg.HttpBinding, s.cfg.InstanceSecret, s.cfg.ClientSkipVerify, s.logger)
+	internalClientLogger := s.logger.WithGroup("internal-client")
+	c, err := client.NewClient(s.nodeCfg.HttpBinding, s.authToken, s.cfg.ClientSkipVerify, internalClientLogger)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to store key: %s", err), http.StatusInternalServerError)
 		return
@@ -113,7 +132,6 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"apiKey": key})
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Service) deleteApiKeyHandler(w http.ResponseWriter, r *http.Request) {
