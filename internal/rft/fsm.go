@@ -37,6 +37,8 @@ type RaftIF interface {
 	Restore(rc io.ReadCloser) error
 
 	Join(followerId string, followerAddress string) error
+	IsLeader() bool
+	LeaderHTTPAddress() (string, error) // Returns full URL: "https://host:http_port"
 }
 
 type ValueStoreIF interface {
@@ -250,19 +252,63 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				return fmt.Errorf("could not unmarshal set_std_cache payload: %w", err)
 			}
 
-			// If the storedAt + TTL is in the past, ignore
-			if p.SetAt.Add(p.TTL).Before(time.Now()) {
-				kf.logger.Info("Skipping std cache entry because it is past its TTL", "key", p.Key, "ttl", p.TTL)
-				return nil
-			}
+			kf.logger.Debug("Applying CmdSetCache",
+				"key", p.Key,
+				"value_len", len(p.Value),
+				"ttl_seconds", p.TTL, // Assuming p.TTL is int64 seconds
+				"set_at_unmarshaled", p.SetAt.Format(time.RFC3339Nano))
 
-			err := kf.tkv.CacheSet(p.Key, p.Value, p.TTL)
+			var err error
+			if p.SetAt.IsZero() {
+				kf.logger.Warn("CachePayload.SetAt is zero after unmarshaling. Applying with full original TTL from now.",
+					"key", p.Key,
+					"original_ttl_seconds", p.TTL)
 
-			if err != nil {
-				kf.logger.Error("TKV CacheSet failed for stdCache", "key", p.Key, "error", err)
-				return fmt.Errorf("tkv CacheSet failed for stdCache (key %s): %w", p.Key, err)
+				// Convert p.TTL (seconds) to time.Duration for CacheSet
+				actualTTLForCacheSet := time.Duration(p.TTL) * time.Second
+				err = kf.tkv.CacheSet(p.Key, p.Value, actualTTLForCacheSet)
+				if err != nil {
+					kf.logger.Error("TKV CacheSet failed when SetAt was zero", "key", p.Key, "error", err)
+					return fmt.Errorf("tkv CacheSet failed for stdCache (key %s, SetAt was zero): %w", p.Key, err)
+				}
+				kf.logger.Info("FSM applied set_std_cache (SetAt was zero, used full original TTL)", "key", p.Key, "applied_ttl", actualTTLForCacheSet.String())
+			} else {
+				// SetAt is valid, proceed with precise expiry calculation.
+				intendedDuration := time.Duration(p.TTL) * time.Second // Correctly convert int64 seconds to time.Duration
+				expiryTime := p.SetAt.Add(intendedDuration)
+				currentTime := time.Now()
+
+				if expiryTime.Before(currentTime) {
+					kf.logger.Info("Skipping std cache entry because its calculated absolute expiry time is in the past",
+						"key", p.Key,
+						"original_ttl_seconds", p.TTL, // p.TTL is int64 seconds
+						"intended_duration_str", intendedDuration.String(),
+						"set_at", p.SetAt.Format(time.RFC3339Nano),
+						"calculated_expiry_time", expiryTime.Format(time.RFC3339Nano),
+						"current_time", currentTime.Format(time.RFC3339Nano))
+					return nil
+				}
+
+				remainingTTL := time.Until(expiryTime)
+				if remainingTTL <= 0 {
+					kf.logger.Info("Skipping std cache entry as calculated remaining TTL is zero or negative",
+						"key", p.Key,
+						"original_ttl_seconds", p.TTL, // p.TTL is int64 seconds
+						"intended_duration_str", intendedDuration.String(),
+						"set_at", p.SetAt.Format(time.RFC3339Nano),
+						"calculated_expiry_time", expiryTime.Format(time.RFC3339Nano),
+						"current_time", currentTime.Format(time.RFC3339Nano),
+						"calculated_remaining_ttl", remainingTTL.String())
+					return nil
+				}
+
+				err = kf.tkv.CacheSet(p.Key, p.Value, remainingTTL) // Use calculated remainingTTL (which is a time.Duration)
+				if err != nil {
+					kf.logger.Error("TKV CacheSet failed", "key", p.Key, "remaining_ttl", remainingTTL.String(), "error", err)
+					return fmt.Errorf("tkv CacheSet failed for stdCache (key %s): %w", p.Key, err)
+				}
+				kf.logger.Info("FSM applied set_std_cache with remaining TTL", "key", p.Key, "remaining_ttl", remainingTTL.String())
 			}
-			kf.logger.Info("FSM applied set_std_cache", "key", p.Key)
 			return nil
 		case CmdDeleteCache:
 			var p models.KeyPayload
@@ -349,6 +395,10 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 				continue
 			}
 			remainingTTL := time.Until(timeOfEncodingPlusTTL)
+			if remainingTTL <= 0 {
+				kf.logger.Info("Skipping restore of cache entry as its remaining TTL is zero or negative", "key", entry.Key, "original_ttl_seconds", entry.TTL, "calculated_remaining_ttl", remainingTTL.String())
+				continue
+			}
 			stdCache.Set(entry.Key, entry.Value, remainingTTL)
 			stdCacheCount++
 
@@ -679,4 +729,31 @@ func (bl *BadgerLogger) Infof(format string, args ...any) {
 
 func (bl *BadgerLogger) Debugf(format string, args ...any) {
 	bl.slogger.Debug(fmt.Sprintf(format, args...))
+}
+
+func (kf *kvFsm) IsLeader() bool {
+	return kf.r.State() == raft.Leader
+}
+
+func (kf *kvFsm) LeaderHTTPAddress() (string, error) {
+	leaderRaftAddr := kf.r.Leader() // This returns address like "host:raft_port"
+	if leaderRaftAddr == "" {
+		kf.logger.Info("LeaderHTTPAddress: No leader currently elected or visible.")
+		return "", fmt.Errorf("no current leader in the cluster")
+	}
+
+	// Find the node in our static config that matches this Raft address
+	for nodeID, nodeCfg := range kf.cfg.Nodes {
+		configuredRaftAddr := net.JoinHostPort(nodeCfg.Host, nodeCfg.RaftPort)
+		if string(leaderRaftAddr) == configuredRaftAddr {
+			// Found the leader's config. Construct its HTTPs address.
+			scheme := "https" // Always use https for redirection target
+			leaderHttpAddr := fmt.Sprintf("%s://%s:%s", scheme, nodeCfg.Host, nodeCfg.HttpPort)
+			kf.logger.Debug("Determined leader HTTP address for redirection", "leader_node_id", nodeID, "leader_raft_addr", leaderRaftAddr, "http_addr", leaderHttpAddr)
+			return leaderHttpAddr, nil
+		}
+	}
+
+	kf.logger.Error("Leader Raft address found by Raft but does not match any node in static cluster configuration", "leader_raft_addr", string(leaderRaftAddr))
+	return "", fmt.Errorf("leader Raft address '%s' not found in cluster configuration", string(leaderRaftAddr))
 }

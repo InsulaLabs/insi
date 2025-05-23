@@ -8,11 +8,36 @@ import (
 	"github.com/InsulaLabs/insi/models"
 )
 
+// Helper function for redirection
+func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string) {
+	leaderAddr, err := s.fsm.LeaderHTTPAddress()
+	if err != nil {
+		s.logger.Error("Failed to get leader HTTP address for redirection", "original_path", originalPath, "error", err)
+		// If we can't find the leader, we can't redirect. The old behavior was 500, so let's keep it consistent.
+		// Raft itself would return an error like "not leader" which gets caught by the FSM Apply.
+		// The client will eventually retry or target another node.
+		http.Error(w, "Failed to determine cluster leader for redirection: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	redirectURL := leaderAddr + originalPath // originalPath includes the leading /
+	if r.URL.RawQuery != "" {
+		redirectURL += "?" + r.URL.RawQuery
+	}
+
+	s.logger.Info("Redirecting to leader", "current_node_is_follower", true, "leader_addr", leaderAddr, "original_path", originalPath, "redirect_url", redirectURL)
+	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
+}
+
 /*
 	Handlers that update the "VALUES" database
 */
 
 func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -42,6 +67,10 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -75,6 +104,10 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 */
 
 func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -104,6 +137,10 @@ func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -133,6 +170,10 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -162,6 +203,10 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {

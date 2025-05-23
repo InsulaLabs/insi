@@ -10,6 +10,12 @@ import (
 */
 
 func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
+	// Join operations must absolutely go to the leader.
+	// The redirectToLeader helper is defined in routes_w.go (or could be moved to a common place if preferred)
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path) // Assumes redirectToLeader is accessible, e.g. part of Service or in same package
+		return
+	}
 
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != s.authToken {

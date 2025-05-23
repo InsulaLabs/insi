@@ -160,6 +160,4 @@ func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("Could not encode response for cache", "key", key, "error", errEnc)
 		return
 	}
-
-	w.WriteHeader(http.StatusOK)
 }
