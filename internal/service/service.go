@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -64,10 +63,15 @@ func NewService(
 	}, nil
 }
 
-func (s *Service) validateToken(r *http.Request) bool {
-	authHeader := r.Header.Get("Authorization")
+func (s *Service) validateToken(r *http.Request, mustBeRoot bool) bool {
 
-	fmt.Println("Validating token", "auth_header", authHeader, "expected_token", s.authToken)
+	authHeader := r.Header.Get("Authorization")
+	if mustBeRoot {
+		return authHeader == s.authToken
+	}
+
+	// authtoken is the root auth
+	// here we can add user api keys too!
 	return authHeader == s.authToken
 }
 

@@ -34,7 +34,7 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 */
 
 func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -72,7 +72,7 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -114,7 +114,7 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 */
 
 func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -152,7 +152,7 @@ func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -190,7 +190,7 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -228,7 +228,7 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}

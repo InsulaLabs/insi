@@ -17,7 +17,8 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.validateToken(r) {
+	// Only admin "root" key can tell nodes to join the cluster
+	if !s.validateToken(r, true) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}

@@ -10,7 +10,7 @@ import (
 
 func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -45,7 +45,7 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Request) {
 
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -101,7 +101,7 @@ func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Reques
 
 func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
 
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -157,7 +157,7 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 
 func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	if !s.validateToken(r) {
+	if !s.validateToken(r, false) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
