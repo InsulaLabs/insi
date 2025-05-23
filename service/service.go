@@ -69,7 +69,7 @@ func (s *Service) Run() {
 	// Values handlers
 	http.HandleFunc("/set", s.setHandler)
 	http.HandleFunc("/get", s.getHandler)
-	http.HandleFunc("/unset", s.unsetHandler)
+	http.HandleFunc("/delete", s.deleteHandler)
 	http.HandleFunc("/iterate/prefix", s.iterateKeysByPrefixHandler)
 
 	// Tagging handlers

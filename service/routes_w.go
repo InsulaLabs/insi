@@ -41,11 +41,11 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Service) unsetHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for unset request", "error", err)
+		s.logger.Error("Could not read body for delete request", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
@@ -132,8 +132,6 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// TODO: CACHE SET
-
 func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -162,8 +160,6 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 }
-
-// TODO: CACHE DELETE
 
 func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()

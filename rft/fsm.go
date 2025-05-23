@@ -68,10 +68,11 @@ type FSMInstance interface {
 
 // Constants for FSM commands (distinct from snapshot db types)
 const (
-	CmdSetValue   = "set_value"
-	CmdSetTag     = "set_tag"
-	CmdDeleteTag  = "delete_tag"
-	CmdUnsetValue = "unset_value"
+	CmdSetValue    = "set_value"
+	CmdDeleteValue = "delete_value"
+
+	CmdSetTag    = "set_tag"
+	CmdDeleteTag = "delete_tag"
 
 	CmdSetCache    = "set_cache"
 	CmdDeleteCache = "delete_cache"
@@ -248,18 +249,18 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 			}
 			kf.logger.Info("FSM applied delete_tag", "key", p.Key)
 			return nil
-		case CmdUnsetValue:
+		case CmdDeleteValue:
 			var p KeyPayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-				kf.logger.Error("Could not unmarshal unset_value payload", "error", err, "payload", string(cmd.Payload))
-				return fmt.Errorf("could not unmarshal unset_value payload: %w", err)
+				kf.logger.Error("Could not unmarshal delete_value payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal delete_value payload: %w", err)
 			}
 			err := kf.tkv.Delete(p.Key)
 			if err != nil {
 				kf.logger.Error("TKV Delete failed for valuesDb", "key", p.Key, "error", err)
 				return fmt.Errorf("tkv Delete failed for valuesDb (key %s): %w", p.Key, err)
 			}
-			kf.logger.Info("FSM applied unset_value", "key", p.Key)
+			kf.logger.Info("FSM applied delete_value", "key", p.Key)
 			return nil
 		case CmdSetCache:
 			var p CachePayload
@@ -434,18 +435,18 @@ func (kf *kvFsm) Delete(key string) error {
 	payload := KeyPayload{Key: key}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		kf.logger.Error("Could not marshal payload for unset_value", "key", key, "error", err)
-		return fmt.Errorf("could not marshal payload for unset_value: %w", err)
+		kf.logger.Error("Could not marshal payload for delete_value", "key", key, "error", err)
+		return fmt.Errorf("could not marshal payload for delete_value: %w", err)
 	}
 
 	cmd := RaftCommand{
-		Type:    CmdUnsetValue,
+		Type:    CmdDeleteValue,
 		Payload: payloadBytes,
 	}
 	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
-		kf.logger.Error("Could not marshal raft command for unset_value", "key", key, "error", err)
-		return fmt.Errorf("could not marshal raft command for unset_value: %w", err)
+		kf.logger.Error("Could not marshal raft command for delete_value", "key", key, "error", err)
+		return fmt.Errorf("could not marshal raft command for delete_value: %w", err)
 	}
 
 	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
