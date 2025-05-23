@@ -12,6 +12,9 @@ BINARY_SERVER := insid
 BINARY_CLIENT := insic
 CONFIG := cluster.yaml
 
+# Go private repository settings
+GOPRIVATE_SETTING := GOPRIVATE=github.com/InsulaLabs
+
 .PHONY: all clean server client test
 
 all: server client
@@ -25,7 +28,7 @@ clean:
 server: ${BUILD_DIR}
 	@echo "$(BLUE)🚀 Building server $(BINARY_SERVER)...$(RESET)"
 	@echo "$(PURPLE)   Compiling Go code for $(BINARY_SERVER)...$(RESET)"
-	@go build -o ${BUILD_DIR}/${BINARY_SERVER} cmd/insid/*.go
+	@$(GOPRIVATE_SETTING) go build -o ${BUILD_DIR}/${BINARY_SERVER} cmd/insid/*.go
 	@echo "$(PURPLE)   Copying configuration for $(BINARY_SERVER)...$(RESET)"
 	@cp ${CONFIG} ${BUILD_DIR}/
 	@echo "$(GREEN)✅ Server $(BINARY_SERVER) build complete! Available at ${BUILD_DIR}/${BINARY_SERVER}$(RESET)"
@@ -33,7 +36,7 @@ server: ${BUILD_DIR}
 client: ${BUILD_DIR}
 	@echo "$(BLUE)🚀 Building client $(BINARY_CLIENT)...$(RESET)"
 	@echo "$(PURPLE)   Compiling Go code for $(BINARY_CLIENT)...$(RESET)"
-	@go build -o ${BUILD_DIR}/${BINARY_CLIENT} cmd/insic/*.go
+	@$(GOPRIVATE_SETTING) go build -o ${BUILD_DIR}/${BINARY_CLIENT} cmd/insic/*.go
 	@echo "$(GREEN)✅ Client $(BINARY_CLIENT) build complete! Available at ${BUILD_DIR}/${BINARY_CLIENT}$(RESET)"
 
 ${BUILD_DIR}:
@@ -41,5 +44,5 @@ ${BUILD_DIR}:
 
 test:
 	@echo "$(BLUE)🧪 Running tests...$(RESET)"
-	@go test -v ./... || (echo "$(YELLOW)⚠️  Tests failed$(RESET)" && exit 1)
+	@$(GOPRIVATE_SETTING) go test -v ./... || (echo "$(YELLOW)⚠️  Tests failed$(RESET)" && exit 1)
 	@echo "$(GREEN)✅ All tests passed!$(RESET)"
