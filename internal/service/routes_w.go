@@ -34,10 +34,13 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 */
 
 func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r, false) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("SetHandler", "entity", entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -72,10 +75,13 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r, false) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("DeleteHandler", "entity", entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -114,10 +120,13 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 */
 
 func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r, false) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("UntagHandler", "entity", entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -152,10 +161,13 @@ func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r, false) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("TagHandler", "entity", entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -190,10 +202,13 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r, false) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("SetCacheHandler", "entity", entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -228,10 +243,13 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r, false) {
+	entity, ok := s.validateToken(r, false)
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	s.logger.Debug("DeleteCacheHandler", "entity", entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)

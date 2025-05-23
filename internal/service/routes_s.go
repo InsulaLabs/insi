@@ -10,6 +10,8 @@ import (
 	"github.com/InsulaLabs/insula/security/sentinel"
 )
 
+const apiKeyIdentifier = "insi_"
+
 /*
 	Handlers that are meant for system-level operations (not data-level operations)
 */
@@ -23,7 +25,15 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only admin "root" key can tell nodes to join the cluster
-	if !s.validateToken(r, true) {
+	entity, ok := s.validateToken(r, true)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// We already enforced that its root, but this will be a sanity check to ensure that
+	// something isn't corrupted or otherwise malicious
+	if entity != "root" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -45,7 +55,8 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.validateToken(r, true) {
+	storedRootEntity, ok := s.validateToken(r, true)
+	if !ok || storedRootEntity != "root" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -65,7 +76,7 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 
 	keyGen := sentinel.NewSentinel(
 		s.logger,
-		entity,
+		apiKeyIdentifier,
 		[]byte(s.cfg.InstanceSecret),
 	)
 
@@ -103,4 +114,24 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Service) deleteApiKeyHandler(w http.ResponseWriter, r *http.Request) {
+	storedRootEntity, ok := s.validateToken(r, true)
+	if !ok || storedRootEntity != "root" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	targetKey := r.URL.Query().Get("key")
+	if targetKey == "" {
+		http.Error(w, "Missing key parameter", http.StatusBadRequest)
+		return
+	}
+
+	err := s.deleteApiKey(targetKey)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete key: %s", err), http.StatusInternalServerError)
+		return
+	}
 }

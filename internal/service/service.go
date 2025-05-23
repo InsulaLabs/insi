@@ -63,18 +63,6 @@ func NewService(
 	}, nil
 }
 
-func (s *Service) validateToken(r *http.Request, mustBeRoot bool) bool {
-
-	authHeader := r.Header.Get("Authorization")
-	if mustBeRoot {
-		return authHeader == s.authToken
-	}
-
-	// authtoken is the root auth
-	// here we can add user api keys too!
-	return authHeader == s.authToken
-}
-
 // Run forever until the context is cancelled
 func (s *Service) Run() {
 
@@ -96,6 +84,8 @@ func (s *Service) Run() {
 
 	// System handlers
 	http.HandleFunc("/join", s.joinHandler)
+	http.HandleFunc("/new-api-key", s.newApiKeyHandler)
+	http.HandleFunc("/delete-api-key", s.deleteApiKeyHandler)
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
