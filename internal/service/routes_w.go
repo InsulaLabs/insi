@@ -13,14 +13,11 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 	leaderAddr, err := s.fsm.LeaderHTTPAddress()
 	if err != nil {
 		s.logger.Error("Failed to get leader HTTP address for redirection", "original_path", originalPath, "error", err)
-		// If we can't find the leader, we can't redirect. The old behavior was 500, so let's keep it consistent.
-		// Raft itself would return an error like "not leader" which gets caught by the FSM Apply.
-		// The client will eventually retry or target another node.
 		http.Error(w, "Failed to determine cluster leader for redirection: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
-	redirectURL := leaderAddr + originalPath // originalPath includes the leading /
+	redirectURL := leaderAddr + originalPath
 	if r.URL.RawQuery != "" {
 		redirectURL += "?" + r.URL.RawQuery
 	}

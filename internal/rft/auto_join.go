@@ -57,19 +57,11 @@ func attemptAutoJoin(
 		if clusterCfg.ClientSkipVerify {
 			log.Println("Client TLS verification is skipped for auto-join as per ClientSkipVerify config.")
 			tlsConfig.InsecureSkipVerify = true
-		} else if clusterCfg.TLS.Cert != "" { // Assuming this cert might be a CA or the leader's cert to trust
-			// If ClientSkipVerify is false, the client needs to trust the server's certificate.
-			// This assumes clusterCfg.TLS.Cert might be a CA bundle.
-			// For a production setup, a proper CA cert for the leader should be used by the client.
+		} else if clusterCfg.TLS.Cert != "" {
 			caCertPool := x509.NewCertPool()
-			// This path should ideally be a CA certificate that signed the leader's server certificate.
-			// If clusterCfg.TLS.Cert is just the leader's own cert (and self-signed), this won't work
-			// unless that cert is somehow added as a CA or ClientSkipVerify is true.
-			// For simplicity, we use the provided Cert path. If it's a path to a CA bundle, this is okay.
 			caCertBytes, err := os.ReadFile(clusterCfg.TLS.Cert)
 			if err != nil {
 				log.Printf("Warning: Failed to read configured TLS cert at %s for auto-join CA: %v. Proceeding without custom CA.", clusterCfg.TLS.Cert, err)
-				// Potentially fall back to system CAs or require ClientSkipVerify
 			} else {
 				if !caCertPool.AppendCertsFromPEM(caCertBytes) {
 					log.Printf("Warning: Failed to append configured TLS cert at %s to CA pool for auto-join. Proceeding without custom CA.", clusterCfg.TLS.Cert)
@@ -131,7 +123,7 @@ func attemptAutoJoin(
 		}
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		resp.Body.Close() // Important to close the body
+		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK {
 			log.Printf("Node %s: Successfully joined leader %s.", currentNodeId, leaderNodeId)

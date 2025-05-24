@@ -32,7 +32,7 @@ func setupRaft(nodeDir, nodeId, raftAdvertiseAddress string, kf *kvFsm, clusterC
 	if err := os.MkdirAll(snapshotStorePath, os.ModePerm); err != nil {
 		return nil, fmt.Errorf("could not create snapshot directory %s: %w", snapshotStorePath, err)
 	}
-	snapshots, err := raft.NewFileSnapshotStore(snapshotStorePath, 2, os.Stderr) // Using 2 for snapshot retention
+	snapshots, err := raft.NewFileSnapshotStore(snapshotStorePath, 2, os.Stderr)
 	if err != nil {
 		return nil, fmt.Errorf("could not create snapshot store at %s: %w", snapshotStorePath, err)
 	}
@@ -42,12 +42,9 @@ func setupRaft(nodeDir, nodeId, raftAdvertiseAddress string, kf *kvFsm, clusterC
 		return nil, fmt.Errorf("could not resolve raft advertise address %s: %w", raftAdvertiseAddress, err)
 	}
 
-	// Bind to the configured host and port
-	bindAddress := raftAdvertiseAddress // Changed from fmt.Sprintf("0.0.0.0:%d", parsedRaftAddr.Port)
-
-	transport, err := raft.NewTCPTransport(bindAddress, parsedRaftAddr, 3, 10*time.Second, os.Stderr)
+	transport, err := raft.NewTCPTransport(raftAdvertiseAddress, parsedRaftAddr, 3, 10*time.Second, os.Stderr)
 	if err != nil {
-		return nil, fmt.Errorf("could not create tcp transport (bind: %s, advertise: %s): %w", bindAddress, raftAdvertiseAddress, err)
+		return nil, fmt.Errorf("could not create tcp transport (advertise: %s): %w", raftAdvertiseAddress, err)
 	}
 	log.Printf("Raft TCP transport created. Listening on: %s, Advertising: %s", transport.LocalAddr(), raftAdvertiseAddress)
 

@@ -22,6 +22,7 @@ type Node struct {
 
 type Cache struct {
 	StandardTTL time.Duration `yaml:"standard-ttl"`
+	Keys        time.Duration `yaml:"keys"`
 }
 
 type TLS struct {
@@ -50,6 +51,8 @@ var (
 	ErrInsudbDirMissing         = errors.New("insudbDir is missing in config and is required for lock files and node data")
 	ErrTLSMissing               = errors.New("TLS configuration incomplete: both cert and key must be provided if one is specified")
 	ErrDuplicateNodeSecret      = errors.New("duplicate node secret in config - each node must contain a unique nodeSecret")
+	ErrCacheKeysMissing         = errors.New("cache.keys is missing in config")
+	ErrCacheStandardTTLMissing  = errors.New("cache.standardTTL is missing in config")
 )
 
 func LoadConfig(configFile string) (*Cluster, error) {
@@ -97,6 +100,14 @@ func LoadConfig(configFile string) (*Cluster, error) {
 	if cfg.TLS.Cert != "" && cfg.TLS.Key == "" ||
 		cfg.TLS.Cert == "" && cfg.TLS.Key != "" {
 		return nil, ErrTLSMissing
+	}
+
+	if cfg.Cache.Keys == 0 {
+		return nil, ErrCacheKeysMissing
+	}
+
+	if cfg.Cache.StandardTTL == 0 {
+		return nil, ErrCacheStandardTTLMissing
 	}
 
 	return &cfg, nil

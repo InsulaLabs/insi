@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/InsulaLabs/insi/client"
-	"github.com/InsulaLabs/insula/security/sentinel"
 )
 
 const apiKeyIdentifier = "insi_"
@@ -52,7 +49,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 
 	// We already enforced that its root, but this will be a sanity check to ensure that
 	// something isn't corrupted or otherwise malicious
-	if entity != "root" {
+	if entity != EntityRoot {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -90,41 +87,9 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// We generate the key and then store it. Once success, we return the key in a json response
-
-	keyGen := sentinel.NewSentinel(
-		s.logger,
-		apiKeyIdentifier,
-		[]byte(s.cfg.InstanceSecret),
-	)
-
-	key, err := keyGen.ConstructApiKey(entity)
+	key, err := s.newApiKey(entity)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to generate key: %s", err), http.StatusInternalServerError)
-	}
-
-	// store the key in the db
-	internalClientLogger := s.logger.WithGroup("internal-client")
-	c, err := client.NewClient(s.nodeCfg.HttpBinding, s.authToken, s.cfg.ClientSkipVerify, internalClientLogger)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to store key: %s", err), http.StatusInternalServerError)
-		return
-	}
-
-	keyForStorage := fmt.Sprintf("%s:%s", s.authToken, key)
-	entityTag := fmt.Sprintf("%s:%s", s.authToken, entity)
-
-	createdAt := time.Now()
-
-	// Store the key in the db with a prefix that only the service can search for (or otherwise auth'd)
-	if err := c.Set(keyForStorage, createdAt.String()); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to store key: [set] %s", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Add a tag that cant be searched by user unless they know the secret hash prefix
-	if err := c.Tag(keyForStorage, entityTag); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to store key: [tag] %s", err), http.StatusInternalServerError)
 		return
 	}
 

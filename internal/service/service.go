@@ -13,7 +13,19 @@ import (
 	"github.com/InsulaLabs/insi/internal/rft"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/InsulaLabs/insula/tkv"
+	"github.com/jellydator/ttlcache/v3"
 )
+
+/*
+	These are in-memory caches that hold ephemeral values for
+	common read requests. The idea is that we don't bump the ttl
+	of specific caches so we can essentially "buffer" away when
+	we actually hit the db.
+*/
+
+type localCaches struct {
+	apiKeys *ttlcache.Cache[string, string]
+}
 
 type Service struct {
 	appCtx    context.Context
@@ -26,6 +38,8 @@ type Service struct {
 	authToken string
 
 	startedAt time.Time
+
+	lcs *localCaches
 }
 
 func NewService(
@@ -49,6 +63,11 @@ func NewService(
 		return nil, err
 	}
 
+	caches, err := initLocalCaches(&config.Cache)
+	if err != nil {
+		return nil, err
+	}
+
 	secHash := sha256.New()
 	secHash.Write([]byte(config.InstanceSecret))
 	authToken := hex.EncodeToString(secHash.Sum(nil))
@@ -62,6 +81,7 @@ func NewService(
 		tkv:       tkv,
 		fsm:       fsm,
 		authToken: authToken,
+		lcs:       caches,
 	}, nil
 }
 
