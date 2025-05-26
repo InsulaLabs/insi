@@ -10,7 +10,7 @@ import (
 const apiKeyIdentifier = "insi_"
 
 func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, ok := s.validateToken(r, false) // <----- NOTE: Not root only for system
+	storedRootEntity, _, ok := s.validateToken(r, false) // <----- NOTE: Not root only for system
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -41,7 +41,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only admin "root" key can tell nodes to join the cluster
-	entity, ok := s.validateToken(r, true)
+	entity, _, ok := s.validateToken(r, true)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -70,7 +70,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, ok := s.validateToken(r, true)
+	storedRootEntity, _, ok := s.validateToken(r, true)
 	if !ok || storedRootEntity != "root" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -100,7 +100,7 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteApiKeyHandler(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, ok := s.validateToken(r, true)
+	storedRootEntity, _, ok := s.validateToken(r, true)
 	if !ok || storedRootEntity != "root" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

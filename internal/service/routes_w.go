@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -31,7 +32,7 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 */
 
 func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -62,6 +63,9 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// prefix to lock to the api key holding entity
+	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+
 	err = s.fsm.Set(p)
 	if err != nil {
 		s.logger.Error("Could not write key-value via FSM", "error", err)
@@ -72,7 +76,7 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -103,6 +107,9 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// prefix to lock to the api key holding entity
+	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+
 	err = s.fsm.Delete(p.Key)
 	if err != nil {
 		s.logger.Error("Could not unset value via FSM", "error", err)
@@ -117,7 +124,7 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 */
 
 func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -148,6 +155,9 @@ func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// prefix to lock to the api key holding entity
+	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+
 	err = s.fsm.Untag(p)
 	if err != nil {
 		s.logger.Error("Could not untag via FSM", "error", err)
@@ -158,7 +168,7 @@ func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -189,6 +199,9 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// prefix to lock to the api key holding entity
+	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+
 	err = s.fsm.Tag(p)
 	if err != nil {
 		s.logger.Error("Could not tag via FSM", "error", err)
@@ -199,7 +212,7 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -230,6 +243,9 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// prefix to lock to the api key holding entity
+	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+
 	err = s.fsm.SetCache(p)
 	if err != nil {
 		s.logger.Error("Could not set cache via FSM", "error", err)
@@ -240,7 +256,7 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -270,6 +286,9 @@ func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing key in delete cache request payload", http.StatusBadRequest)
 		return
 	}
+
+	// prefix to lock to the api key holding entity
+	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
 
 	err = s.fsm.DeleteCache(p.Key)
 	if err != nil {

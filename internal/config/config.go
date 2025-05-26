@@ -39,6 +39,7 @@ type Cluster struct {
 	InsudbDir        string          `yaml:"insudbDir"`
 	ServerMustUseTLS bool            `yaml:"serverMustUseTLS"` // Across all nodes, if true, then their "join" clients will permit skip of TLS verification
 	Cache            Cache           `yaml:"cache"`
+	RootPrefix       string          `yaml:"rootPrefix"`
 }
 
 var (
@@ -53,6 +54,7 @@ var (
 	ErrDuplicateNodeSecret      = errors.New("duplicate node secret in config - each node must contain a unique nodeSecret")
 	ErrCacheKeysMissing         = errors.New("cache.keys is missing in config")
 	ErrCacheStandardTTLMissing  = errors.New("cache.standardTTL is missing in config")
+	ErrRootPrefixMissing        = errors.New("rootPrefix is missing in config")
 )
 
 func LoadConfig(configFile string) (*Cluster, error) {
@@ -108,6 +110,10 @@ func LoadConfig(configFile string) (*Cluster, error) {
 
 	if cfg.Cache.StandardTTL == 0 {
 		return nil, ErrCacheStandardTTLMissing
+	}
+
+	if cfg.RootPrefix == "" {
+		return nil, ErrRootPrefixMissing
 	}
 
 	return &cfg, nil
