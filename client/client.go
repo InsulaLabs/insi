@@ -132,7 +132,7 @@ func (c *Client) Get(key string) (string, error) {
 	var response struct {
 		Data string `json:"data"`
 	}
-	err := c.doRequest(http.MethodGet, "/get", params, nil, &response)
+	err := c.doRequest(http.MethodGet, "db/api/v1/get", params, nil, &response)
 	if err != nil {
 		return "", err
 	}
@@ -145,7 +145,7 @@ func (c *Client) Set(key, value string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key, "value": value}
-	return c.doRequest(http.MethodPost, "/set", nil, payload, nil)
+	return c.doRequest(http.MethodPost, "db/api/v1/set", nil, payload, nil)
 }
 
 // Delete removes a key and its value.
@@ -154,7 +154,7 @@ func (c *Client) Delete(key string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key}
-	return c.doRequest(http.MethodPost, "/delete", nil, payload, nil)
+	return c.doRequest(http.MethodPost, "db/api/v1/delete", nil, payload, nil)
 }
 
 // IterateByPrefix retrieves a list of keys matching a given prefix.
@@ -170,7 +170,7 @@ func (c *Client) IterateByPrefix(prefix string, offset, limit int) ([]string, er
 	var response struct {
 		Data []string `json:"data"`
 	}
-	err := c.doRequest(http.MethodGet, "/iterate/prefix", params, nil, &response)
+	err := c.doRequest(http.MethodGet, "db/api/v1/iterate/prefix", params, nil, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func (c *Client) Tag(key, tag string) error {
 		return fmt.Errorf("tag cannot be empty")
 	}
 	payload := map[string]string{"key": key, "value": tag} // Server expects "value" for the tag
-	return c.doRequest(http.MethodPost, "/tag", nil, payload, nil)
+	return c.doRequest(http.MethodPost, "db/api/v1/tag", nil, payload, nil)
 }
 
 // Untag removes a tag association from a key.
@@ -201,7 +201,7 @@ func (c *Client) Untag(key, tag string) error {
 	}
 	// Server's untagHandler expects KVPayload {Key: key, Value: tag}
 	payload := map[string]string{"key": key, "value": tag}
-	return c.doRequest(http.MethodPost, "/untag", nil, payload, nil)
+	return c.doRequest(http.MethodPost, "db/api/v1/untag", nil, payload, nil)
 }
 
 // IterateByTag retrieves a list of keys associated with a given tag.
@@ -217,7 +217,7 @@ func (c *Client) IterateByTag(tag string, offset, limit int) ([]string, error) {
 	var response struct {
 		Data []string `json:"data"`
 	}
-	err := c.doRequest(http.MethodGet, "/iterate/tags", params, nil, &response)
+	err := c.doRequest(http.MethodGet, "db/api/v1/iterate/tags", params, nil, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +236,7 @@ func (c *Client) SetCache(key, value string, ttl time.Duration) error {
 		"value": value,
 		"ttl":   ttl.Seconds(), // Server expects TTL in seconds
 	}
-	return c.doRequest(http.MethodPost, "/cache/set", nil, payload, nil)
+	return c.doRequest(http.MethodPost, "db/api/v1/cache/set", nil, payload, nil)
 }
 
 // GetCache retrieves a value from the cache by its key.
@@ -248,7 +248,7 @@ func (c *Client) GetCache(key string) (string, error) {
 	var response struct {
 		Data string `json:"data"`
 	}
-	err := c.doRequest(http.MethodGet, "/cache/get", params, nil, &response)
+	err := c.doRequest(http.MethodGet, "db/api/v1/cache/get", params, nil, &response)
 	if err != nil {
 		return "", err
 	}
@@ -261,7 +261,7 @@ func (c *Client) DeleteCache(key string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key}
-	return c.doRequest(http.MethodPost, "/cache/delete", nil, payload, nil)
+	return c.doRequest(http.MethodPost, "db/api/v1/cache/delete", nil, payload, nil)
 }
 
 // --- System Operations ---
@@ -279,7 +279,7 @@ func (c *Client) Join(followerID, followerAddr string) error {
 		"followerAddr": followerAddr,
 	}
 	// The /join endpoint is a GET request but needs auth and carries parameters in the query string.
-	return c.doRequest(http.MethodGet, "/join", params, nil, nil)
+	return c.doRequest(http.MethodGet, "db/api/v1/join", params, nil, nil)
 }
 
 // NewAPIKey requests the server to generate a new API key for the given entity.
@@ -291,7 +291,7 @@ func (c *Client) NewAPIKey(entityName string) (string, error) {
 	var response struct {
 		APIKey string `json:"apiKey"`
 	}
-	err := c.doRequest(http.MethodGet, "/new-api-key", params, nil, &response)
+	err := c.doRequest(http.MethodGet, "db/api/v1/new-api-key", params, nil, &response)
 	if err != nil {
 		return "", err
 	}
@@ -304,13 +304,13 @@ func (c *Client) DeleteAPIKey(apiKey string) error {
 		return fmt.Errorf("apiKey cannot be empty")
 	}
 	params := map[string]string{"key": apiKey}
-	return c.doRequest(http.MethodGet, "/delete-api-key", params, nil, nil)
+	return c.doRequest(http.MethodGet, "db/api/v1/delete-api-key", params, nil, nil)
 }
 
 // Ping sends a ping request to the server and returns the response.
 func (c *Client) Ping() (map[string]string, error) {
 	var response map[string]string
-	err := c.doRequest(http.MethodGet, "/ping", nil, nil, &response)
+	err := c.doRequest(http.MethodGet, "db/api/v1/ping", nil, nil, &response)
 	if err != nil {
 		return nil, err
 	}
