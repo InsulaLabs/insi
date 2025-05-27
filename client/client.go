@@ -64,9 +64,14 @@ func NewClient(cfg *Config) (*Client, error) {
 	httpClient := &http.Client{
 		Transport: transport,
 		Timeout:   cfg.Timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Prevent client from following redirects automatically.
+			// We will handle them manually in doRequest to preserve method and body.
+			return http.ErrUseLastResponse
+		},
 	}
 
-	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify)
+	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify, "manual_redirects", true)
 
 	return &Client{
 		baseURL:    baseURL,
@@ -78,56 +83,122 @@ func NewClient(cfg *Config) (*Client, error) {
 
 // internal request helper
 func (c *Client) doRequest(method, path string, queryParams map[string]string, body interface{}, target interface{}) error {
-	fullURL := c.baseURL.ResolveReference(&url.URL{Path: path})
+	originalMethod := method // Save original method to preserve it across redirects
 
-	q := fullURL.Query()
-	for k, v := range queryParams {
-		q.Set(k, v)
+	// Construct the initial URL
+	initialPathURL := &url.URL{Path: path}
+	currentReqURL := c.baseURL.ResolveReference(initialPathURL)
+
+	// Apply query parameters
+	if len(queryParams) > 0 {
+		q := currentReqURL.Query()
+		for k, v := range queryParams {
+			q.Set(k, v)
+		}
+		currentReqURL.RawQuery = q.Encode()
 	}
-	fullURL.RawQuery = q.Encode()
 
 	var reqBodyBytes []byte
 	var err error
 	if body != nil {
 		reqBodyBytes, err = json.Marshal(body)
 		if err != nil {
-			c.logger.Error("Failed to marshal request body", "path", path, "error", err)
-			return fmt.Errorf("failed to marshal request body for %s: %w", path, err)
+			c.logger.Error("Failed to marshal request body", "path", path, "method", originalMethod, "error", err)
+			return fmt.Errorf("failed to marshal request body for %s %s: %w", originalMethod, path, err)
 		}
 	}
 
-	req, err := http.NewRequest(method, fullURL.String(), bytes.NewBuffer(reqBodyBytes))
-	if err != nil {
-		c.logger.Error("Failed to create new HTTP request", "method", method, "url", fullURL.String(), "error", err)
-		return fmt.Errorf("failed to create request %s %s: %w", method, fullURL.String(), err)
-	}
+	var lastResp *http.Response // To store the response if loop finishes due to too many redirects
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", c.apiKey)
+	for redirects := 0; redirects < 10; redirects++ { // Max 10 redirects
+		reqBodyReader := bytes.NewBuffer(reqBodyBytes) // Can be re-read
 
-	c.logger.Debug("Sending request", "method", method, "url", fullURL.String())
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		c.logger.Error("HTTP request failed", "method", method, "url", fullURL.String(), "error", err)
-		return fmt.Errorf("http request %s %s failed: %w", method, fullURL.String(), err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		c.logger.Warn("Received non-2xx status code", "method", method, "url", fullURL.String(), "status_code", resp.StatusCode)
-		// TODO: Attempt to read error body for more details
-		return fmt.Errorf("server returned status %d for %s %s", resp.StatusCode, method, fullURL.String())
-	}
-
-	if target != nil {
-		if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-			c.logger.Error("Failed to decode response body", "method", method, "url", fullURL.String(), "status_code", resp.StatusCode, "error", err)
-			return fmt.Errorf("failed to decode response body for %s %s (status %d): %w", method, fullURL.String(), resp.StatusCode, err)
+		req, err := http.NewRequest(originalMethod, currentReqURL.String(), reqBodyReader)
+		if err != nil {
+			c.logger.Error("Failed to create new HTTP request", "method", originalMethod, "url", currentReqURL.String(), "error", err)
+			return fmt.Errorf("failed to create request %s %s: %w", originalMethod, currentReqURL.String(), err)
 		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", c.apiKey)
+		// req.Host is set by the transport based on req.URL.Host
+
+		c.logger.Debug("Sending request", "method", originalMethod, "url", currentReqURL.String(), "attempt", redirects+1)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			c.logger.Error("HTTP request failed", "method", originalMethod, "url", currentReqURL.String(), "error", err)
+			// Close previous response body if any, though `err` here means `resp` is likely nil
+			if lastResp != nil && lastResp.Body != nil {
+				lastResp.Body.Close()
+			}
+			return fmt.Errorf("http request %s %s failed: %w", originalMethod, currentReqURL.String(), err)
+		}
+		if lastResp != nil && lastResp.Body != nil { // Clean up body from previous iteration if any
+			lastResp.Body.Close()
+		}
+		lastResp = resp // Store current response
+
+		// Check for redirect status codes
+		switch resp.StatusCode {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, // 301, 302, 303
+			http.StatusTemporaryRedirect, http.StatusPermanentRedirect: // 307, 308
+
+			loc := resp.Header.Get("Location")
+			if loc == "" {
+				resp.Body.Close()
+				c.logger.Error("Redirect response missing Location header", "status_code", resp.StatusCode, "url", currentReqURL.String())
+				return fmt.Errorf("redirect (status %d) missing Location header from %s", resp.StatusCode, currentReqURL.String())
+			}
+
+			redirectURL, err := currentReqURL.Parse(loc) // Resolve Location relative to currentReqURL
+			if err != nil {
+				resp.Body.Close()
+				c.logger.Error("Failed to parse redirect Location header", "location", loc, "error", err)
+				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
+			}
+
+			c.logger.Info("Request redirected",
+				"from_url", currentReqURL.String(),
+				"to_url", redirectURL.String(),
+				"status_code", resp.StatusCode,
+				"method", originalMethod)
+
+			currentReqURL = redirectURL // Update URL for the next iteration
+
+			// Note: We are preserving originalMethod for all these redirect codes.
+			// For 303 See Other, the spec suggests changing to GET. If strict 303 behavior is needed,
+			// this would require adjustment. For the current use case (e.g. "set" command), preserving
+			// the method seems to be the desired outcome.
+
+			continue // Continue to the next iteration of the loop for the redirect
+		}
+
+		// Not a redirect, or unhandled status by the loop; this is the final response to process.
+		defer resp.Body.Close() // Ensure this final response body is closed when function returns
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			c.logger.Warn("Received non-2xx status code", "method", originalMethod, "url", currentReqURL.String(), "status_code", resp.StatusCode)
+			// TODO: Attempt to read error body for more details (as was in original code comment)
+			return fmt.Errorf("server returned status %d for %s %s", resp.StatusCode, originalMethod, currentReqURL.String())
+		}
+
+		if target != nil {
+			if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+				c.logger.Error("Failed to decode response body", "method", originalMethod, "url", currentReqURL.String(), "status_code", resp.StatusCode, "error", err)
+				return fmt.Errorf("failed to decode response body for %s %s (status %d): %w", originalMethod, currentReqURL.String(), resp.StatusCode, err)
+			}
+		}
+		c.logger.Debug("Request successful", "method", originalMethod, "url", currentReqURL.String(), "status_code", resp.StatusCode)
+		return nil // Success
 	}
-	c.logger.Debug("Request successful", "method", method, "url", fullURL.String(), "status_code", resp.StatusCode)
-	return nil
+
+	// If loop finishes, it means too many redirects
+	if lastResp != nil && lastResp.Body != nil {
+		lastResp.Body.Close()
+	}
+	c.logger.Error("Too many redirects", "final_url_attempt", currentReqURL.String(), "original_method", originalMethod)
+	return fmt.Errorf("stopped after %d redirects, last URL: %s", 10, currentReqURL.String())
 }
 
 // --- Value Operations ---

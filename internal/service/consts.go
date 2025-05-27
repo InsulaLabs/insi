@@ -17,20 +17,6 @@
 
 package service
 
-import "fmt"
-
 const (
 	EntityRoot = "root"
 )
-
-func (s *Service) assembleSystemKeyForRootStorage(key string) string {
-	return fmt.Sprintf("%s:%s", s.authToken, key)
-}
-
-func (s *Service) assembleSystemTagForNewEntityKey(entity string) string {
-	return fmt.Sprintf("%s:%s", s.authToken, entity)
-}
-
-func (s *Service) assemblePotentiallyStoredKey(sumbittedApiKey string) string {
-	return fmt.Sprintf("%s:%s", s.authToken, sumbittedApiKey)
-}

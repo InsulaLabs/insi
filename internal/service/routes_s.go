@@ -87,6 +87,7 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println("[BUG] making new api key for entity", entity)
 	key, err := s.newApiKey(entity)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to generate key: %s", err), http.StatusInternalServerError)

@@ -39,9 +39,12 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 		return tokenCache.Entity, tokenCache.UUID, true
 	}
 
-	pstk := s.assemblePotentiallyStoredKey(authHeader)
-
-	value, err := s.fsm.Get(pstk)
+	/*
+		We create the thing with the root api key which means it gets the root prefix
+		and we need to scope to the root prefix to get the actual key
+	*/
+	scopedKey := fmt.Sprintf("%s:%s", s.cfg.RootPrefix, authHeader)
+	value, err := s.fsm.Get(scopedKey)
 	if err != nil {
 		s.logger.Error(
 			"Failed to get value from valuesDb",
@@ -53,7 +56,7 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 	if value == "" {
 		s.logger.Error(
 			"Value is empty",
-			"key", pstk,
+			"key", authHeader,
 		)
 		return "", "", false
 	}
@@ -99,10 +102,13 @@ func (s *Service) newApiKey(entity string) (string, error) {
 		[]byte(s.cfg.InstanceSecret),
 	)
 
+	fmt.Println("[BUG] constructing key for entity", entity)
 	key, err := keyGen.ConstructApiKey(entity)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate key: %w", err)
 	}
+
+	fmt.Println("[BUG] key generated", key)
 
 	// store the key in the db
 	internalClientLogger := s.logger.WithGroup("internal-client")
@@ -116,17 +122,15 @@ func (s *Service) newApiKey(entity string) (string, error) {
 		return "", fmt.Errorf("failed to store key: %w", err)
 	}
 
-	keyForStorage := s.assembleSystemKeyForRootStorage(key)
-	entityTag := s.assembleSystemTagForNewEntityKey(entity)
 	createdAt := time.Now()
 
 	// Store the key in the db with a prefix that only the service can search for (or otherwise auth'd)
-	if err := c.Set(keyForStorage, createdAt.String()); err != nil {
+	if err := c.Set(key, createdAt.String()); err != nil {
 		return "", fmt.Errorf("failed to store key: [set] %w", err)
 	}
 
 	// Add a tag that cant be searched by user unless they know the secret hash prefix
-	if err := c.Tag(keyForStorage, entityTag); err != nil {
+	if err := c.Tag(key, entity); err != nil {
 		return "", fmt.Errorf("failed to store key: [tag] %w", err)
 	}
 
@@ -147,10 +151,8 @@ func (s *Service) deleteApiKey(targetKey string) error {
 		return err
 	}
 
-	storedAs := s.assembleSystemKeyForRootStorage(targetKey)
-
 	if s.fsm.IsLeader() {
-		err = s.fsm.Delete(storedAs)
+		err = s.fsm.Delete(targetKey)
 		if err != nil {
 			return err
 		}
@@ -165,7 +167,7 @@ func (s *Service) deleteApiKey(targetKey string) error {
 		if err != nil {
 			return err
 		}
-		err = c.Delete(storedAs)
+		err = c.Delete(targetKey)
 		if err != nil {
 			return err
 		}
