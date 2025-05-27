@@ -12,6 +12,7 @@ import (
 
 	"github.com/InsulaLabs/insi/internal/config"
 	"github.com/InsulaLabs/insi/internal/rft"
+	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/InsulaLabs/insula/tkv"
 	"github.com/jellydator/ttlcache/v3"
@@ -48,6 +49,7 @@ type Service struct {
 
 type eventSubsystem struct {
 	service *Service
+	eventCh chan models.Event
 }
 
 var _ rft.EventReceiverIF = &eventSubsystem{}
@@ -62,7 +64,15 @@ func NewService(
 	asNodeId string,
 ) (*Service, error) {
 
-	es := &eventSubsystem{}
+	// Satisfies the rft.EventReceiverIF interface so we can retrieve "Fresh" events
+	// from the FSM as they are applied to the network. When the FSM gives us an event
+	// to hand out to subscribers, we first place it in the eventCh channel
+	// and the system that handles connected clients will pull from this channel
+	// and forward the event to the client.
+	es := &eventSubsystem{
+		eventCh: make(chan models.Event),
+	}
+
 	fsm, err := rft.New(rft.Settings{
 		Ctx:           ctx,
 		Logger:        logger.With("service", "rft"),
@@ -215,8 +225,15 @@ func (s *Service) Run() {
 /*
 Satisfies the rft.EventReceiverIF interface so we can retrieve "Fresh" events
 from the FSM as they are applied to the network
+
+As events come in this function is called once per-node per-event. So, any subscribers to the event system
+that would be connected over websockets to this node address can have the event forwarded to them
 */
 func (es *eventSubsystem) Receive(topic string, data any) error {
 	fmt.Printf("DEV> Node %s received event: %s %v\n", es.service.nodeCfg.HttpBinding, topic, data)
+	es.eventCh <- models.Event{
+		Topic: topic,
+		Data:  data,
+	}
 	return nil
 }
