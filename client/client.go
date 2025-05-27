@@ -16,11 +16,19 @@ const (
 	defaultTimeout = 10 * time.Second
 )
 
+type Config struct {
+	HostPort   string
+	ApiKey     string
+	SkipVerify bool
+	Logger     *slog.Logger
+	Timeout    time.Duration
+}
+
 // Client is the API client for the insi service.
 type Client struct {
 	baseURL    *url.URL
 	httpClient *http.Client
-	authToken  string
+	apiKey     string
 	logger     *slog.Logger
 }
 
@@ -28,20 +36,17 @@ type Client struct {
 // hostPort is the target server, e.g., "127.0.0.1:8443".
 // authToken is the access token for the cluster, used to authenticate system routes.
 // clientSkipVerifySetting controls whether the client skips verification of the server's TLS certificate, read from config.
-func NewClient(hostPort string, authToken string, clientSkipVerifySetting bool, logger *slog.Logger) (*Client, error) {
-	if hostPort == "" {
+func NewClient(cfg *Config) (*Client, error) {
+	if cfg.HostPort == "" {
 		return nil, fmt.Errorf("hostPort cannot be empty")
 	}
-	if authToken == "" {
-		return nil, fmt.Errorf("authToken cannot be empty")
+	if cfg.ApiKey == "" {
+		return nil, fmt.Errorf("apiKey cannot be empty")
 	}
-	if logger == nil {
-		logger = slog.Default()
-	}
-	clientLogger := logger.WithGroup("insi_client")
+	clientLogger := cfg.Logger.WithGroup("insi_client")
 
 	// We ENFORCE HTTPS - NEVER PERMIT HTTP
-	baseURLStr := fmt.Sprintf("https://%s", hostPort)
+	baseURLStr := fmt.Sprintf("https://%s", cfg.HostPort)
 	baseURL, err := url.Parse(baseURLStr)
 	if err != nil {
 		clientLogger.Error("Failed to parse base URL", "url", baseURLStr, "error", err)
@@ -49,20 +54,24 @@ func NewClient(hostPort string, authToken string, clientSkipVerifySetting bool, 
 	}
 
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: clientSkipVerifySetting},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.SkipVerify},
+	}
+
+	if cfg.Timeout == 0 {
+		cfg.Timeout = defaultTimeout
 	}
 
 	httpClient := &http.Client{
 		Transport: transport,
-		Timeout:   defaultTimeout,
+		Timeout:   cfg.Timeout,
 	}
 
-	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", clientSkipVerifySetting)
+	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify)
 
 	return &Client{
 		baseURL:    baseURL,
 		httpClient: httpClient,
-		authToken:  authToken,
+		apiKey:     cfg.ApiKey,
 		logger:     clientLogger,
 	}, nil
 }
@@ -94,7 +103,7 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", c.authToken)
+	req.Header.Set("Authorization", c.apiKey)
 
 	c.logger.Debug("Sending request", "method", method, "url", fullURL.String())
 

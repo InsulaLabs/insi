@@ -73,7 +73,12 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 	secretHash.Write([]byte(cfg.InstanceSecret))
 	secret := hex.EncodeToString(secretHash.Sum(nil))
 
-	c, err := client.NewClient(nodeDetails.HttpBinding, secret, cfg.ClientSkipVerify, clientLogger)
+	c, err := client.NewClient(&client.Config{
+		HostPort:   nodeDetails.HttpBinding,
+		ApiKey:     secret,
+		SkipVerify: cfg.ClientSkipVerify,
+		Logger:     clientLogger,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.HttpBinding, err)
 	}
@@ -490,7 +495,12 @@ func handleVerifyApiKey(cfg *config.Cluster, args []string) {
 	}
 
 	verificationClientLogger := logger.WithGroup("api-verify-client")
-	verificationClient, err := client.NewClient(nodeDetails.HttpBinding, apiKeyToVerify, cfg.ClientSkipVerify, verificationClientLogger)
+	verificationClient, err := client.NewClient(&client.Config{
+		HostPort:   nodeDetails.HttpBinding,
+		ApiKey:     apiKeyToVerify,
+		SkipVerify: cfg.ClientSkipVerify,
+		Logger:     verificationClientLogger,
+	})
 	if err != nil {
 		// This typically means the apiKeyToVerify was not in the correct format (e.g. hex encoded sha256)
 		// or hostPort was invalid, NewClient would catch empty apiKeyToVerify but good to be mindful.

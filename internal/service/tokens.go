@@ -106,7 +106,12 @@ func (s *Service) newApiKey(entity string) (string, error) {
 
 	// store the key in the db
 	internalClientLogger := s.logger.WithGroup("internal-client")
-	c, err := client.NewClient(s.nodeCfg.HttpBinding, s.authToken, s.cfg.ClientSkipVerify, internalClientLogger)
+	c, err := client.NewClient(&client.Config{
+		HostPort:   s.nodeCfg.HttpBinding,
+		ApiKey:     s.authToken,
+		SkipVerify: s.cfg.ClientSkipVerify,
+		Logger:     internalClientLogger,
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to store key: %w", err)
 	}
@@ -151,7 +156,12 @@ func (s *Service) deleteApiKey(targetKey string) error {
 		}
 	} else {
 		s.logger.Info("Deleting api key from follower node => forwarding to leader", "key", targetKey)
-		c, err := client.NewClient(s.nodeCfg.HttpBinding, s.cfg.InstanceSecret, s.cfg.ClientSkipVerify, s.logger)
+		c, err := client.NewClient(&client.Config{
+			HostPort:   s.nodeCfg.HttpBinding,
+			ApiKey:     s.cfg.InstanceSecret,
+			SkipVerify: s.cfg.ClientSkipVerify,
+			Logger:     s.logger,
+		})
 		if err != nil {
 			return err
 		}
