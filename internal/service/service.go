@@ -37,6 +37,7 @@ type Service struct {
 	identity  badge.Badge
 	fsm       rft.FSMInstance
 	authToken string
+	mux       *http.ServeMux
 
 	startedAt time.Time
 
@@ -110,6 +111,7 @@ func NewService(
 		authToken:    authToken,
 		lcs:          caches,
 		rateLimiters: rateLimiters,
+		mux:          http.NewServeMux(),
 	}, nil
 }
 
@@ -138,32 +140,33 @@ func (s *Service) rateLimitMiddleware(next http.Handler, category string) http.H
 func (s *Service) Run() {
 
 	// Values handlers
-	http.Handle("/db/api/v1/set", s.rateLimitMiddleware(http.HandlerFunc(s.setHandler), "values"))
-	http.Handle("/db/api/v1/get", s.rateLimitMiddleware(http.HandlerFunc(s.getHandler), "values"))
-	http.Handle("/db/api/v1/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteHandler), "values"))
-	http.Handle("/db/api/v1/iterate/prefix", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByPrefixHandler), "values"))
+	s.mux.Handle("/db/api/v1/set", s.rateLimitMiddleware(http.HandlerFunc(s.setHandler), "values"))
+	s.mux.Handle("/db/api/v1/get", s.rateLimitMiddleware(http.HandlerFunc(s.getHandler), "values"))
+	s.mux.Handle("/db/api/v1/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteHandler), "values"))
+	s.mux.Handle("/db/api/v1/iterate/prefix", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByPrefixHandler), "values"))
 
 	// Tagging handlers
-	http.Handle("/db/api/v1/tag", s.rateLimitMiddleware(http.HandlerFunc(s.tagHandler), "tags"))
-	http.Handle("/db/api/v1/untag", s.rateLimitMiddleware(http.HandlerFunc(s.untagHandler), "tags"))
-	http.Handle("/db/api/v1/iterate/tags", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByTagsHandler), "tags"))
+	s.mux.Handle("/db/api/v1/tag", s.rateLimitMiddleware(http.HandlerFunc(s.tagHandler), "tags"))
+	s.mux.Handle("/db/api/v1/untag", s.rateLimitMiddleware(http.HandlerFunc(s.untagHandler), "tags"))
+	s.mux.Handle("/db/api/v1/iterate/tags", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByTagsHandler), "tags"))
 
 	// Cache handlers
-	http.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cacheEndpoints"))
-	http.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cacheEndpoints"))
-	http.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cacheEndpoints"))
+	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cacheEndpoints"))
+	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cacheEndpoints"))
+	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cacheEndpoints"))
 
 	// System handlers
-	http.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
-	http.Handle("/db/api/v1/new-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.newApiKeyHandler), "system"))
-	http.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
-	http.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
+	s.mux.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
+	s.mux.Handle("/db/api/v1/new-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.newApiKeyHandler), "system"))
+	s.mux.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
+	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
 
 	srv := &http.Server{
-		Addr: httpListenAddr,
+		Addr:    httpListenAddr,
+		Handler: s.mux,
 	}
 
 	go func() {
