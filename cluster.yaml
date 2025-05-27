@@ -1,5 +1,6 @@
 # A SHA256 hash of the instance secret is the "admin" api key
 instanceSecret: "secret-value-shared-by-all-nodes"
+rootPrefix: "some-secure-prefix"
 
 # If first time launch, non-leaders will auto-follow this leader
 defaultLeader: "node0"

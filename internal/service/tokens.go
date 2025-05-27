@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -9,21 +10,33 @@ import (
 	"github.com/InsulaLabs/insula/security/sentinel"
 )
 
-func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool) {
+type TokenCache struct {
+	Entity string `json:"entity"`
+	UUID   string `json:"uuid"`
+}
+
+// Returns the entity name (as encoded by user) and then the uuid generated unique to the key
+func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, string, bool) {
 
 	authHeader := r.Header.Get("Authorization")
 	if mustBeRoot {
-		return EntityRoot, authHeader == s.authToken
+		return EntityRoot, s.cfg.RootPrefix, authHeader == s.authToken
 	}
 
 	if authHeader == s.authToken {
-		return EntityRoot, true
+		return EntityRoot, s.cfg.RootPrefix, true
 	}
 
 	// Check the cache first
 	item := s.lcs.apiKeys.Get(authHeader)
 	if item != nil {
-		return item.Value(), true
+		tokenCache := TokenCache{}
+		err := json.Unmarshal([]byte(item.Value()), &tokenCache)
+		if err != nil {
+			s.logger.Error("Failed to unmarshal token cache", "error", err)
+			return "", "", false
+		}
+		return tokenCache.Entity, tokenCache.UUID, true
 	}
 
 	pstk := s.assemblePotentiallyStoredKey(authHeader)
@@ -34,7 +47,7 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool)
 			"Failed to get value from valuesDb",
 			"error", err,
 		)
-		return "", false
+		return "", "", false
 	}
 
 	if value == "" {
@@ -42,7 +55,7 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool)
 			"Value is empty",
 			"key", pstk,
 		)
-		return "", false
+		return "", "", false
 	}
 
 	keyMan := sentinel.NewSentinel(
@@ -51,20 +64,27 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, bool)
 		[]byte(s.cfg.InstanceSecret),
 	)
 
-	entity, err := keyMan.DeconstructApiKey(authHeader)
+	entity, uuid, err := keyMan.DeconstructApiKey(authHeader)
 	if err != nil {
 		s.logger.Error(
 			"Failed to deconstruct API key during validation",
 			"key", authHeader,
 			"error", err,
 		)
-		return "", false
+		return "", "", false
 	}
 
-	// Store the key in the cache
-	s.lcs.apiKeys.Set(authHeader, entity, s.cfg.Cache.Keys)
+	tokenCache := TokenCache{
+		Entity: entity,
+		UUID:   uuid,
+	}
+	cacheValue, err := json.Marshal(tokenCache)
+	if err == nil {
+		// Store the key in the cache
+		s.lcs.apiKeys.Set(authHeader, string(cacheValue), s.cfg.Cache.Keys)
+	}
 
-	return entity, true
+	return entity, uuid, true
 }
 
 func (s *Service) newApiKey(entity string) (string, error) {
@@ -117,7 +137,7 @@ func (s *Service) deleteApiKey(targetKey string) error {
 	)
 
 	// Ensure that its valid and created by our secret
-	_, err := keyMan.DeconstructApiKey(targetKey)
+	_, _, err := keyMan.DeconstructApiKey(targetKey)
 	if err != nil {
 		return err
 	}

@@ -47,7 +47,7 @@ func attemptAutoJoin(
 	if clusterCfg.TLS.Cert != "" && clusterCfg.TLS.Key != "" {
 		scheme = "https"
 	}
-	joinURL := fmt.Sprintf("%s://%s/join?followerId=%s&followerAddr=%s",
+	joinURL := fmt.Sprintf("%s://%s/db/api/v1/join?followerId=%s&followerAddr=%s",
 		scheme, leaderNodeCfg.HttpBinding, currentNodeId, myRaftAddr)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}

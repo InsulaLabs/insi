@@ -2,15 +2,17 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 )
 
 func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -24,7 +26,7 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := s.fsm.Get(key)
+	value, err := s.fsm.Get(fmt.Sprintf("%s:%s", uuid, key))
 	if err != nil {
 		s.logger.Info("FSM Get for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
@@ -48,7 +50,7 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Request) {
 
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -95,10 +97,18 @@ func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// TODO: Find a way to parallelize this if needed (later)
+	// Strip the UUID prefix from the keys to be returned
+	strippedKeys := make([]string, len(value))
+	prefixToRemove := uuid + ":"
+	for i, k := range value {
+		strippedKeys[i] = strings.TrimPrefix(k, prefixToRemove)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	rsp := struct {
 		Data []string `json:"data"`
-	}{Data: value}
+	}{Data: strippedKeys}
 
 	if err := json.NewEncoder(w).Encode(rsp); err != nil {
 		s.logger.Error("Could not encode response for tag key", "tag", tag, "error", err)
@@ -107,7 +117,7 @@ func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Reques
 
 func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
 
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -144,7 +154,7 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 		offsetInt = 0
 	}
 
-	value, err := s.fsm.Iterate(prefix, offsetInt, limitInt)
+	value, err := s.fsm.Iterate(fmt.Sprintf("%s:%s", uuid, prefix), offsetInt, limitInt)
 	if err == badger.ErrKeyNotFound {
 		http.NotFound(w, r)
 		return
@@ -166,7 +176,7 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 
 func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	entity, ok := s.validateToken(r, false)
+	entity, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -180,7 +190,7 @@ func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := s.fsm.GetCache(key)
+	value, err := s.fsm.GetCache(fmt.Sprintf("%s:%s", uuid, key))
 	if err != nil {
 		s.logger.Info("FSM GetCache for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)

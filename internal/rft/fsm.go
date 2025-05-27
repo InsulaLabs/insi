@@ -71,6 +71,11 @@ type FSMInstance interface {
 }
 
 // Constants for FSM commands (distinct from snapshot db types)
+// These are the commands that the leader will send to all the followes
+// The followers will apply the command to their own state machine.
+// This means we can add events to the FSM and "applying" the event
+// will can trigger the remote event listeners attatched to the node that
+// received the command
 const (
 	cmdSetValue    = "set_value"
 	cmdDeleteValue = "delete_value"

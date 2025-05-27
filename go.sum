@@ -5,6 +5,8 @@ github.com/DataDog/datadog-go v2.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3
 github.com/DataDog/datadog-go v3.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3tL4fMGNddJ+vMq1mwgfaqoQ=
 github.com/InsulaLabs/insula v0.0.0-20250523135902-f80e9bc4b986 h1:roO5HilP1Kbs5xYmLPJc4l3caJ6YV2dXsTzMOPXdPeU=
 github.com/InsulaLabs/insula v0.0.0-20250523135902-f80e9bc4b986/go.mod h1:OxIUVXdDwpZIv2BL7KwgkdxcQ/Sj7w3/FMyS6yHNoxg=
+github.com/InsulaLabs/insula v0.0.0-20250527014018-4c35e5314cc7 h1:CdKsHWDZZNoartQ+/da8C2z9NmN8Xqz7D9KHP2rRPvw=
+github.com/InsulaLabs/insula v0.0.0-20250527014018-4c35e5314cc7/go.mod h1:OxIUVXdDwpZIv2BL7KwgkdxcQ/Sj7w3/FMyS6yHNoxg=
 github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=

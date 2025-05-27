@@ -19,6 +19,7 @@ var (
 	logger     *slog.Logger
 	configPath string
 	clusterCfg *config.Cluster
+	targetNode string // Added for --target flag
 )
 
 func init() {
@@ -30,6 +31,7 @@ func init() {
 	logger = slog.New(handler)
 
 	flag.StringVar(&configPath, "config", "cluster.yaml", "Path to the cluster configuration file")
+	flag.StringVar(&targetNode, "target", "", "Target node ID (e.g., node0, node1). Defaults to DefaultLeader in config.") // Added target flag
 }
 
 func loadConfig(path string) (*config.Cluster, error) {
@@ -102,7 +104,7 @@ func main() {
 	// For 'join', a specific client will be created.
 	var cli *client.Client
 	if command != "join" { // 'join' command handles its client creation specifically
-		cli, err = getClient(clusterCfg, "") // Empty string for targetNodeID uses DefaultLeader
+		cli, err = getClient(clusterCfg, targetNode) // Use targetNode from flag
 		if err != nil {
 			logger.Error("Failed to initialize default API client", "error", err)
 			os.Exit(1)
@@ -467,17 +469,23 @@ func handleVerifyApiKey(cfg *config.Cluster, args []string) {
 
 	// Create a new client instance specifically for this verification,
 	// using the provided API key as the authToken.
-	// We assume the default leader for verification for simplicity.
-	nodeToConnect := cfg.DefaultLeader
-	if nodeToConnect == "" {
-		// This case should ideally be caught by getClient if no targetNodeID is passed,
-		// but good to have a check here too.
-		logger.Error("Cannot verify API key: DefaultLeader not set in config and no target node specified.")
-		os.Exit(1)
+	nodeToConnect := targetNode // Use the global targetNode flag first
+	if nodeToConnect == "" {    // If --target was not specified
+		if cfg.DefaultLeader == "" {
+			logger.Error("Cannot verify API key: --target flag not set and DefaultLeader not set in config and no specific node given for verification.")
+			fmt.Println("Error: Cannot verify API key. No target node specified via --target and no DefaultLeader in config.")
+			os.Exit(1)
+		}
+		nodeToConnect = cfg.DefaultLeader
+		logger.Info("No --target specified for API key verification, using DefaultLeader", "node_id", nodeToConnect)
+	} else {
+		logger.Info("Using --target for API key verification", "node_id", nodeToConnect)
 	}
+
 	nodeDetails, ok := cfg.Nodes[nodeToConnect]
 	if !ok {
-		logger.Error("Cannot verify API key: DefaultLeader node details not found in configuration.", "node_id", nodeToConnect)
+		logger.Error("Cannot verify API key: Target node details not found in configuration.", "node_id", nodeToConnect)
+		fmt.Printf("Error: Node ID '%s' (from --target or DefaultLeader) not found in configuration.\\n", nodeToConnect)
 		os.Exit(1)
 	}
 

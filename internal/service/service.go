@@ -89,26 +89,26 @@ func NewService(
 func (s *Service) Run() {
 
 	// Values handlers
-	http.HandleFunc("/set", s.setHandler)
-	http.HandleFunc("/get", s.getHandler)
-	http.HandleFunc("/delete", s.deleteHandler)
-	http.HandleFunc("/iterate/prefix", s.iterateKeysByPrefixHandler)
+	http.HandleFunc("/db/api/v1/set", s.setHandler)
+	http.HandleFunc("/db/api/v1/get", s.getHandler)
+	http.HandleFunc("/db/api/v1/delete", s.deleteHandler)
+	http.HandleFunc("/db/api/v1/iterate/prefix", s.iterateKeysByPrefixHandler)
 
 	// Tagging handlers
-	http.HandleFunc("/tag", s.tagHandler)
-	http.HandleFunc("/untag", s.untagHandler)
-	http.HandleFunc("/iterate/tags", s.iterateKeysByTagsHandler)
+	http.HandleFunc("/db/api/v1/tag", s.tagHandler)
+	http.HandleFunc("/db/api/v1/untag", s.untagHandler)
+	http.HandleFunc("/db/api/v1/iterate/tags", s.iterateKeysByTagsHandler)
 
 	// Cache handlers
-	http.HandleFunc("/cache/set", s.setCacheHandler)
-	http.HandleFunc("/cache/get", s.getCacheHandler)
-	http.HandleFunc("/cache/delete", s.deleteCacheHandler)
+	http.HandleFunc("/db/api/v1/cache/set", s.setCacheHandler)
+	http.HandleFunc("/db/api/v1/cache/get", s.getCacheHandler)
+	http.HandleFunc("/db/api/v1/cache/delete", s.deleteCacheHandler)
 
 	// System handlers
-	http.HandleFunc("/join", s.joinHandler)
-	http.HandleFunc("/new-api-key", s.newApiKeyHandler)
-	http.HandleFunc("/delete-api-key", s.deleteApiKeyHandler)
-	http.HandleFunc("/ping", s.authedPing)
+	http.HandleFunc("/db/api/v1/join", s.joinHandler)
+	http.HandleFunc("/db/api/v1/new-api-key", s.newApiKeyHandler)
+	http.HandleFunc("/db/api/v1/delete-api-key", s.deleteApiKeyHandler)
+	http.HandleFunc("/db/api/v1/ping", s.authedPing)
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
