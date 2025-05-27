@@ -5,9 +5,9 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
-	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/InsulaLabs/insi/internal/config"
@@ -15,6 +15,7 @@ import (
 	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/InsulaLabs/insula/tkv"
+	"github.com/gorilla/websocket"
 	"github.com/jellydator/ttlcache/v3"
 	"golang.org/x/time/rate"
 )
@@ -45,14 +46,13 @@ type Service struct {
 
 	lcs          *localCaches
 	rateLimiters map[string]*rate.Limiter
-}
 
-type eventSubsystem struct {
-	service *Service
-	eventCh chan models.Event
+	// WebSocket event handling
+	eventSubscribers     map[string]map[*eventSession]bool // Changed to store *eventSession
+	eventSubscribersLock sync.RWMutex
+	wsUpgrader           websocket.Upgrader
+	eventCh              chan models.Event // Central event channel for the service
 }
-
-var _ rft.EventReceiverIF = &eventSubsystem{}
 
 func NewService(
 	ctx context.Context,
@@ -64,13 +64,16 @@ func NewService(
 	asNodeId string,
 ) (*Service, error) {
 
+	// This eventCh is for the FSM to signal the service.
+	serviceEventCh := make(chan models.Event, 256) // Buffered channel
+
 	// Satisfies the rft.EventReceiverIF interface so we can retrieve "Fresh" events
 	// from the FSM as they are applied to the network. When the FSM gives us an event
 	// to hand out to subscribers, we first place it in the eventCh channel
 	// and the system that handles connected clients will pull from this channel
 	// and forward the event to the client.
 	es := &eventSubsystem{
-		eventCh: make(chan models.Event),
+		eventCh: serviceEventCh, // eventSubsystem will use the service's channel
 	}
 
 	fsm, err := rft.New(rft.Settings{
@@ -132,10 +135,23 @@ func NewService(
 		lcs:          caches,
 		rateLimiters: rateLimiters,
 		mux:          http.NewServeMux(),
+
+		eventSubscribers: make(map[string]map[*eventSession]bool),
+		wsUpgrader: websocket.Upgrader{
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+			CheckOrigin: func(r *http.Request) bool {
+				logger.Debug("WebSocket CheckOrigin called", "origin", r.Header.Get("Origin"), "host", r.Host)
+				return true
+			},
+		},
+		eventCh: serviceEventCh,
 	}
 
 	// Set the event subsystem to the service for event logic
 	es.service = service
+
+	go service.eventProcessingLoop()
 
 	return service, nil
 }
@@ -187,6 +203,7 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
 	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "default"))
+	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "default"))
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
@@ -220,20 +237,4 @@ func (s *Service) Run() {
 			s.logger.Error("HTTP server error", "error", err)
 		}
 	}
-}
-
-/*
-Satisfies the rft.EventReceiverIF interface so we can retrieve "Fresh" events
-from the FSM as they are applied to the network
-
-As events come in this function is called once per-node per-event. So, any subscribers to the event system
-that would be connected over websockets to this node address can have the event forwarded to them
-*/
-func (es *eventSubsystem) Receive(topic string, data any) error {
-	fmt.Printf("DEV> Node %s received event: %s %v\n", es.service.nodeCfg.HttpBinding, topic, data)
-	es.eventCh <- models.Event{
-		Topic: topic,
-		Data:  data,
-	}
-	return nil
 }
