@@ -22,18 +22,18 @@ cache:
 
 rateLimiters:
   values:
-    limit: 100 # requests per second
-    burst: 150 # burst size
+    limit: 100
+    burst: 150 
   tags:
     limit: 50
     burst: 75
-  cacheEndpoints: # Renamed to avoid confusion with the existing 'cache' TTL config
+  cache:
     limit: 200
     burst: 250
   system:
     limit: 10
     burst: 20
-  default: # Fallback for any routes not explicitly categorized
+  default:
     limit: 5
     burst: 10
 

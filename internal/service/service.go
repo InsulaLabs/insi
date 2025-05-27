@@ -86,7 +86,7 @@ func NewService(
 		rateLimiters["tags"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'tags'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
-	if rlConfig := clusterCfg.RateLimiters.CacheEndpoints; rlConfig.Limit > 0 {
+	if rlConfig := clusterCfg.RateLimiters.Cache; rlConfig.Limit > 0 {
 		rateLimiters["cacheEndpoints"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'cacheEndpoints'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}

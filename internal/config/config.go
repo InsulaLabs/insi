@@ -49,26 +49,31 @@ type RateLimiterConfig struct {
 }
 
 type RateLimiters struct {
-	Values         RateLimiterConfig `yaml:"values"`
-	Tags           RateLimiterConfig `yaml:"tags"`
-	CacheEndpoints RateLimiterConfig `yaml:"cacheEndpoints"`
-	System         RateLimiterConfig `yaml:"system"`
-	Default        RateLimiterConfig `yaml:"default"`
+	Values  RateLimiterConfig `yaml:"values"`
+	Tags    RateLimiterConfig `yaml:"tags"`
+	Cache   RateLimiterConfig `yaml:"cache"`
+	System  RateLimiterConfig `yaml:"system"`
+	Default RateLimiterConfig `yaml:"default"`
 }
 
 var (
-	ErrConfigFileMissing        = errors.New("config file is missing")
-	ErrConfigFileUnreadable     = errors.New("config file is unreadable")
-	ErrConfigFileUnmarshallable = errors.New("config file is unmarshallable")
-	ErrInstanceSecretMissing    = errors.New("instanceSecret is missing in config")
-	ErrDefaultLeaderMissing     = errors.New("defaultLeader is not set in config")
-	ErrNodesMissing             = errors.New("no nodes defined in config")
-	ErrInsudbDirMissing         = errors.New("insudbDir is missing in config and is required for lock files and node data")
-	ErrTLSMissing               = errors.New("TLS configuration incomplete: both cert and key must be provided if one is specified")
-	ErrDuplicateNodeSecret      = errors.New("duplicate node secret in config - each node must contain a unique nodeSecret")
-	ErrCacheKeysMissing         = errors.New("cache.keys is missing in config")
-	ErrCacheStandardTTLMissing  = errors.New("cache.standardTTL is missing in config")
-	ErrRootPrefixMissing        = errors.New("rootPrefix is missing in config")
+	ErrConfigFileMissing               = errors.New("config file is missing")
+	ErrConfigFileUnreadable            = errors.New("config file is unreadable")
+	ErrConfigFileUnmarshallable        = errors.New("config file is unmarshallable")
+	ErrInstanceSecretMissing           = errors.New("instanceSecret is missing in config")
+	ErrDefaultLeaderMissing            = errors.New("defaultLeader is not set in config")
+	ErrNodesMissing                    = errors.New("no nodes defined in config")
+	ErrInsudbDirMissing                = errors.New("insudbDir is missing in config and is required for lock files and node data")
+	ErrTLSMissing                      = errors.New("TLS configuration incomplete: both cert and key must be provided if one is specified")
+	ErrDuplicateNodeSecret             = errors.New("duplicate node secret in config - each node must contain a unique nodeSecret")
+	ErrCacheKeysMissing                = errors.New("cache.keys is missing in config")
+	ErrCacheStandardTTLMissing         = errors.New("cache.standardTTL is missing in config")
+	ErrRootPrefixMissing               = errors.New("rootPrefix is missing in config")
+	ErrRateLimitersValuesLimitMissing  = errors.New("rateLimiters.values.limit is missing in config")
+	ErrRateLimitersTagsLimitMissing    = errors.New("rateLimiters.tags.limit is missing in config")
+	ErrRateLimitersCacheLimitMissing   = errors.New("rateLimiters.cache.limit is missing in config")
+	ErrRateLimitersSystemLimitMissing  = errors.New("rateLimiters.system.limit is missing in config")
+	ErrRateLimitersDefaultLimitMissing = errors.New("rateLimiters.default.limit is missing in config")
 )
 
 func LoadConfig(configFile string) (*Cluster, error) {
@@ -128,6 +133,22 @@ func LoadConfig(configFile string) (*Cluster, error) {
 
 	if cfg.RootPrefix == "" {
 		return nil, ErrRootPrefixMissing
+	}
+
+	if cfg.RateLimiters.Values.Limit == 0 {
+		return nil, ErrRateLimitersValuesLimitMissing
+	}
+	if cfg.RateLimiters.Tags.Limit == 0 {
+		return nil, ErrRateLimitersTagsLimitMissing
+	}
+	if cfg.RateLimiters.Cache.Limit == 0 {
+		return nil, ErrRateLimitersCacheLimitMissing
+	}
+	if cfg.RateLimiters.System.Limit == 0 {
+		return nil, ErrRateLimitersSystemLimitMissing
+	}
+	if cfg.RateLimiters.Default.Limit == 0 {
+		return nil, ErrRateLimitersDefaultLimitMissing
 	}
 
 	return &cfg, nil
