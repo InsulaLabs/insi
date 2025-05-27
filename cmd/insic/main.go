@@ -137,6 +137,8 @@ func main() {
 		handleApi(cli, cmdArgs)
 	case "ping":
 		handlePing(cli, cmdArgs)
+	case "publish":
+		handlePublish(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -164,6 +166,24 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  api delete <api_key_value>\n")
 	fmt.Fprintf(os.Stderr, "  api verify <api_key_value>\n")
 	fmt.Fprintf(os.Stderr, "  ping\n")
+}
+
+func handlePublish(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("publish: requires <topic> <data>")
+		printUsage()
+		os.Exit(1)
+	}
+	topic := args[0]
+	data := args[1]
+	err := c.PublishEvent(topic, data)
+	if err != nil {
+		logger.Error("Publish failed", "topic", topic, "error", err)
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+	logger.Info("Publish successful", "topic", topic)
+	fmt.Println("OK")
 }
 
 // Placeholder for command handlers - to be implemented next

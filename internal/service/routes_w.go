@@ -298,3 +298,46 @@ func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 }
+
+func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	entity, uuid, ok := s.validateToken(r, false)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+
+	fmt.Println("DEV> eventsHandler", entity, uuid)
+
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for events request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var p models.Event
+	if err := json.Unmarshal(bodyBytes, &p); err != nil {
+		s.logger.Error("Invalid JSON payload for events request", "error", err)
+		http.Error(w, "Invalid JSON payload for events: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = s.fsm.Publish(p.Topic, p.Data)
+	if err != nil {
+		s.logger.Error("Could not publish event via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+}

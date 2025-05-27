@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -45,6 +46,12 @@ type Service struct {
 	rateLimiters map[string]*rate.Limiter
 }
 
+type eventSubsystem struct {
+	service *Service
+}
+
+var _ rft.EventReceiverIF = &eventSubsystem{}
+
 func NewService(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -54,13 +61,16 @@ func NewService(
 	clusterCfg *config.Cluster,
 	asNodeId string,
 ) (*Service, error) {
+
+	es := &eventSubsystem{}
 	fsm, err := rft.New(rft.Settings{
-		Ctx:     ctx,
-		Logger:  logger.With("service", "rft"),
-		Config:  clusterCfg,
-		NodeCfg: nodeSpecificCfg,
-		NodeId:  asNodeId,
-		TkvDb:   tkv,
+		Ctx:           ctx,
+		Logger:        logger.With("service", "rft"),
+		Config:        clusterCfg,
+		NodeCfg:       nodeSpecificCfg,
+		NodeId:        asNodeId,
+		TkvDb:         tkv,
+		EventReceiver: es,
 	})
 	if err != nil {
 		return nil, err
@@ -100,7 +110,7 @@ func NewService(
 		rlLogger.Info("Initialized rate limiter for 'default'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 
-	return &Service{
+	service := &Service{
 		appCtx:       ctx,
 		cfg:          clusterCfg,
 		nodeCfg:      nodeSpecificCfg,
@@ -112,7 +122,12 @@ func NewService(
 		lcs:          caches,
 		rateLimiters: rateLimiters,
 		mux:          http.NewServeMux(),
-	}, nil
+	}
+
+	// Set the event subsystem to the service for event logic
+	es.service = service
+
+	return service, nil
 }
 
 func (s *Service) rateLimitMiddleware(next http.Handler, category string) http.Handler {
@@ -161,6 +176,8 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
+	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "default"))
+
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
 
@@ -193,4 +210,13 @@ func (s *Service) Run() {
 			s.logger.Error("HTTP server error", "error", err)
 		}
 	}
+}
+
+/*
+Satisfies the rft.EventReceiverIF interface so we can retrieve "Fresh" events
+from the FSM as they are applied to the network
+*/
+func (es *eventSubsystem) Receive(topic string, data any) error {
+	fmt.Printf("DEV> Node %s received event: %s %v\n", es.service.nodeCfg.HttpBinding, topic, data)
+	return nil
 }

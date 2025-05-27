@@ -22,3 +22,14 @@ type CachePayload struct {
 	TTL   time.Duration `json:"ttl"`
 	SetAt time.Time     `json:"set_at"`
 }
+
+type Event struct {
+	Topic string `json:"topic"`
+	Data  any    `json:"data"`
+}
+
+type EventPayload struct {
+	Topic     string    `json:"topic"`
+	Data      any       `json:"data"`
+	EmittedAt time.Time `json:"emitted_at"`
+}

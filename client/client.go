@@ -344,6 +344,14 @@ func (c *Client) DeleteCache(key string) error {
 	return c.doRequest(http.MethodPost, "db/api/v1/cache/delete", nil, payload, nil)
 }
 
+func (c *Client) PublishEvent(topic string, data any) error {
+	payload := map[string]interface{}{
+		"topic": topic,
+		"data":  data,
+	}
+	return c.doRequest(http.MethodPost, "db/api/v1/events", nil, payload, nil)
+}
+
 // --- System Operations ---
 
 // Join requests the target node (which must be a leader) to add a new follower to the Raft cluster.
