@@ -14,6 +14,7 @@ import (
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/InsulaLabs/insula/tkv"
 	"github.com/jellydator/ttlcache/v3"
+	"golang.org/x/time/rate"
 )
 
 /*
@@ -39,7 +40,8 @@ type Service struct {
 
 	startedAt time.Time
 
-	lcs *localCaches
+	lcs          *localCaches
+	rateLimiters map[string]*rate.Limiter
 }
 
 func NewService(
@@ -48,13 +50,13 @@ func NewService(
 	nodeSpecificCfg *config.Node,
 	identity badge.Badge,
 	tkv tkv.TKV,
-	config *config.Cluster,
+	clusterCfg *config.Cluster,
 	asNodeId string,
 ) (*Service, error) {
 	fsm, err := rft.New(rft.Settings{
 		Ctx:     ctx,
 		Logger:  logger.With("service", "rft"),
-		Config:  config,
+		Config:  clusterCfg,
 		NodeCfg: nodeSpecificCfg,
 		NodeId:  asNodeId,
 		TkvDb:   tkv,
@@ -63,52 +65,99 @@ func NewService(
 		return nil, err
 	}
 
-	caches, err := initLocalCaches(&config.Cache)
+	caches, err := initLocalCaches(&clusterCfg.Cache)
 	if err != nil {
 		return nil, err
 	}
 
 	secHash := sha256.New()
-	secHash.Write([]byte(config.InstanceSecret))
+	secHash.Write([]byte(clusterCfg.InstanceSecret))
 	authToken := hex.EncodeToString(secHash.Sum(nil))
 
+	// Initialize rate limiters
+	rateLimiters := make(map[string]*rate.Limiter)
+	rlLogger := logger.With("component", "rate-limiter")
+
+	if rlConfig := clusterCfg.RateLimiters.Values; rlConfig.Limit > 0 {
+		rateLimiters["values"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'values'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
+	if rlConfig := clusterCfg.RateLimiters.Tags; rlConfig.Limit > 0 {
+		rateLimiters["tags"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'tags'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
+	if rlConfig := clusterCfg.RateLimiters.CacheEndpoints; rlConfig.Limit > 0 {
+		rateLimiters["cacheEndpoints"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'cacheEndpoints'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
+	if rlConfig := clusterCfg.RateLimiters.System; rlConfig.Limit > 0 {
+		rateLimiters["system"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'system'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
+	if rlConfig := clusterCfg.RateLimiters.Default; rlConfig.Limit > 0 {
+		rateLimiters["default"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'default'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
+
 	return &Service{
-		appCtx:    ctx,
-		cfg:       config,
-		nodeCfg:   nodeSpecificCfg,
-		logger:    logger,
-		identity:  identity,
-		tkv:       tkv,
-		fsm:       fsm,
-		authToken: authToken,
-		lcs:       caches,
+		appCtx:       ctx,
+		cfg:          clusterCfg,
+		nodeCfg:      nodeSpecificCfg,
+		logger:       logger,
+		identity:     identity,
+		tkv:          tkv,
+		fsm:          fsm,
+		authToken:    authToken,
+		lcs:          caches,
+		rateLimiters: rateLimiters,
 	}, nil
+}
+
+func (s *Service) rateLimitMiddleware(next http.Handler, category string) http.Handler {
+	limiter, ok := s.rateLimiters[category]
+	if !ok {
+		// Fallback to default limiter if category-specific one isn't found or configured
+		limiter, ok = s.rateLimiters["default"]
+		if !ok { // If no default limiter, then no rate limiting for this handler
+			s.logger.Warn("No rate limiter configured for category and no default limiter present", "category", category)
+			return next
+		}
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			s.logger.Warn("Rate limit exceeded", "category", category, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
+			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Run forever until the context is cancelled
 func (s *Service) Run() {
 
 	// Values handlers
-	http.HandleFunc("/db/api/v1/set", s.setHandler)
-	http.HandleFunc("/db/api/v1/get", s.getHandler)
-	http.HandleFunc("/db/api/v1/delete", s.deleteHandler)
-	http.HandleFunc("/db/api/v1/iterate/prefix", s.iterateKeysByPrefixHandler)
+	http.Handle("/db/api/v1/set", s.rateLimitMiddleware(http.HandlerFunc(s.setHandler), "values"))
+	http.Handle("/db/api/v1/get", s.rateLimitMiddleware(http.HandlerFunc(s.getHandler), "values"))
+	http.Handle("/db/api/v1/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteHandler), "values"))
+	http.Handle("/db/api/v1/iterate/prefix", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByPrefixHandler), "values"))
 
 	// Tagging handlers
-	http.HandleFunc("/db/api/v1/tag", s.tagHandler)
-	http.HandleFunc("/db/api/v1/untag", s.untagHandler)
-	http.HandleFunc("/db/api/v1/iterate/tags", s.iterateKeysByTagsHandler)
+	http.Handle("/db/api/v1/tag", s.rateLimitMiddleware(http.HandlerFunc(s.tagHandler), "tags"))
+	http.Handle("/db/api/v1/untag", s.rateLimitMiddleware(http.HandlerFunc(s.untagHandler), "tags"))
+	http.Handle("/db/api/v1/iterate/tags", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByTagsHandler), "tags"))
 
 	// Cache handlers
-	http.HandleFunc("/db/api/v1/cache/set", s.setCacheHandler)
-	http.HandleFunc("/db/api/v1/cache/get", s.getCacheHandler)
-	http.HandleFunc("/db/api/v1/cache/delete", s.deleteCacheHandler)
+	http.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cacheEndpoints"))
+	http.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cacheEndpoints"))
+	http.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cacheEndpoints"))
 
 	// System handlers
-	http.HandleFunc("/db/api/v1/join", s.joinHandler)
-	http.HandleFunc("/db/api/v1/new-api-key", s.newApiKeyHandler)
-	http.HandleFunc("/db/api/v1/delete-api-key", s.deleteApiKeyHandler)
-	http.HandleFunc("/db/api/v1/ping", s.authedPing)
+	http.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
+	http.Handle("/db/api/v1/new-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.newApiKeyHandler), "system"))
+	http.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
+	http.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))

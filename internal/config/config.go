@@ -40,6 +40,20 @@ type Cluster struct {
 	ServerMustUseTLS bool            `yaml:"serverMustUseTLS"` // Across all nodes, if true, then their "join" clients will permit skip of TLS verification
 	Cache            Cache           `yaml:"cache"`
 	RootPrefix       string          `yaml:"rootPrefix"`
+	RateLimiters     RateLimiters    `yaml:"rateLimiters"`
+}
+
+type RateLimiterConfig struct {
+	Limit float64 `yaml:"limit"` // Requests per second
+	Burst int     `yaml:"burst"` // Burst size
+}
+
+type RateLimiters struct {
+	Values         RateLimiterConfig `yaml:"values"`
+	Tags           RateLimiterConfig `yaml:"tags"`
+	CacheEndpoints RateLimiterConfig `yaml:"cacheEndpoints"`
+	System         RateLimiterConfig `yaml:"system"`
+	Default        RateLimiterConfig `yaml:"default"`
 }
 
 var (

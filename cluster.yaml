@@ -20,6 +20,23 @@ cache:
   standard-ttl: 60m
   keys: 1m # We dont bumb ttl here - its to avoid the db hit for 1 minute after an auth
 
+rateLimiters:
+  values:
+    limit: 100 # requests per second
+    burst: 150 # burst size
+  tags:
+    limit: 50
+    burst: 75
+  cacheEndpoints: # Renamed to avoid confusion with the existing 'cache' TTL config
+    limit: 200
+    burst: 250
+  system:
+    limit: 10
+    burst: 20
+  default: # Fallback for any routes not explicitly categorized
+    limit: 5
+    burst: 10
+
 nodes:
   node0:
     raftBinding: 127.0.0.1:2222
