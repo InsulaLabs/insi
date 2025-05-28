@@ -86,7 +86,7 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_, _, ok := s.validateToken(r, false)
+	_, uuid, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
@@ -98,6 +98,10 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Missing topic", http.StatusBadRequest)
 		return
 	}
+
+	// Prefix the topic with the entity's UUID to scope it
+	prefixedTopic := fmt.Sprintf("%s:%s", uuid, topic)
+	s.logger.Debug("Subscription request for prefixed topic", "original_topic", topic, "prefixed_topic", prefixedTopic, "entity_uuid", uuid)
 
 	s.wsConnectionLock.Lock()
 	if s.activeWsConnections >= int32(s.cfg.Sessions.MaxConnections) {
@@ -111,14 +115,14 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 
 	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		s.logger.Error("Failed to upgrade WebSocket connection", "error", err, "topic", topic)
+		s.logger.Error("Failed to upgrade WebSocket connection", "error", err, "topic", prefixedTopic)
 		return
 	}
-	s.logger.Info("WebSocket connection upgraded", "remote_addr", conn.RemoteAddr().String(), "topic", topic)
+	s.logger.Info("WebSocket connection upgraded", "remote_addr", conn.RemoteAddr().String(), "topic", prefixedTopic)
 
 	session := &eventSession{
 		conn:    conn,
-		topic:   topic,
+		topic:   prefixedTopic,
 		send:    make(chan []byte, 256), // Buffered channel
 		service: s,
 	}

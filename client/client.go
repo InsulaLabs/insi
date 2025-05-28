@@ -410,7 +410,7 @@ func (c *Client) Ping() (map[string]string, error) {
 }
 
 // SubscribeToEvents connects to the event subscription WebSocket endpoint and prints incoming events.
-func (c *Client) SubscribeToEvents(topic string, ctx context.Context) error {
+func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent func(data any)) error {
 	if topic == "" {
 		return fmt.Errorf("topic cannot be empty")
 	}
@@ -546,9 +546,9 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context) error {
 					c.logger.Error("Failed to unmarshal event message", "error", err, "message", string(message))
 					continue // Skip this message
 				}
-				// Print the received event (or pass to a callback)
-				fmt.Printf("Received event on topic '%s': %+v\n", event.Topic, event.Data)
-				c.logger.Info("Received event", "topic", event.Topic, "data", fmt.Sprintf("%+v", event.Data))
+				if onEvent != nil {
+					onEvent(event.Data)
+				}
 			}
 		}
 	}

@@ -334,7 +334,11 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.fsm.Publish(p.Topic, p.Data)
+	// Prefix the topic with the entity's UUID to scope it
+	prefixedTopic := fmt.Sprintf("%s:%s", uuid, p.Topic)
+	s.logger.Debug("Publishing event with prefixed topic", "original_topic", p.Topic, "prefixed_topic", prefixedTopic, "entity_uuid", uuid)
+
+	err = s.fsm.Publish(prefixedTopic, p.Data)
 	if err != nil {
 		s.logger.Error("Could not publish event via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

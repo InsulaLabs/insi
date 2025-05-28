@@ -23,6 +23,7 @@ var (
 	configPath string
 	clusterCfg *config.Cluster
 	targetNode string // Added for --target flag
+	useRootKey bool   // Added for --root flag
 )
 
 func init() {
@@ -35,6 +36,7 @@ func init() {
 
 	flag.StringVar(&configPath, "config", "cluster.yaml", "Path to the cluster configuration file")
 	flag.StringVar(&targetNode, "target", "", "Target node ID (e.g., node0, node1). Defaults to DefaultLeader in config.") // Added target flag
+	flag.BoolVar(&useRootKey, "root", false, "Use the root key for the cluster. Defaults to false.")
 }
 
 func loadConfig(path string) (*config.Cluster, error) {
@@ -72,13 +74,23 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 
 	clientLogger.Info("Client is using instanceSecret for token generation", "secret_value", cfg.InstanceSecret)
 
-	secretHash := sha256.New()
-	secretHash.Write([]byte(cfg.InstanceSecret))
-	secret := hex.EncodeToString(secretHash.Sum(nil))
+	var apiKey string
+
+	if useRootKey {
+		secretHash := sha256.New()
+		secretHash.Write([]byte(cfg.InstanceSecret))
+		apiKey = hex.EncodeToString(secretHash.Sum(nil))
+	} else {
+		apiKey = os.Getenv("INSI_API_KEY")
+	}
+
+	if apiKey == "" {
+		return nil, fmt.Errorf("apiKey is empty and --root flag is not set")
+	}
 
 	c, err := client.NewClient(&client.Config{
 		HostPort:   nodeDetails.HttpBinding,
-		ApiKey:     secret,
+		ApiKey:     apiKey,
 		SkipVerify: cfg.ClientSkipVerify,
 		Logger:     clientLogger,
 	})
@@ -214,8 +226,12 @@ func handleSubscribe(c *client.Client, args []string) {
 		cancel() // Cancel the context to signal SubscribeToEvents to close
 	}()
 
+	cb := func(data any) {
+		fmt.Printf("Received event on topic '%s': %+v\n", topic, data)
+	}
+
 	logger.Info("Attempting to subscribe to events", "topic", topic)
-	err := c.SubscribeToEvents(topic, ctx)
+	err := c.SubscribeToEvents(topic, ctx, cb)
 	if err != nil {
 		// context.Canceled is an expected error on graceful shutdown, others are not.
 		if err == context.Canceled {

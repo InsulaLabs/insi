@@ -36,6 +36,9 @@ rateLimiters:
   default:
     limit: 5
     burst: 10
+  events:
+    limit: 500
+    burst: 750
 
 sessions:
   eventChannelSize: 256

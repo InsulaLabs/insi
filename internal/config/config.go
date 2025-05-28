@@ -62,6 +62,7 @@ type RateLimiters struct {
 	Cache   RateLimiterConfig `yaml:"cache"`
 	System  RateLimiterConfig `yaml:"system"`
 	Default RateLimiterConfig `yaml:"default"`
+	Events  RateLimiterConfig `yaml:"events"`
 }
 
 var (
@@ -82,6 +83,7 @@ var (
 	ErrRateLimitersCacheLimitMissing           = errors.New("rateLimiters.cache.limit is missing in config")
 	ErrRateLimitersSystemLimitMissing          = errors.New("rateLimiters.system.limit is missing in config")
 	ErrRateLimitersDefaultLimitMissing         = errors.New("rateLimiters.default.limit is missing in config")
+	ErrRateLimitersEventsLimitMissing          = errors.New("rateLimiters.events.limit is missing in config")
 	ErrSessionsEventChannelSizeMissing         = errors.New("sessions.eventChannelSize is missing or invalid in config")
 	ErrSessionsWebSocketReadBufferSizeMissing  = errors.New("sessions.webSocketReadBufferSize is missing or invalid in config")
 	ErrSessionsWebSocketWriteBufferSizeMissing = errors.New("sessions.webSocketWriteBufferSize is missing or invalid in config")
@@ -161,6 +163,9 @@ func LoadConfig(configFile string) (*Cluster, error) {
 	}
 	if cfg.RateLimiters.Default.Limit == 0 {
 		return nil, ErrRateLimitersDefaultLimitMissing
+	}
+	if cfg.RateLimiters.Events.Limit == 0 {
+		return nil, ErrRateLimitersEventsLimitMissing
 	}
 
 	if cfg.Sessions.EventChannelSize <= 0 {

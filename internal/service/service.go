@@ -128,6 +128,10 @@ func NewService(
 		rateLimiters["default"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'default'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
+	if rlConfig := clusterCfg.RateLimiters.Events; rlConfig.Limit > 0 {
+		rateLimiters["events"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
 
 	service := &Service{
 		appCtx:       ctx,
@@ -208,8 +212,8 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
-	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "default"))
-	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "default"))
+	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
+	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))

@@ -40,7 +40,7 @@ run_insic() {
     local exit_code
 
     echo -e "${INFO_EMOJI} Running: ${INSIC_PATH} --config ${DEFAULT_CONFIG_PATH} ${subcommand} ${args[*]}" >&2
-    cmd_output=$("${INSIC_PATH}" --config "${DEFAULT_CONFIG_PATH}" "${subcommand}" "${args[@]}")
+    cmd_output=$("${INSIC_PATH}" --root --config "${DEFAULT_CONFIG_PATH}" "${subcommand}" "${args[@]}")
     exit_code=$? # Capture exit code immediately
     echo -e "${cmd_output}" # Print command output to stdout for capture
     echo -e "Exit code: ${exit_code}" >&2
