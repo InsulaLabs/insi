@@ -353,6 +353,8 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("Could not unmarshal publish_event payload", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal publish_event payload: %w", err)
 			}
+
+			// NOTE: We dont persis the events so this MAY be redundant, but its good to be safe.
 			if time.Since(p.EmittedAt) > EventReplayWindow {
 				kf.logger.Warn(
 					"Skipping publish_event because it is outside the replay window",
