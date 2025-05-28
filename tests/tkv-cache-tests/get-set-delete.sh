@@ -44,7 +44,7 @@ run_insic() {
 
     echo -e "${INFO_EMOJI} Running: ${INSIC_PATH} --config ${DEFAULT_CONFIG_PATH} ${subcommand} ${args[*]}" >&2
     # Capture combined stdout and stderr
-    captured_output_combined=$("${INSIC_PATH}" --config "${DEFAULT_CONFIG_PATH}" "${subcommand}" "${args[@]}" 2>&1)
+    captured_output_combined=$("${INSIC_PATH}" --root --config "${DEFAULT_CONFIG_PATH}" "${subcommand}" "${args[@]}" 2>&1)
     exit_code=$?
     LAST_RAW_CMD_OUTPUT="${captured_output_combined}" # Store for expect_error and expect_success
 

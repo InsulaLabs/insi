@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,9 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/InsulaLabs/insi/models" // Assuming models.Event is defined here
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -344,6 +348,14 @@ func (c *Client) DeleteCache(key string) error {
 	return c.doRequest(http.MethodPost, "db/api/v1/cache/delete", nil, payload, nil)
 }
 
+func (c *Client) PublishEvent(topic string, data any) error {
+	payload := map[string]interface{}{
+		"topic": topic,
+		"data":  data,
+	}
+	return c.doRequest(http.MethodPost, "db/api/v1/events", nil, payload, nil)
+}
+
 // --- System Operations ---
 
 // Join requests the target node (which must be a leader) to add a new follower to the Raft cluster.
@@ -395,4 +407,149 @@ func (c *Client) Ping() (map[string]string, error) {
 		return nil, err
 	}
 	return response, nil
+}
+
+// SubscribeToEvents connects to the event subscription WebSocket endpoint and prints incoming events.
+func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent func(data any)) error {
+	if topic == "" {
+		return fmt.Errorf("topic cannot be empty")
+	}
+
+	// Construct WebSocket URL. Example: ws://localhost:8080/db/api/v1/events/subscribe?topic=MY_TOPIC&token=API_KEY
+	// Note: The server must handle the "token" query parameter for authentication.
+	wsScheme := "ws"
+	if c.baseURL.Scheme == "https" {
+		wsScheme = "wss"
+	}
+
+	// hostPort is derived from c.baseURL.Host which already contains host:port
+	wsURL := url.URL{
+		Scheme: wsScheme,
+		Host:   c.baseURL.Host, // c.baseURL.Host already has host:port
+		Path:   "/db/api/v1/events/subscribe",
+	}
+	query := wsURL.Query()
+	query.Set("topic", topic)
+	query.Set("token", c.apiKey) // Pass API key as a query parameter for WebSocket authentication
+	wsURL.RawQuery = query.Encode()
+
+	c.logger.Info("Attempting to connect to WebSocket for event subscription", "url", wsURL.String())
+
+	// Prepare headers if needed, though gorilla/websocket might not use http.Client's headers directly
+	// For token authentication via query param, headers might not be strictly necessary for WebSocket handshake itself
+	// but server-side WebSocket upgrader can inspect the initial HTTP request.
+	header := http.Header{}
+	header.Set("Authorization", c.apiKey) // Standard Authorization header, server might check this during upgrade
+
+	dialer := websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 10 * time.Second, // Example timeout
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: c.httpClient.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify,
+		},
+	}
+
+	conn, resp, err := dialer.Dial(wsURL.String(), header)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to dial websocket %s", wsURL.String())
+		if resp != nil {
+			// Try to read body for more details if connection was partially made
+			// bodyBytes, readErr := io.ReadAll(resp.Body)
+			// if readErr == nil {
+			//  errMsg = fmt.Sprintf("%s: %s (status: %s)", errMsg, string(bodyBytes), resp.Status)
+			// } else {
+			errMsg = fmt.Sprintf("%s: (status: %s), error: %v", errMsg, resp.Status, err)
+			// }
+			// resp.Body.Close()
+			c.logger.Error("WebSocket dial error with response", "url", wsURL.String(), "status", resp.Status, "error", err)
+			return fmt.Errorf(errMsg)
+
+		}
+		c.logger.Error("WebSocket dial error", "url", wsURL.String(), "error", err)
+		return fmt.Errorf("%s: %w", errMsg, err)
+	}
+	defer conn.Close()
+
+	// Set a read deadline for the connection to prevent indefinite blocking if the server stops sending messages.
+	// This is important for graceful shutdown and resource management.
+	// conn.SetReadDeadline(time.Now().Add(readWait)) // readWait could be e.g. 60 seconds
+	// To keep the connection open indefinitely without read timeouts (as requested for "does not timeout from inactivity"):
+	// conn.SetReadDeadline(time.Time{}) // Zero time value means no deadline
+
+	// Handle pong messages to keep the connection alive if the server sends pings
+	conn.SetPongHandler(func(string) error {
+		c.logger.Debug("Received pong from server")
+		// conn.SetReadDeadline(time.Now().Add(pongWait)) // Reset read deadline after pong
+		// For no timeout: conn.SetReadDeadline(time.Time{})
+		return nil
+	})
+
+	// Periodically send pings to the server to keep the connection alive
+	// This helps prevent proxies or the server itself from closing the connection due to inactivity.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second) // Example: send a ping every 30 seconds
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				c.logger.Debug("Sending ping to server")
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					c.logger.Error("Error sending ping", "error", err)
+					return // Stop pinging if there's an error
+				}
+			case <-ctx.Done(): // Listen for context cancellation
+				c.logger.Info("Context cancelled, closing WebSocket ping loop.")
+				// Attempt to send a close message to the server.
+				err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				if err != nil {
+					c.logger.Error("Error sending close message during ping loop shutdown", "error", err)
+				}
+				return
+			}
+		}
+	}()
+
+	c.logger.Info("Successfully connected to WebSocket. Listening for events...", "topic", topic)
+
+	for {
+		select {
+		case <-ctx.Done():
+			c.logger.Info("Context cancelled, closing WebSocket read loop.")
+			// Attempt to send a close message to the server.
+			err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			if err != nil {
+				c.logger.Error("Error sending close message during read loop shutdown", "error", err)
+			}
+			return ctx.Err() // Return context error
+		default:
+			// Set a short read deadline to allow checking ctx.Done() periodically
+			// This is a common pattern for interruptible blocking reads.
+			// If we want NO timeout at all, this is trickier with select.
+			// For now, let's proceed without a read deadline in the loop for simplicity,
+			// relying on the ping/pong and server closing the connection if needed.
+			// conn.SetReadDeadline(time.Now().Add(1 * time.Second)) // Example: 1 second timeout
+
+			messageType, message, err := conn.ReadMessage()
+			if err != nil {
+				// Check if the error is due to context cancellation or a normal close
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) && err != context.Canceled {
+					c.logger.Error("Error reading message from WebSocket", "error", err)
+				} else {
+					c.logger.Info("WebSocket connection closed gracefully or context cancelled.", "error", err)
+				}
+				return err // Exit loop on error or normal closure
+			}
+
+			if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
+				var event models.Event
+				if err := json.Unmarshal(message, &event); err != nil {
+					c.logger.Error("Failed to unmarshal event message", "error", err, "message", string(message))
+					continue // Skip this message
+				}
+				if onEvent != nil {
+					onEvent(event.Data)
+				}
+			}
+		}
+	}
 }

@@ -30,6 +30,8 @@ import (
 	"github.com/InsulaLabs/insi/models"
 )
 
+var EventReplayWindow = 30 * time.Second
+
 type RaftIF interface {
 	Apply(l *raft.Log) any
 	Snapshot() (raft.FSMSnapshot, error)
@@ -60,14 +62,25 @@ type CacheStoreIF interface {
 	DeleteCache(key string) error
 }
 
+type EventIF interface {
+	Publish(topic string, data any) error
+}
+
 // FSMInstance defines the interface for FSM operations.
 type FSMInstance interface {
 	RaftIF
 	ValueStoreIF
 	TagStoreIF
 	CacheStoreIF
+	EventIF
 
 	Close() error
+}
+
+// If given to the FSM, events that come off of the raft network
+// will be sent to the event receiver.
+type EventReceiverIF interface {
+	Receive(topic string, data any) error
 }
 
 // Constants for FSM commands (distinct from snapshot db types)
@@ -77,32 +90,35 @@ type FSMInstance interface {
 // will can trigger the remote event listeners attatched to the node that
 // received the command
 const (
-	cmdSetValue    = "set_value"
-	cmdDeleteValue = "delete_value"
-	cmdSetTag      = "set_tag"
-	cmdDeleteTag   = "delete_tag"
-	cmdSetCache    = "set_cache"
-	cmdDeleteCache = "delete_cache"
+	cmdSetValue     = "set_value"
+	cmdDeleteValue  = "delete_value"
+	cmdSetTag       = "set_tag"
+	cmdDeleteTag    = "delete_tag"
+	cmdSetCache     = "set_cache"
+	cmdDeleteCache  = "delete_cache"
+	cmdPublishEvent = "publish_event"
 )
 
 // kvFsm holds references to both BadgerDB instances.
 type kvFsm struct {
-	tkv      tkv.TKV
-	logger   *slog.Logger
-	cfg      *config.Cluster
-	thisNode string
-	r        *raft.Raft
+	tkv        tkv.TKV
+	logger     *slog.Logger
+	cfg        *config.Cluster
+	thisNode   string
+	r          *raft.Raft
+	eventRecvr EventReceiverIF
 }
 
 var _ FSMInstance = &kvFsm{}
 
 type Settings struct {
-	Ctx     context.Context
-	Logger  *slog.Logger
-	Config  *config.Cluster
-	NodeCfg *config.Node
-	NodeId  string
-	TkvDb   tkv.TKV
+	Ctx           context.Context
+	Logger        *slog.Logger
+	Config        *config.Cluster
+	NodeCfg       *config.Node
+	NodeId        string
+	TkvDb         tkv.TKV
+	EventReceiver EventReceiverIF
 }
 
 func New(settings Settings) (FSMInstance, error) {
@@ -127,10 +143,11 @@ func New(settings Settings) (FSMInstance, error) {
 	}
 
 	kf := &kvFsm{
-		logger:   settings.Logger,
-		tkv:      settings.TkvDb,
-		cfg:      settings.Config,
-		thisNode: settings.NodeId,
+		logger:     settings.Logger,
+		tkv:        settings.TkvDb,
+		cfg:        settings.Config,
+		thisNode:   settings.NodeId,
+		eventRecvr: settings.EventReceiver,
 	}
 
 	currentRaftAdvertiseAddr := settings.NodeCfg.RaftBinding
@@ -325,6 +342,34 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				return fmt.Errorf("tkv CacheDelete failed for stdCache (key %s): %w", p.Key, err)
 			}
 			kf.logger.Info("FSM applied delete_cache", "key", p.Key)
+			return nil
+		case cmdPublishEvent:
+			if kf.eventRecvr == nil {
+				kf.logger.Warn("No event receiver attached to FSM, skipping publish_event")
+				return nil
+			}
+			var p models.EventPayload
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal publish_event payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal publish_event payload: %w", err)
+			}
+
+			// NOTE: We dont persis the events so this MAY be redundant, but its good to be safe.
+			if time.Since(p.EmittedAt) > EventReplayWindow {
+				kf.logger.Warn(
+					"Skipping publish_event because it is outside the replay window",
+					"topic", p.Topic,
+					"emitted_at", p.EmittedAt,
+					"replay_window", EventReplayWindow,
+					"current_time", time.Now().Format(time.RFC3339Nano),
+				)
+				return nil
+			}
+			/*
+				The event is fresh (it was emitted within the replay window) and we have a
+				event receiver attached to the FSM so we can emit the event to the event receiver.
+			*/
+			kf.eventRecvr.Receive(p.Topic, p.Data)
 			return nil
 		default:
 			kf.logger.Error("Unknown raft command type in Apply", "command_type", cmd.Type)
@@ -583,6 +628,49 @@ func (kf *kvFsm) Join(followerId string, followerAddress string) error {
 		return fmt.Errorf("failed to add voter (id: %s, addr: %s): %w", followerId, followerAddress, err)
 	}
 	kf.logger.Info("Successfully added follower/voter to Raft cluster", "follower_id", followerId, "follower_addr", followerAddress)
+	return nil
+}
+
+// [events]
+
+func (kf *kvFsm) Publish(topic string, data any) error {
+
+	fmt.Println("DEV> Publish", topic, data)
+
+	payload := models.EventPayload{
+		Topic:     topic,
+		Data:      data,
+		EmittedAt: time.Now(),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for publish", "topic", topic, "error", err)
+		return fmt.Errorf("could not marshal payload for publish: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdPublishEvent,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for publish", "topic", topic, "error", err)
+		return fmt.Errorf("could not marshal raft command for publish: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for Publish", "topic", topic, "error", err)
+		return fmt.Errorf("raft Apply for Publish failed (topic %s): %w", topic, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for Publish", "topic", topic, "error", responseErr)
+		return fmt.Errorf("fsm application error for Publish (topic %s): %w", topic, responseErr)
+	}
+	kf.logger.Info("Publish Raft Apply successful", "topic", topic)
 	return nil
 }
 

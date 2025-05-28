@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
@@ -20,6 +23,7 @@ var (
 	configPath string
 	clusterCfg *config.Cluster
 	targetNode string // Added for --target flag
+	useRootKey bool   // Added for --root flag
 )
 
 func init() {
@@ -32,6 +36,7 @@ func init() {
 
 	flag.StringVar(&configPath, "config", "cluster.yaml", "Path to the cluster configuration file")
 	flag.StringVar(&targetNode, "target", "", "Target node ID (e.g., node0, node1). Defaults to DefaultLeader in config.") // Added target flag
+	flag.BoolVar(&useRootKey, "root", false, "Use the root key for the cluster. Defaults to false.")
 }
 
 func loadConfig(path string) (*config.Cluster, error) {
@@ -69,13 +74,23 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 
 	clientLogger.Info("Client is using instanceSecret for token generation", "secret_value", cfg.InstanceSecret)
 
-	secretHash := sha256.New()
-	secretHash.Write([]byte(cfg.InstanceSecret))
-	secret := hex.EncodeToString(secretHash.Sum(nil))
+	var apiKey string
+
+	if useRootKey {
+		secretHash := sha256.New()
+		secretHash.Write([]byte(cfg.InstanceSecret))
+		apiKey = hex.EncodeToString(secretHash.Sum(nil))
+	} else {
+		apiKey = os.Getenv("INSI_API_KEY")
+	}
+
+	if apiKey == "" {
+		return nil, fmt.Errorf("apiKey is empty and --root flag is not set")
+	}
 
 	c, err := client.NewClient(&client.Config{
 		HostPort:   nodeDetails.HttpBinding,
-		ApiKey:     secret,
+		ApiKey:     apiKey,
 		SkipVerify: cfg.ClientSkipVerify,
 		Logger:     clientLogger,
 	})
@@ -137,6 +152,10 @@ func main() {
 		handleApi(cli, cmdArgs)
 	case "ping":
 		handlePing(cli, cmdArgs)
+	case "publish":
+		handlePublish(cli, cmdArgs)
+	case "subscribe":
+		handleSubscribe(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -164,6 +183,66 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  api delete <api_key_value>\n")
 	fmt.Fprintf(os.Stderr, "  api verify <api_key_value>\n")
 	fmt.Fprintf(os.Stderr, "  ping\n")
+	fmt.Fprintf(os.Stderr, "  publish <topic> <data>\n")
+	fmt.Fprintf(os.Stderr, "  subscribe <topic>\n")
+}
+
+func handlePublish(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("publish: requires <topic> <data>")
+		printUsage()
+		os.Exit(1)
+	}
+	topic := args[0]
+	data := args[1]
+	err := c.PublishEvent(topic, data)
+	if err != nil {
+		logger.Error("Publish failed", "topic", topic, "error", err)
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+	logger.Info("Publish successful", "topic", topic)
+	fmt.Println("OK")
+}
+
+func handleSubscribe(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("subscribe: requires <topic>")
+		printUsage()
+		os.Exit(1)
+	}
+	topic := args[0]
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigChan
+		logger.Info("Received signal, requesting WebSocket closure...", "signal", sig.String())
+		cancel() // Cancel the context to signal SubscribeToEvents to close
+	}()
+
+	cb := func(data any) {
+		fmt.Printf("Received event on topic '%s': %+v\n", topic, data)
+	}
+
+	logger.Info("Attempting to subscribe to events", "topic", topic)
+	err := c.SubscribeToEvents(topic, ctx, cb)
+	if err != nil {
+		// context.Canceled is an expected error on graceful shutdown, others are not.
+		if err == context.Canceled {
+			logger.Info("Subscription cancelled gracefully.", "topic", topic)
+		} else {
+			logger.Error("Subscription failed", "topic", topic, "error", err)
+			fmt.Println("Error:", err)
+			// os.Exit(1) // Exiting here might be too abrupt if there's a non-critical error during teardown.
+		}
+	}
+	logger.Info("Subscription process finished.", "topic", topic)
 }
 
 // Placeholder for command handlers - to be implemented next

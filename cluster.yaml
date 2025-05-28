@@ -36,6 +36,15 @@ rateLimiters:
   default:
     limit: 5
     burst: 10
+  events:
+    limit: 500
+    burst: 750
+
+sessions:
+  eventChannelSize: 256
+  webSocketReadBufferSize: 1024
+  webSocketWriteBufferSize: 1024
+  maxConnections: 1000
 
 nodes:
   node0:

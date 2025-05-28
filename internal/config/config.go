@@ -30,6 +30,13 @@ type TLS struct {
 	Key  string `yaml:"key"`
 }
 
+type SessionsConfig struct {
+	EventChannelSize         int `yaml:"eventChannelSize"`
+	WebSocketReadBufferSize  int `yaml:"webSocketReadBufferSize"`
+	WebSocketWriteBufferSize int `yaml:"webSocketWriteBufferSize"`
+	MaxConnections           int `yaml:"maxConnections"`
+}
+
 type Cluster struct {
 	InstanceSecret   string          `yaml:"instanceSecret"` // on config load no two nodes should have the same instance secret
 	DefaultLeader    string          `yaml:"defaultLeader"`  // if first time launch, non-leaders will auto-follow this leader - need to set this and
@@ -41,6 +48,7 @@ type Cluster struct {
 	Cache            Cache           `yaml:"cache"`
 	RootPrefix       string          `yaml:"rootPrefix"`
 	RateLimiters     RateLimiters    `yaml:"rateLimiters"`
+	Sessions         SessionsConfig  `yaml:"sessions"`
 }
 
 type RateLimiterConfig struct {
@@ -54,26 +62,32 @@ type RateLimiters struct {
 	Cache   RateLimiterConfig `yaml:"cache"`
 	System  RateLimiterConfig `yaml:"system"`
 	Default RateLimiterConfig `yaml:"default"`
+	Events  RateLimiterConfig `yaml:"events"`
 }
 
 var (
-	ErrConfigFileMissing               = errors.New("config file is missing")
-	ErrConfigFileUnreadable            = errors.New("config file is unreadable")
-	ErrConfigFileUnmarshallable        = errors.New("config file is unmarshallable")
-	ErrInstanceSecretMissing           = errors.New("instanceSecret is missing in config")
-	ErrDefaultLeaderMissing            = errors.New("defaultLeader is not set in config")
-	ErrNodesMissing                    = errors.New("no nodes defined in config")
-	ErrInsudbDirMissing                = errors.New("insudbDir is missing in config and is required for lock files and node data")
-	ErrTLSMissing                      = errors.New("TLS configuration incomplete: both cert and key must be provided if one is specified")
-	ErrDuplicateNodeSecret             = errors.New("duplicate node secret in config - each node must contain a unique nodeSecret")
-	ErrCacheKeysMissing                = errors.New("cache.keys is missing in config")
-	ErrCacheStandardTTLMissing         = errors.New("cache.standardTTL is missing in config")
-	ErrRootPrefixMissing               = errors.New("rootPrefix is missing in config")
-	ErrRateLimitersValuesLimitMissing  = errors.New("rateLimiters.values.limit is missing in config")
-	ErrRateLimitersTagsLimitMissing    = errors.New("rateLimiters.tags.limit is missing in config")
-	ErrRateLimitersCacheLimitMissing   = errors.New("rateLimiters.cache.limit is missing in config")
-	ErrRateLimitersSystemLimitMissing  = errors.New("rateLimiters.system.limit is missing in config")
-	ErrRateLimitersDefaultLimitMissing = errors.New("rateLimiters.default.limit is missing in config")
+	ErrConfigFileMissing                       = errors.New("config file is missing")
+	ErrConfigFileUnreadable                    = errors.New("config file is unreadable")
+	ErrConfigFileUnmarshallable                = errors.New("config file is unmarshallable")
+	ErrInstanceSecretMissing                   = errors.New("instanceSecret is missing in config")
+	ErrDefaultLeaderMissing                    = errors.New("defaultLeader is not set in config")
+	ErrNodesMissing                            = errors.New("no nodes defined in config")
+	ErrInsudbDirMissing                        = errors.New("insudbDir is missing in config and is required for lock files and node data")
+	ErrTLSMissing                              = errors.New("TLS configuration incomplete: both cert and key must be provided if one is specified")
+	ErrDuplicateNodeSecret                     = errors.New("duplicate node secret in config - each node must contain a unique nodeSecret")
+	ErrCacheKeysMissing                        = errors.New("cache.keys is missing in config")
+	ErrCacheStandardTTLMissing                 = errors.New("cache.standardTTL is missing in config")
+	ErrRootPrefixMissing                       = errors.New("rootPrefix is missing in config")
+	ErrRateLimitersValuesLimitMissing          = errors.New("rateLimiters.values.limit is missing in config")
+	ErrRateLimitersTagsLimitMissing            = errors.New("rateLimiters.tags.limit is missing in config")
+	ErrRateLimitersCacheLimitMissing           = errors.New("rateLimiters.cache.limit is missing in config")
+	ErrRateLimitersSystemLimitMissing          = errors.New("rateLimiters.system.limit is missing in config")
+	ErrRateLimitersDefaultLimitMissing         = errors.New("rateLimiters.default.limit is missing in config")
+	ErrRateLimitersEventsLimitMissing          = errors.New("rateLimiters.events.limit is missing in config")
+	ErrSessionsEventChannelSizeMissing         = errors.New("sessions.eventChannelSize is missing or invalid in config")
+	ErrSessionsWebSocketReadBufferSizeMissing  = errors.New("sessions.webSocketReadBufferSize is missing or invalid in config")
+	ErrSessionsWebSocketWriteBufferSizeMissing = errors.New("sessions.webSocketWriteBufferSize is missing or invalid in config")
+	ErrSessionsMaxConnectionsMissing           = errors.New("sessions.maxConnections is missing or invalid in config")
 )
 
 func LoadConfig(configFile string) (*Cluster, error) {
@@ -149,6 +163,22 @@ func LoadConfig(configFile string) (*Cluster, error) {
 	}
 	if cfg.RateLimiters.Default.Limit == 0 {
 		return nil, ErrRateLimitersDefaultLimitMissing
+	}
+	if cfg.RateLimiters.Events.Limit == 0 {
+		return nil, ErrRateLimitersEventsLimitMissing
+	}
+
+	if cfg.Sessions.EventChannelSize <= 0 {
+		return nil, ErrSessionsEventChannelSizeMissing
+	}
+	if cfg.Sessions.WebSocketReadBufferSize <= 0 {
+		return nil, ErrSessionsWebSocketReadBufferSizeMissing
+	}
+	if cfg.Sessions.WebSocketWriteBufferSize <= 0 {
+		return nil, ErrSessionsWebSocketWriteBufferSizeMissing
+	}
+	if cfg.Sessions.MaxConnections <= 0 {
+		return nil, ErrSessionsMaxConnectionsMissing
 	}
 
 	return &cfg, nil

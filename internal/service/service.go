@@ -7,14 +7,21 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/InsulaLabs/insi/internal/config"
 	"github.com/InsulaLabs/insi/internal/rft"
+	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/InsulaLabs/insula/tkv"
+	"github.com/gorilla/websocket"
 	"github.com/jellydator/ttlcache/v3"
 	"golang.org/x/time/rate"
+)
+
+const (
+	EntityRoot = "root"
 )
 
 /*
@@ -43,6 +50,14 @@ type Service struct {
 
 	lcs          *localCaches
 	rateLimiters map[string]*rate.Limiter
+
+	// WebSocket event handling
+	eventSubscribers     map[string]map[*eventSession]bool // Changed to store *eventSession
+	eventSubscribersLock sync.RWMutex
+	wsUpgrader           websocket.Upgrader
+	eventCh              chan models.Event // Central event channel for the service
+	activeWsConnections  int32             // Counter for active WebSocket connections
+	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
 }
 
 func NewService(
@@ -54,13 +69,27 @@ func NewService(
 	clusterCfg *config.Cluster,
 	asNodeId string,
 ) (*Service, error) {
+
+	// This eventCh is for the FSM to signal the service.
+	serviceEventCh := make(chan models.Event, clusterCfg.Sessions.EventChannelSize) // Buffered channel
+
+	// Satisfies the rft.EventReceiverIF interface so we can retrieve "Fresh" events
+	// from the FSM as they are applied to the network. When the FSM gives us an event
+	// to hand out to subscribers, we first place it in the eventCh channel
+	// and the system that handles connected clients will pull from this channel
+	// and forward the event to the client.
+	es := &eventSubsystem{
+		eventCh: serviceEventCh, // eventSubsystem will use the service's channel
+	}
+
 	fsm, err := rft.New(rft.Settings{
-		Ctx:     ctx,
-		Logger:  logger.With("service", "rft"),
-		Config:  clusterCfg,
-		NodeCfg: nodeSpecificCfg,
-		NodeId:  asNodeId,
-		TkvDb:   tkv,
+		Ctx:           ctx,
+		Logger:        logger.With("service", "rft"),
+		Config:        clusterCfg,
+		NodeCfg:       nodeSpecificCfg,
+		NodeId:        asNodeId,
+		TkvDb:         tkv,
+		EventReceiver: es,
 	})
 	if err != nil {
 		return nil, err
@@ -99,8 +128,12 @@ func NewService(
 		rateLimiters["default"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'default'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
+	if rlConfig := clusterCfg.RateLimiters.Events; rlConfig.Limit > 0 {
+		rateLimiters["events"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
 
-	return &Service{
+	service := &Service{
 		appCtx:       ctx,
 		cfg:          clusterCfg,
 		nodeCfg:      nodeSpecificCfg,
@@ -112,7 +145,25 @@ func NewService(
 		lcs:          caches,
 		rateLimiters: rateLimiters,
 		mux:          http.NewServeMux(),
-	}, nil
+
+		eventSubscribers: make(map[string]map[*eventSession]bool),
+		wsUpgrader: websocket.Upgrader{
+			ReadBufferSize:  clusterCfg.Sessions.WebSocketReadBufferSize,
+			WriteBufferSize: clusterCfg.Sessions.WebSocketWriteBufferSize,
+			CheckOrigin: func(r *http.Request) bool {
+				logger.Debug("WebSocket CheckOrigin called", "origin", r.Header.Get("Origin"), "host", r.Host)
+				return true
+			},
+		},
+		eventCh: serviceEventCh,
+	}
+
+	// Set the event subsystem to the service for event logic
+	es.service = service
+
+	go service.eventProcessingLoop()
+
+	return service, nil
 }
 
 func (s *Service) rateLimitMiddleware(next http.Handler, category string) http.Handler {
@@ -160,6 +211,9 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/new-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.newApiKeyHandler), "system"))
 	s.mux.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
+
+	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
+	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
