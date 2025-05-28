@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net" // Added for SplitHostPort and JoinHostPort
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,7 +23,7 @@ const (
 
 type Config struct {
 	HostPort     string
-	ClientDomain string
+	ClientDomain string // For TLS verification against a domain name AND for constructing baseURL
 	ApiKey       string
 	SkipVerify   bool
 	Logger       *slog.Logger
@@ -38,11 +39,8 @@ type Client struct {
 }
 
 // NewClient creates a new insi API client.
-// hostPort is the target server, e.g., "127.0.0.1:8443".
-// authToken is the access token for the cluster, used to authenticate system routes.
-// clientSkipVerifySetting controls whether the client skips verification of the server's TLS certificate, read from config.
 func NewClient(cfg *Config) (*Client, error) {
-	if cfg.HostPort == "" {
+	if cfg.HostPort == "" { // HostPort is still mandatory for port information
 		return nil, fmt.Errorf("hostPort cannot be empty")
 	}
 	if cfg.ApiKey == "" {
@@ -50,8 +48,31 @@ func NewClient(cfg *Config) (*Client, error) {
 	}
 	clientLogger := cfg.Logger.WithGroup("insi_client")
 
+	connectHost := ""
+	connectPort := ""
+
+	// Parse port from HostPort. HostPort might be IP:port or Domain:port.
+	_, parsedPort, err := net.SplitHostPort(cfg.HostPort)
+	if err != nil {
+		clientLogger.Error("Failed to parse port from HostPort", "hostPort", cfg.HostPort, "error", err)
+		return nil, fmt.Errorf("failed to parse port from HostPort '%s': %w", cfg.HostPort, err)
+	}
+	connectPort = parsedPort
+
+	// Determine the host for the connection URL.
+	if cfg.ClientDomain != "" {
+		connectHost = cfg.ClientDomain // Prefer ClientDomain if available
+		clientLogger.Info("Using ClientDomain for connection URL host", "domain", cfg.ClientDomain)
+	} else {
+		// Fallback to host from HostPort if ClientDomain is not set.
+		hostFromHostPort, _, _ := net.SplitHostPort(cfg.HostPort) // Error already handled for port, ignore here for host.
+		connectHost = hostFromHostPort
+		clientLogger.Info("Using host from HostPort for connection URL (ClientDomain not provided)", "host", connectHost)
+	}
+
 	// We ENFORCE HTTPS - NEVER PERMIT HTTP
-	baseURLStr := fmt.Sprintf("https://%s", cfg.HostPort)
+	finalConnectAddress := net.JoinHostPort(connectHost, connectPort)
+	baseURLStr := fmt.Sprintf("https://%s", finalConnectAddress)
 	baseURL, err := url.Parse(baseURLStr)
 	if err != nil {
 		clientLogger.Error("Failed to parse base URL", "url", baseURLStr, "error", err)
@@ -61,9 +82,14 @@ func NewClient(cfg *Config) (*Client, error) {
 	tlsClientCfg := &tls.Config{
 		InsecureSkipVerify: cfg.SkipVerify,
 	}
-	if !cfg.SkipVerify && cfg.ClientDomain != "" {
-		tlsClientCfg.ServerName = cfg.ClientDomain
-		clientLogger.Info("TLS verification will use ServerName", "server_name", cfg.ClientDomain)
+
+	if !cfg.SkipVerify {
+		// ServerName for TLS verification should be the host we are connecting to,
+		// which is connectHost (ideally the ClientDomain).
+		tlsClientCfg.ServerName = connectHost
+		clientLogger.Info("TLS verification will use ServerName derived from connection host", "server_name", tlsClientCfg.ServerName)
+	} else {
+		clientLogger.Info("TLS verification is skipped.")
 	}
 
 	transport := &http.Transport{
@@ -78,13 +104,11 @@ func NewClient(cfg *Config) (*Client, error) {
 		Transport: transport,
 		Timeout:   cfg.Timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// Prevent client from following redirects automatically.
-			// We will handle them manually in doRequest to preserve method and body.
 			return http.ErrUseLastResponse
 		},
 	}
 
-	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify, "manual_redirects", true)
+	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify, "tls_server_name", tlsClientCfg.ServerName)
 
 	return &Client{
 		baseURL:    baseURL,
