@@ -113,10 +113,11 @@ func (s *Service) newApiKey(entity string) (string, error) {
 	// store the key in the db
 	internalClientLogger := s.logger.WithGroup("internal-client")
 	c, err := client.NewClient(&client.Config{
-		HostPort:   s.nodeCfg.HttpBinding,
-		ApiKey:     s.authToken,
-		SkipVerify: s.cfg.ClientSkipVerify,
-		Logger:     internalClientLogger,
+		HostPort:     s.nodeCfg.HttpBinding,
+		ApiKey:       s.authToken,
+		SkipVerify:   s.cfg.ClientSkipVerify,
+		Logger:       internalClientLogger,
+		ClientDomain: s.nodeCfg.ClientDomain,
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to store key: %w", err)

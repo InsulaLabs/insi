@@ -70,34 +70,37 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
+	s.logger.Debug("Enter newApiKeyHandler", "method", r.Method, "url", r.URL.String())
 	storedRootEntity, _, ok := s.validateToken(r, true)
 	if !ok || storedRootEntity != "root" {
+		s.logger.Warn("Unauthorized attempt to create API key", "remote_addr", r.RemoteAddr)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	entity := r.URL.Query().Get("entity")
 	if entity == "" {
+		s.logger.Warn("Missing entity parameter in newApiKeyHandler", "remote_addr", r.RemoteAddr)
 		http.Error(w, "Missing entity parameter", http.StatusBadRequest)
 		return
 	}
 
-	if entity == "" {
-		http.Error(w, "Invalid entity parameter", http.StatusBadRequest)
-		return
-	}
-
-	fmt.Println("[BUG] making new api key for entity", entity)
+	s.logger.Info("Attempting to create new API key for entity", "entity", entity, "requested_by_root", true)
 	key, err := s.newApiKey(entity)
 	if err != nil {
+		s.logger.Error("Failed to generate or store new API key", "entity", entity, "error", err)
 		http.Error(w, fmt.Sprintf("Failed to generate key: %s", err), http.StatusInternalServerError)
 		return
 	}
 
-	// respond with the json key
-	json.NewEncoder(w).Encode(map[string]string{"apiKey": key})
-
 	w.Header().Set("Content-Type", "application/json")
+	// respond with the json key
+	if err := json.NewEncoder(w).Encode(map[string]string{"apiKey": key}); err != nil {
+		s.logger.Error("Failed to encode/write new API key response", "entity", entity, "error", err)
+		// Don't try to write another http.Error here as headers might already be sent
+		return
+	}
+	s.logger.Info("Successfully created and returned new API key", "entity", entity, "key_prefix", key[:4]+"...")
 }
 
 func (s *Service) deleteApiKeyHandler(w http.ResponseWriter, r *http.Request) {
