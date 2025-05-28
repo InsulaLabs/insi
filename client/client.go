@@ -21,11 +21,12 @@ const (
 )
 
 type Config struct {
-	HostPort   string
-	ApiKey     string
-	SkipVerify bool
-	Logger     *slog.Logger
-	Timeout    time.Duration
+	HostPort     string
+	ClientDomain string
+	ApiKey       string
+	SkipVerify   bool
+	Logger       *slog.Logger
+	Timeout      time.Duration
 }
 
 // Client is the API client for the insi service.
@@ -57,8 +58,16 @@ func NewClient(cfg *Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to parse base URL '%s': %w", baseURLStr, err)
 	}
 
+	tlsClientCfg := &tls.Config{
+		InsecureSkipVerify: cfg.SkipVerify,
+	}
+	if !cfg.SkipVerify && cfg.ClientDomain != "" {
+		tlsClientCfg.ServerName = cfg.ClientDomain
+		clientLogger.Info("TLS verification will use ServerName", "server_name", cfg.ClientDomain)
+	}
+
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.SkipVerify},
+		TLSClientConfig: tlsClientCfg,
 	}
 
 	if cfg.Timeout == 0 {

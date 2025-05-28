@@ -89,10 +89,11 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 	}
 
 	c, err := client.NewClient(&client.Config{
-		HostPort:   nodeDetails.HttpBinding,
-		ApiKey:     apiKey,
-		SkipVerify: cfg.ClientSkipVerify,
-		Logger:     clientLogger,
+		HostPort:     nodeDetails.HttpBinding,
+		ApiKey:       apiKey,
+		SkipVerify:   cfg.ClientSkipVerify,
+		ClientDomain: nodeDetails.ClientDomain,
+		Logger:       clientLogger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.HttpBinding, err)
@@ -575,10 +576,11 @@ func handleVerifyApiKey(cfg *config.Cluster, args []string) {
 
 	verificationClientLogger := logger.WithGroup("api-verify-client")
 	verificationClient, err := client.NewClient(&client.Config{
-		HostPort:   nodeDetails.HttpBinding,
-		ApiKey:     apiKeyToVerify,
-		SkipVerify: cfg.ClientSkipVerify,
-		Logger:     verificationClientLogger,
+		HostPort:     nodeDetails.HttpBinding,
+		ApiKey:       apiKeyToVerify,
+		SkipVerify:   cfg.ClientSkipVerify,
+		ClientDomain: nodeDetails.ClientDomain,
+		Logger:       verificationClientLogger,
 	})
 	if err != nil {
 		// This typically means the apiKeyToVerify was not in the correct format (e.g. hex encoded sha256)

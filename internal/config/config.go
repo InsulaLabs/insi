@@ -15,9 +15,10 @@ const (
 )
 
 type Node struct {
-	RaftBinding string `yaml:"raftBinding"`
-	HttpBinding string `yaml:"httpBinding"`
-	NodeSecret  string `yaml:"nodeSecret"`
+	RaftBinding  string `yaml:"raftBinding"`
+	HttpBinding  string `yaml:"httpBinding"`
+	NodeSecret   string `yaml:"nodeSecret"`
+	ClientDomain string `yaml:"clientDomain,omitempty"`
 }
 
 type Cache struct {
