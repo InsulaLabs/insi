@@ -37,6 +37,12 @@ rateLimiters:
     limit: 5
     burst: 10
 
+sessions:
+  eventChannelSize: 256
+  webSocketReadBufferSize: 1024
+  webSocketWriteBufferSize: 1024
+  maxConnections: 1000
+
 nodes:
   node0:
     raftBinding: 127.0.0.1:2222

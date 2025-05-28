@@ -20,6 +20,10 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const (
+	EntityRoot = "root"
+)
+
 /*
 	These are in-memory caches that hold ephemeral values for
 	common read requests. The idea is that we don't bump the ttl
@@ -52,6 +56,8 @@ type Service struct {
 	eventSubscribersLock sync.RWMutex
 	wsUpgrader           websocket.Upgrader
 	eventCh              chan models.Event // Central event channel for the service
+	activeWsConnections  int32             // Counter for active WebSocket connections
+	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
 }
 
 func NewService(
@@ -65,7 +71,7 @@ func NewService(
 ) (*Service, error) {
 
 	// This eventCh is for the FSM to signal the service.
-	serviceEventCh := make(chan models.Event, 256) // Buffered channel
+	serviceEventCh := make(chan models.Event, clusterCfg.Sessions.EventChannelSize) // Buffered channel
 
 	// Satisfies the rft.EventReceiverIF interface so we can retrieve "Fresh" events
 	// from the FSM as they are applied to the network. When the FSM gives us an event
@@ -138,8 +144,8 @@ func NewService(
 
 		eventSubscribers: make(map[string]map[*eventSession]bool),
 		wsUpgrader: websocket.Upgrader{
-			ReadBufferSize:  1024,
-			WriteBufferSize: 1024,
+			ReadBufferSize:  clusterCfg.Sessions.WebSocketReadBufferSize,
+			WriteBufferSize: clusterCfg.Sessions.WebSocketWriteBufferSize,
 			CheckOrigin: func(r *http.Request) bool {
 				logger.Debug("WebSocket CheckOrigin called", "origin", r.Header.Get("Origin"), "host", r.Host)
 				return true

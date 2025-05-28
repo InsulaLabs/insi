@@ -11,6 +11,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	writeWait      = 10 * time.Second    // Time allowed to write a message to the peer.
+	pongWait       = 60 * time.Second    // Time allowed to read the next pong message from the peer.
+	pingPeriod     = (pongWait * 9) / 10 // Send pings to peer with this period. Must be less than pongWait.
+	maxMessageSize = 512                 // Maximum message size allowed from peer.
+)
+
 // A session of someone connected wanting to receive events from one of the topics
 type eventSession struct {
 	conn *websocket.Conn
@@ -92,6 +99,16 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.wsConnectionLock.Lock()
+	if s.activeWsConnections >= int32(s.cfg.Sessions.MaxConnections) {
+		s.wsConnectionLock.Unlock()
+		s.logger.Warn("Max WebSocket connections reached, rejecting new connection", "current", s.activeWsConnections, "max", s.cfg.Sessions.MaxConnections)
+		http.Error(w, "Too many connections", http.StatusServiceUnavailable)
+		return
+	}
+	// Incrementing will be done in registerSubscriber after successful upgrade
+	s.wsConnectionLock.Unlock() // Unlock before upgrading, lock again in registerSubscriber
+
 	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		s.logger.Error("Failed to upgrade WebSocket connection", "error", err, "topic", topic)
@@ -117,6 +134,20 @@ func (s *Service) registerSubscriber(session *eventSession) {
 	s.eventSubscribersLock.Lock()
 	defer s.eventSubscribersLock.Unlock()
 
+	s.wsConnectionLock.Lock()
+	defer s.wsConnectionLock.Unlock()
+
+	if s.activeWsConnections >= int32(s.cfg.Sessions.MaxConnections) {
+		// This is a secondary check, primary check is in eventSubscribeHandler
+		// If reached here, it's a race condition or an issue. Log and don't register.
+		s.logger.Error("Attempted to register subscriber when max connections already met or exceeded", "active", s.activeWsConnections, "max", s.cfg.Sessions.MaxConnections)
+		// We should not proceed to add the session if the limit is hit. Close the connection that was just upgraded.
+		go session.conn.Close() // Close it in a goroutine to avoid blocking here
+		return
+	}
+	s.activeWsConnections++
+	s.logger.Info("Incremented active WebSocket connections", "count", s.activeWsConnections)
+
 	if _, ok := s.eventSubscribers[session.topic]; !ok {
 		s.eventSubscribers[session.topic] = make(map[*eventSession]bool) // Inner map stores *eventSession
 	}
@@ -128,21 +159,30 @@ func (s *Service) unregisterSubscriber(session *eventSession) {
 	s.eventSubscribersLock.Lock()
 	defer s.eventSubscribersLock.Unlock()
 
+	s.wsConnectionLock.Lock()
+	defer s.wsConnectionLock.Unlock()
+
 	if sessionsInTopic, ok := s.eventSubscribers[session.topic]; ok {
 		if _, ok := sessionsInTopic[session]; ok {
 			delete(s.eventSubscribers[session.topic], session)
 			s.logger.Info("Subscriber unregistered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
+
+			// Decrement connection count only if we actually found and removed the session
+			if s.activeWsConnections > 0 {
+				s.activeWsConnections--
+				s.logger.Info("Decremented active WebSocket connections", "count", s.activeWsConnections)
+			} else {
+				s.logger.Warn("Attempted to decrement active WebSocket connections below zero")
+			}
+
 			if len(s.eventSubscribers[session.topic]) == 0 {
 				delete(s.eventSubscribers, session.topic)
 				s.logger.Info("No more subscribers for topic, removing topic from map", "topic", session.topic)
 			}
 		}
 	}
-	close(session.send) // Close the send channel when unregistering
+	close(session.send)
 }
-
-// dispatchEvent sends an event to all subscribers of the event's topic.
-// This method is removed as dispatchEventToSubscribersViaSessionSend is more direct and preferred.
 
 // Central event processing loop for the service.
 // Reads from FSM-populated eventCh and dispatches to WebSocket subscribers.
@@ -150,7 +190,7 @@ func (s *Service) eventProcessingLoop() {
 	s.logger.Info("Starting service event processing loop for WebSocket dispatch")
 	for {
 		select {
-		case event := <-s.eventCh: // Read from the service's central event channel
+		case event := <-s.eventCh:
 			s.logger.Debug("Service event loop received event", "topic", event.Topic)
 			s.dispatchEventToSubscribersViaSessionSend(event)
 
@@ -185,6 +225,38 @@ func (s *Service) dispatchEventToSubscribersViaSessionSend(event models.Event) {
 		return
 	}
 
+	// POTENTIAL BOTTLENECK:
+	// The for loop in dispatchEventToSubscribersViaSessionSend iterates sequentially
+	// through all subscribers for a given topic to queue the event message.
+	// If an event has a very large number of subscribers (e.g., thousands),
+	// this sequential iteration, even with non-blocking sends to session.send,
+	// could make dispatchEventToSubscribersViaSessionSend take a significant
+	// amount of time to complete. This, in turn, can slow down the main
+	// eventProcessingLoop, potentially causing the central eventCh to fill up if
+	// events are being produced by the FSM at a high rate.
+	//
+	// POTENTIAL SOLUTION OVERVIEW:
+	// To parallelize the queuing of messages to subscriber send channels, one could
+	// consider:
+	// 1. Launching a new goroutine for each subscriber within the loop:
+	//    for session := range sessionsForTopic {
+	//        go func(s *eventSession, msg []byte) {
+	//            select {
+	//            case s.send <- msg:
+	//                // log success
+	//            default:
+	//                // log drop, potentially close connection
+	//            }
+	//        }(session, message) // Pass session and message as args
+	//    }
+	//    This has the overhead of goroutine creation/scheduling for each subscriber.
+	// 2. Using a fixed-size worker pool: Dispatch tasks (to send a message to a
+	//    specific session's 'send' channel) to a pool of worker goroutines. This
+	//    can limit the number of concurrent dispatch operations and reuse goroutines.
+	//
+	// Such changes would need careful consideration of goroutine management, error
+	// handling, and potential impacts on overall system complexity and resource usage.
+
 	for session := range sessionsForTopic { // session is now *eventSession correctly
 		select {
 		case session.send <- message:
@@ -200,13 +272,6 @@ func (s *Service) dispatchEventToSubscribersViaSessionSend(event models.Event) {
 		}
 	}
 }
-
-const (
-	writeWait      = 10 * time.Second    // Time allowed to write a message to the peer.
-	pongWait       = 60 * time.Second    // Time allowed to read the next pong message from the peer.
-	pingPeriod     = (pongWait * 9) / 10 // Send pings to peer with this period. Must be less than pongWait.
-	maxMessageSize = 512                 // Maximum message size allowed from peer.
-)
 
 // readPump pumps messages from the WebSocket connection to the hub.
 // The application runs readPump in a per-connection goroutine. The application
