@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net" // Added for net.SplitHostPort and net.JoinHostPort
+
+	// "net" // No longer needed here if LeaderHTTPAddress provides the correct host:port
 	"net/http"
 
 	"github.com/InsulaLabs/insi/models"
@@ -12,60 +13,26 @@ import (
 
 // Helper function for redirection
 func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string) {
-	leaderRawHttpBinding, err := s.fsm.LeaderHTTPAddress() // This is the HttpBinding string from leader's config
+	// leaderConnectAddress is now expected to be "host:port"
+	// (e.g., "db-0.insula.dev:443" or "134.122.121.148:443" if ClientDomain isn't set for leader)
+	// as returned by the updated fsm.LeaderHTTPAddress()
+	leaderConnectAddress, err := s.fsm.LeaderHTTPAddress()
 	if err != nil {
-		s.logger.Error("Failed to get leader HTTP address for redirection", "original_path", originalPath, "error", err)
+		s.logger.Error("Failed to get leader's connect address for redirection", "original_path", originalPath, "error", err)
 		http.Error(w, "Failed to determine cluster leader for redirection: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
-	var leaderClientDomain string
-	var foundLeaderNodeID string // For logging
-
-	// Find the leader's ClientDomain from the cluster configuration (s.cfg)
-	for nodeID, nodeCfg := range s.cfg.Nodes {
-		if nodeCfg.HttpBinding == leaderRawHttpBinding {
-			leaderClientDomain = nodeCfg.ClientDomain
-			foundLeaderNodeID = nodeID
-			break
-		}
-	}
-
-	finalRedirectHostPort := ""
-	parsedHostFromBinding, parsedPort, err := net.SplitHostPort(leaderRawHttpBinding)
-	if err != nil {
-		s.logger.Error("Failed to parse host/port from leader's raw HttpBinding for redirection",
-			"raw_http_binding", leaderRawHttpBinding, "error", err)
-		// As a fallback, use the raw HttpBinding, hoping it's a resolvable domain or client handles IP correctly (less ideal)
-		finalRedirectHostPort = leaderRawHttpBinding
-	} else {
-		if leaderClientDomain != "" {
-			finalRedirectHostPort = net.JoinHostPort(leaderClientDomain, parsedPort)
-			s.logger.Info("Redirecting to leader: using ClientDomain for redirect host",
-				"leader_node_id", foundLeaderNodeID,
-				"client_domain", leaderClientDomain,
-				"port", parsedPort,
-				"derived_redirect_hostport", finalRedirectHostPort)
-		} else {
-			// ClientDomain not found/set for the leader node, use the host part from its HttpBinding
-			finalRedirectHostPort = net.JoinHostPort(parsedHostFromBinding, parsedPort) // Reconstruct with parsed host
-			s.logger.Info("Redirecting to leader: using host from HttpBinding for redirect (ClientDomain not found/set)",
-				"leader_node_id", foundLeaderNodeID, // Will be empty if HttpBinding didn't match any node
-				"raw_http_binding", leaderRawHttpBinding,
-				"derived_redirect_hostport", finalRedirectHostPort)
-		}
-	}
-
 	// Construct the absolute redirect URL, always using HTTPS for production security.
 	// originalPath should already include the leading "/" (e.g., "/db/api/v1/set")
-	redirectURL := "https://" + finalRedirectHostPort + originalPath
+	redirectURL := "https://" + leaderConnectAddress + originalPath
 	if r.URL.RawQuery != "" {
 		redirectURL += "?" + r.URL.RawQuery
 	}
 
 	s.logger.Info("Issuing redirect to leader",
 		"current_node_is_follower", true,
-		"leader_raw_http_binding_from_fsm", leaderRawHttpBinding,
+		"leader_connect_address_from_fsm", leaderConnectAddress,
 		"final_redirect_url", redirectURL)
 
 	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect) // Client follows this Location header

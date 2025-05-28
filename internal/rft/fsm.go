@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -831,19 +832,17 @@ func (kf *kvFsm) Leader() string {
 }
 
 func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {
-	leaderAddr := fsm.r.Leader()
-	if leaderAddr == "" {
+	leaderRaftAddr := fsm.r.Leader() // This is host:raft_port
+	if leaderRaftAddr == "" {
 		return "", fmt.Errorf("no current leader")
 	}
 
-	// The leader address from Raft is the Raft advertise address (host:raft_port).
-	// We need to find the corresponding node ID to get its HTTP binding.
-	var leaderNodeID string
+	var leaderNodeID string // For logging
 	var leaderNodeConfig config.Node
 	found := false
-	for nodeID, nodeCfg := range fsm.cfg.Nodes {
-		if nodeCfg.RaftBinding == string(leaderAddr) {
-			leaderNodeID = nodeID
+	for nodeID, nodeCfg := range fsm.cfg.Nodes { // Iterate to find the node with this RaftBinding
+		if nodeCfg.RaftBinding == string(leaderRaftAddr) {
+			leaderNodeID = nodeID // Capture for logging
 			leaderNodeConfig = nodeCfg
 			found = true
 			break
@@ -851,17 +850,37 @@ func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {
 	}
 
 	if !found {
-		return "", fmt.Errorf("leader Raft address '%s' not found in cluster configuration", leaderAddr)
+		return "", fmt.Errorf("leader Raft address '%s' not found in cluster configuration", leaderRaftAddr)
 	}
 
-	// Construct the full HTTP URL
-	scheme := "http"
-	if fsm.cfg.ServerMustUseTLS && fsm.cfg.TLS.Cert != "" && fsm.cfg.TLS.Key != "" {
-		scheme = "https"
+	// HttpBinding itself is host:port.
+	// ClientDomain is just a host.
+	hostPartFromBinding, portPart, err := net.SplitHostPort(leaderNodeConfig.HttpBinding)
+	if err != nil {
+		fsm.logger.Error("Failed to parse leader HttpBinding in LeaderHTTPAddress",
+			"leader_node_id", leaderNodeID,
+			"http_binding", leaderNodeConfig.HttpBinding,
+			"error", err)
+		// Fallback to returning the raw HttpBinding; the caller (redirectToLeader) will attempt to parse it again or use as is.
+		return leaderNodeConfig.HttpBinding, nil
 	}
 
-	// HttpBinding already contains host:port
-	fullAddr := fmt.Sprintf("%s://%s", scheme, leaderNodeConfig.HttpBinding)
-	fsm.logger.Debug("Determined leader HTTP address", "leader_node_id", leaderNodeID, "leader_raft_addr", leaderAddr, "leader_http_addr", fullAddr)
-	return fullAddr, nil
+	addressToReturn := ""
+	if leaderNodeConfig.ClientDomain != "" {
+		addressToReturn = net.JoinHostPort(leaderNodeConfig.ClientDomain, portPart)
+		fsm.logger.Debug("LeaderHTTPAddress determined address (using ClientDomain)",
+			"leader_node_id", leaderNodeID,
+			"client_domain", leaderNodeConfig.ClientDomain,
+			"port", portPart,
+			"returned_address", addressToReturn)
+	} else {
+		// No ClientDomain, so use the host part from HttpBinding (effectively the original HttpBinding)
+		addressToReturn = net.JoinHostPort(hostPartFromBinding, portPart)
+		fsm.logger.Debug("LeaderHTTPAddress determined address (using host from HttpBinding)",
+			"leader_node_id", leaderNodeID,
+			"http_binding_host", hostPartFromBinding,
+			"port", portPart,
+			"returned_address", addressToReturn)
+	}
+	return addressToReturn, nil
 }
