@@ -40,11 +40,12 @@ func attemptAutoJoin(
 		return fmt.Errorf("default leader node '%s' configuration not found in cluster config", leaderNodeId)
 	}
 
-	log.Printf("Node %s is not the default leader. Attempting to join leader %s (%s) [clientDomain: %s].",
+	log.Printf("Node %s is not the default leader. Attempting to join leader %s (%s) clientDomain: %s.",
 		currentNodeId, leaderNodeId, leaderNodeCfg.HttpBinding, leaderNodeCfg.ClientDomain)
 
 	// Determine the target host and port for the join URL
 	var connectAddr string
+	log.Printf("leaderNodeCfg.ClientDomain: %s", leaderNodeCfg.ClientDomain)
 	if leaderNodeCfg.ClientDomain != "" {
 		_, port, err := net.SplitHostPort(leaderNodeCfg.HttpBinding)
 		if err != nil {
