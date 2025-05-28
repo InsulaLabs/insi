@@ -84,10 +84,13 @@ func NewClient(cfg *Config) (*Client, error) {
 	}
 
 	if !cfg.SkipVerify {
-		// ServerName for TLS verification should be the host we are connecting to,
-		// which is connectHost (ideally the ClientDomain).
-		tlsClientCfg.ServerName = connectHost
-		clientLogger.Info("TLS verification will use ServerName derived from connection host", "server_name", tlsClientCfg.ServerName)
+		// ServerName for TLS verification should be the host we are connecting to.
+		// By leaving tlsClientCfg.ServerName as "" (its zero value), the crypto/tls
+		// package will automatically use the host from the dial address for SNI
+		// and certificate validation. This works correctly across redirects.
+		// Our `connectHost` (derived from ClientDomain or HostPort) is already used in the baseURL.
+		// tlsClientCfg.ServerName = connectHost // REMOVED: Let crypto/tls handle it based on target host
+		clientLogger.Info("TLS verification active. ServerName for SNI will be derived from target URL host.", "initial_target_host", connectHost)
 	} else {
 		clientLogger.Info("TLS verification is skipped.")
 	}
@@ -108,7 +111,7 @@ func NewClient(cfg *Config) (*Client, error) {
 		},
 	}
 
-	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify, "tls_server_name", tlsClientCfg.ServerName)
+	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify /*, "explicit_tls_server_name_set", tlsClientCfg.ServerName != "" */) // tlsClientCfg.ServerName will be empty
 
 	return &Client{
 		baseURL:    baseURL,
