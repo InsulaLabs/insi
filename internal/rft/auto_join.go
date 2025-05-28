@@ -14,6 +14,7 @@ import (
 
 	"crypto/sha256"
 	"encoding/hex"
+	"net"
 
 	"github.com/InsulaLabs/insi/internal/config"
 
@@ -42,13 +43,32 @@ func attemptAutoJoin(
 	log.Printf("Node %s is not the default leader. Attempting to join leader %s (%s) [clientDomain: %s].",
 		currentNodeId, leaderNodeId, leaderNodeCfg.HttpBinding, leaderNodeCfg.ClientDomain)
 
+	// Determine the target host and port for the join URL
+	var connectAddr string
+	if leaderNodeCfg.ClientDomain != "" {
+		_, port, err := net.SplitHostPort(leaderNodeCfg.HttpBinding)
+		if err != nil {
+			log.Printf("Warning: Could not parse port from leader's HttpBinding '%s' when using ClientDomain '%s'. Falling back to HttpBinding for URL. Error: %v",
+				leaderNodeCfg.HttpBinding, leaderNodeCfg.ClientDomain, err)
+			connectAddr = leaderNodeCfg.HttpBinding // Fallback to full HttpBinding
+		} else {
+			connectAddr = net.JoinHostPort(leaderNodeCfg.ClientDomain, port)
+			log.Printf("Node %s: Auto-join will connect to leader %s via domain: %s (derived from ClientDomain '%s' and HttpBinding port)",
+				currentNodeId, leaderNodeId, connectAddr, leaderNodeCfg.ClientDomain)
+		}
+	} else {
+		connectAddr = leaderNodeCfg.HttpBinding
+		log.Printf("Node %s: Auto-join will connect to leader %s via HttpBinding: %s (ClientDomain not set for leader)",
+			currentNodeId, leaderNodeId, connectAddr)
+	}
+
 	// Construct join URL. Ensure scheme is https if TLS is used.
 	scheme := "http"
 	if clusterCfg.TLS.Cert != "" && clusterCfg.TLS.Key != "" {
 		scheme = "https"
 	}
 	joinURL := fmt.Sprintf("%s://%s/db/api/v1/join?followerId=%s&followerAddr=%s",
-		scheme, leaderNodeCfg.HttpBinding, currentNodeId, myRaftAddr)
+		scheme, connectAddr, currentNodeId, myRaftAddr)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	tlsConfig := &tls.Config{}
