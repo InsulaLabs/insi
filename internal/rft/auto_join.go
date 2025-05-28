@@ -48,7 +48,7 @@ func attemptAutoJoin(
 		scheme = "https"
 	}
 	joinURL := fmt.Sprintf("%s://%s/db/api/v1/join?followerId=%s&followerAddr=%s",
-		scheme, leaderNodeCfg.ClientDomain, currentNodeId, myRaftAddr)
+		scheme, leaderNodeCfg.HttpBinding, currentNodeId, myRaftAddr)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	tlsConfig := &tls.Config{}
@@ -57,17 +57,28 @@ func attemptAutoJoin(
 		if clusterCfg.ClientSkipVerify {
 			log.Println("Client TLS verification is skipped for auto-join as per ClientSkipVerify config.")
 			tlsConfig.InsecureSkipVerify = true
-		} else if clusterCfg.TLS.Cert != "" {
-			caCertPool := x509.NewCertPool()
-			caCertBytes, err := os.ReadFile(clusterCfg.TLS.Cert)
-			if err != nil {
-				log.Printf("Warning: Failed to read configured TLS cert at %s for auto-join CA: %v. Proceeding without custom CA.", clusterCfg.TLS.Cert, err)
+		} else {
+			// If not skipping verification, and a ClientDomain is provided for the leader, use it for ServerName.
+			if leaderNodeCfg.ClientDomain != "" {
+				tlsConfig.ServerName = leaderNodeCfg.ClientDomain
+				log.Printf("Auto-join client TLS verification will use ServerName: %s for leader %s", leaderNodeCfg.ClientDomain, leaderNodeId)
 			} else {
-				if !caCertPool.AppendCertsFromPEM(caCertBytes) {
-					log.Printf("Warning: Failed to append configured TLS cert at %s to CA pool for auto-join. Proceeding without custom CA.", clusterCfg.TLS.Cert)
+				log.Printf("Warning: Auto-join client TLS verification is active, but no ClientDomain specified for leader %s (%s). TLS will verify against the IP/hostname in HttpBinding: %s.", leaderNodeId, leaderNodeCfg.HttpBinding, leaderNodeCfg.HttpBinding)
+			}
+
+			// Attempt to load CA cert if specified
+			if clusterCfg.TLS.Cert != "" {
+				caCertPool := x509.NewCertPool()
+				caCertBytes, err := os.ReadFile(clusterCfg.TLS.Cert)
+				if err != nil {
+					log.Printf("Warning: Failed to read configured TLS cert at %s for auto-join CA: %v. Proceeding without custom CA.", clusterCfg.TLS.Cert, err)
 				} else {
-					tlsConfig.RootCAs = caCertPool
-					log.Printf("Auto-join client TLS configured with CA cert: %s", clusterCfg.TLS.Cert)
+					if !caCertPool.AppendCertsFromPEM(caCertBytes) {
+						log.Printf("Warning: Failed to append configured TLS cert at %s to CA pool for auto-join. Proceeding without custom CA.", clusterCfg.TLS.Cert)
+					} else {
+						tlsConfig.RootCAs = caCertPool
+						log.Printf("Auto-join client TLS configured with CA cert: %s", clusterCfg.TLS.Cert)
+					}
 				}
 			}
 		}
