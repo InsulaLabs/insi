@@ -4,5 +4,5 @@
     "max_batch_size": 100,
     "writes_per_second": 100,
     "reads_per_second": 100,
-    "max_total_keys": 100000
+    "max_total_bytes": 52428800
 }

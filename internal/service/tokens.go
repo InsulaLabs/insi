@@ -20,7 +20,7 @@ type KeyLimits struct {
 	MaxBatchSize      int `json:"max_batch_size"`       // max number of keys in a batch (delete and set)
 	WritesPerSecond   int `json:"writes_per_second"`    // max number of writes per second
 	ReadsPerSecond    int `json:"reads_per_second"`     // max number of reads per second
-	MaxTotalKeys      int `json:"max_total_keys"`       // max number of keys stored in the system
+	MaxTotalBytes     int `json:"max_total_bytes"`      // max sum of all data stored in the system (delete and set)
 }
 
 var rootKeyLimits = KeyLimits{
@@ -29,7 +29,7 @@ var rootKeyLimits = KeyLimits{
 	MaxBatchSize:      1000,
 	WritesPerSecond:   1000,
 	ReadsPerSecond:    1000,
-	MaxTotalKeys:      100000,
+	MaxTotalBytes:     100 * 1024 * 1024 * 1024, // 100	GB
 }
 
 // Returns the entity name (as encoded by user) and then the uuid generated unique to the key
