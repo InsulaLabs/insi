@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net" // Added for SplitHostPort and JoinHostPort
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/InsulaLabs/insi/models" // Assuming models.Event is defined here
@@ -21,13 +24,32 @@ const (
 	defaultTimeout = 10 * time.Second
 )
 
-type Config struct {
+type ConnectionType string
+
+const (
+	ConnectionTypeDirect ConnectionType = "direct"
+	ConnectionTypeRandom ConnectionType = "random"
+)
+
+var (
+	ErrKeyNotFound   = errors.New("key not found")
+	ErrTokenNotFound = errors.New("token not found")
+	ErrTokenInvalid  = errors.New("token invalid")
+)
+
+type Endpoint struct {
 	HostPort     string
-	ClientDomain string // For TLS verification against a domain name AND for constructing baseURL
-	ApiKey       string
-	SkipVerify   bool
+	ClientDomain string
 	Logger       *slog.Logger
-	Timeout      time.Duration
+}
+
+type Config struct {
+	ConnectionType ConnectionType // Direct will use Endpoints[0] always
+	Endpoints      []Endpoint
+	ApiKey         string
+	SkipVerify     bool
+	Timeout        time.Duration
+	Logger         *slog.Logger
 }
 
 // Client is the API client for the insi service.
@@ -40,9 +62,13 @@ type Client struct {
 
 // NewClient creates a new insi API client.
 func NewClient(cfg *Config) (*Client, error) {
-	if cfg.HostPort == "" { // HostPort is still mandatory for port information
-		return nil, fmt.Errorf("hostPort cannot be empty")
+
+	for _, endpoint := range cfg.Endpoints {
+		if endpoint.HostPort == "" {
+			return nil, fmt.Errorf("hostPort cannot be empty")
+		}
 	}
+
 	if cfg.ApiKey == "" {
 		return nil, fmt.Errorf("apiKey cannot be empty")
 	}
@@ -50,22 +76,31 @@ func NewClient(cfg *Config) (*Client, error) {
 
 	connectHost := ""
 	connectPort := ""
+	connectClientDomain := ""
+
+	if cfg.ConnectionType == ConnectionTypeDirect {
+		connectHost = cfg.Endpoints[0].HostPort
+		connectClientDomain = cfg.Endpoints[0].ClientDomain
+	} else if cfg.ConnectionType == ConnectionTypeRandom {
+		connectHost = cfg.Endpoints[rand.Intn(len(cfg.Endpoints))].HostPort
+		connectClientDomain = cfg.Endpoints[rand.Intn(len(cfg.Endpoints))].ClientDomain
+	}
 
 	// Parse port from HostPort. HostPort might be IP:port or Domain:port.
-	_, parsedPort, err := net.SplitHostPort(cfg.HostPort)
+	_, parsedPort, err := net.SplitHostPort(connectHost)
 	if err != nil {
-		clientLogger.Error("Failed to parse port from HostPort", "hostPort", cfg.HostPort, "error", err)
-		return nil, fmt.Errorf("failed to parse port from HostPort '%s': %w", cfg.HostPort, err)
+		clientLogger.Error("Failed to parse port from HostPort", "hostPort", connectHost, "error", err)
+		return nil, fmt.Errorf("failed to parse port from HostPort '%s': %w", connectHost, err)
 	}
 	connectPort = parsedPort
 
 	// Determine the host for the connection URL.
-	if cfg.ClientDomain != "" {
-		connectHost = cfg.ClientDomain // Prefer ClientDomain if available
-		clientLogger.Info("Using ClientDomain for connection URL host", "domain", cfg.ClientDomain)
+	if connectClientDomain != "" {
+		connectHost = connectClientDomain // Prefer ClientDomain if available
+		clientLogger.Info("Using ClientDomain for connection URL host", "domain", connectClientDomain)
 	} else {
 		// Fallback to host from HostPort if ClientDomain is not set.
-		hostFromHostPort, _, _ := net.SplitHostPort(cfg.HostPort) // Error already handled for port, ignore here for host.
+		hostFromHostPort, _, _ := net.SplitHostPort(connectHost) // Error already handled for port, ignore here for host.
 		connectHost = hostFromHostPort
 		clientLogger.Info("Using host from HostPort for connection URL (ClientDomain not provided)", "host", connectHost)
 	}
@@ -254,6 +289,9 @@ func (c *Client) Get(key string) (string, error) {
 	}
 	err := c.doRequest(http.MethodGet, "db/api/v1/get", params, nil, &response)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return "", ErrKeyNotFound
+		}
 		return "", err
 	}
 	return response.Data, nil
@@ -274,7 +312,15 @@ func (c *Client) Delete(key string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key}
-	return c.doRequest(http.MethodPost, "db/api/v1/delete", nil, payload, nil)
+	err := c.doRequest(http.MethodPost, "db/api/v1/delete", nil, payload, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			// If the key is not found, we return nil
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // IterateByPrefix retrieves a list of keys matching a given prefix.
@@ -292,6 +338,9 @@ func (c *Client) IterateByPrefix(prefix string, offset, limit int) ([]string, er
 	}
 	err := c.doRequest(http.MethodGet, "db/api/v1/iterate/prefix", params, nil, &response)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, ErrKeyNotFound
+		}
 		return nil, err
 	}
 	return response.Data, nil
@@ -323,6 +372,9 @@ func (c *Client) GetCache(key string) (string, error) {
 	}
 	err := c.doRequest(http.MethodGet, "db/api/v1/cache/get", params, nil, &response)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return "", ErrKeyNotFound
+		}
 		return "", err
 	}
 	return response.Data, nil
@@ -334,7 +386,14 @@ func (c *Client) DeleteCache(key string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key}
-	return c.doRequest(http.MethodPost, "db/api/v1/cache/delete", nil, payload, nil)
+	err := c.doRequest(http.MethodPost, "db/api/v1/cache/delete", nil, payload, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return ErrKeyNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *Client) PublishEvent(topic string, data any) error {
@@ -385,7 +444,15 @@ func (c *Client) DeleteAPIKey(apiKey string) error {
 		return fmt.Errorf("apiKey cannot be empty")
 	}
 	params := map[string]string{"key": apiKey}
-	return c.doRequest(http.MethodGet, "db/api/v1/delete-api-key", params, nil, nil)
+	err := c.doRequest(http.MethodGet, "db/api/v1/delete-api-key", params, nil, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			// If the key is not found, we return nil
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // Ping sends a ping request to the server and returns the response.
@@ -417,6 +484,9 @@ func (c *Client) RequestScopeToken(scopes map[string]string, ttl time.Duration) 
 
 	err := c.doRequest(http.MethodPost, "db/api/v1/etok/new", nil, payload, &response)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return "", ErrTokenNotFound
+		}
 		return "", err
 	}
 	return response.Token, nil
@@ -427,7 +497,7 @@ func (c *Client) RequestScopeToken(scopes map[string]string, ttl time.Duration) 
 // The server handler `etokVerifyHandler` checks if these requested scopes are a subset of (or equal to) the scopes embedded in the token.
 func (c *Client) VerifyScopeToken(token string, scopesBeingRequested map[string]string) (bool, error) {
 	if token == "" {
-		return false, fmt.Errorf("token cannot be empty")
+		return false, ErrTokenInvalid
 	}
 	// scopesBeingRequested can be empty if the verification is just to check token validity without specific scope assertion at this point.
 	// However, the server side handler currently expects a DeepEqual match, so for a true verification against specific scopes, they must be provided.
@@ -440,7 +510,10 @@ func (c *Client) VerifyScopeToken(token string, scopesBeingRequested map[string]
 
 	err := c.doRequest(http.MethodPost, "db/api/v1/etok/verify", nil, payload, &response)
 	if err != nil {
-		return false, err // This will include HTTP errors (like 401 Unauthorized if token/scopes don't match)
+		if strings.Contains(err.Error(), "404") {
+			return false, ErrTokenNotFound
+		}
+		return false, ErrTokenInvalid // This will include HTTP errors (like 401 Unauthorized if token/scopes don't match)
 	}
 	return response.Verified, nil
 }
@@ -498,7 +571,7 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 			// }
 			// resp.Body.Close()
 			c.logger.Error("WebSocket dial error with response", "url", wsURL.String(), "status", resp.Status, "error", err)
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s: %w", errMsg, err)
 
 		}
 		c.logger.Error("WebSocket dial error", "url", wsURL.String(), "error", err)

@@ -62,6 +62,7 @@ type Service struct {
 	eventCh              chan models.Event // Central event channel for the service
 	activeWsConnections  int32             // Counter for active WebSocket connections
 	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
+
 }
 
 func NewService(

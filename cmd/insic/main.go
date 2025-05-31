@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -90,11 +91,16 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 	}
 
 	c, err := client.NewClient(&client.Config{
-		HostPort:     nodeDetails.HttpBinding,
-		ApiKey:       apiKey,
-		SkipVerify:   cfg.ClientSkipVerify,
-		ClientDomain: nodeDetails.ClientDomain,
-		Logger:       clientLogger,
+		ConnectionType: client.ConnectionTypeDirect,
+		Endpoints: []client.Endpoint{
+			{
+				HostPort:     nodeDetails.HttpBinding,
+				ClientDomain: nodeDetails.ClientDomain,
+			},
+		},
+		ApiKey:     apiKey,
+		SkipVerify: cfg.ClientSkipVerify,
+		Logger:     clientLogger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.HttpBinding, err)
@@ -254,8 +260,13 @@ func handleGet(c *client.Client, args []string) {
 	key := args[0]
 	value, err := c.Get(key)
 	if err != nil {
-		logger.Error("Get failed", "key", key, "error", err)
-		fmt.Println("Error:", err)
+		if errors.Is(err, client.ErrKeyNotFound) {
+			logger.Error("Get failed: Key not found", "key", key)
+			fmt.Printf("Error: Key '%s' not found.\\n", key)
+		} else {
+			logger.Error("Get failed", "key", key, "error", err)
+			fmt.Println("Error:", err)
+		}
 		os.Exit(1)
 	}
 	fmt.Println(value)
@@ -287,6 +298,9 @@ func handleDelete(c *client.Client, args []string) {
 	key := args[0]
 	err := c.Delete(key)
 	if err != nil {
+		// The client.Delete method already returns nil if the key is not found (matching server behavior).
+		// So, specific client.ErrKeyNotFound check might not be triggered here unless client.Delete changes.
+		// However, maintaining consistency in error logging if other types of errors occur.
 		logger.Error("Delete failed", "key", key, "error", err)
 		fmt.Println("Error:", err)
 		os.Exit(1)
@@ -333,8 +347,13 @@ func handleIterate(c *client.Client, args []string) {
 	}
 
 	if err != nil {
-		logger.Error("Iterate failed", "type", iterType, "value", value, "error", err)
-		fmt.Println("Error:", err)
+		if errors.Is(err, client.ErrKeyNotFound) {
+			logger.Warn("Iterate: No keys found matching criteria", "type", iterType, "value", value, "offset", offset, "limit", limit)
+			fmt.Println("No keys found.")
+		} else {
+			logger.Error("Iterate failed", "type", iterType, "value", value, "error", err)
+			fmt.Println("Error:", err)
+		}
 		os.Exit(1)
 	}
 	logger.Info("Iterate successful", "type", iterType, "value", value, "offset", offset, "limit", limit, "count", len(results))
@@ -383,8 +402,13 @@ func handleCache(c *client.Client, args []string) {
 		key := subArgs[0]
 		value, err := c.GetCache(key)
 		if err != nil {
-			logger.Error("Cache get failed", "key", key, "error", err)
-			fmt.Println("Error:", err) // May include "not found" type errors from client
+			if errors.Is(err, client.ErrKeyNotFound) {
+				logger.Error("Cache get failed: Key not found", "key", key)
+				fmt.Printf("Error: Key '%s' not found in cache.\\n", key)
+			} else {
+				logger.Error("Cache get failed", "key", key, "error", err)
+				fmt.Println("Error:", err) // May include "not found" type errors from client
+			}
 			os.Exit(1)
 		}
 		fmt.Println(value)
@@ -394,12 +418,18 @@ func handleCache(c *client.Client, args []string) {
 			printUsage()
 			os.Exit(1)
 		}
-		key := subArgs[0]
+		key := subArgs[0] // redefine key for this scope
 		err := c.DeleteCache(key)
 		if err != nil {
-			logger.Error("Cache delete failed", "key", key, "error", err)
-			fmt.Println("Error:", err)
-			os.Exit(1)
+			if errors.Is(err, client.ErrKeyNotFound) {
+				logger.Info("Cache delete: Key not found, no action taken.", "key", key) // Info level as it's not strictly an error
+				fmt.Printf("Key '%s' not found in cache. Nothing to delete.\\n", key)
+				// os.Exit(0) // Or exit successfully
+			} else {
+				logger.Error("Cache delete failed", "key", key, "error", err)
+				fmt.Println("Error:", err)
+			}
+			os.Exit(1) // Exit with error unless it was ErrKeyNotFound and we decided to exit 0 above
 		}
 		logger.Info("Cache delete successful", "key", key)
 		fmt.Println("OK")
@@ -538,11 +568,16 @@ func handleVerifyApiKey(cfg *config.Cluster, args []string) {
 
 	verificationClientLogger := logger.WithGroup("api-verify-client")
 	verificationClient, err := client.NewClient(&client.Config{
-		HostPort:     nodeDetails.HttpBinding,
-		ApiKey:       apiKeyToVerify,
-		SkipVerify:   cfg.ClientSkipVerify,
-		ClientDomain: nodeDetails.ClientDomain,
-		Logger:       verificationClientLogger,
+		ConnectionType: client.ConnectionTypeDirect,
+		Endpoints: []client.Endpoint{
+			{
+				HostPort:     nodeDetails.HttpBinding,
+				ClientDomain: nodeDetails.ClientDomain,
+			},
+		},
+		ApiKey:     apiKeyToVerify,
+		SkipVerify: cfg.ClientSkipVerify,
+		Logger:     verificationClientLogger,
 	})
 	if err != nil {
 		// This typically means the apiKeyToVerify was not in the correct format (e.g. hex encoded sha256)
@@ -651,14 +686,22 @@ func handleEtokRequest(c *client.Client, args []string) {
 	ttl, err := time.ParseDuration(*ttlStr)
 	if err != nil {
 		logger.Error("etok request: invalid TTL format", "ttl_str", *ttlStr, "error", err)
-		fmt.Fprintf(os.Stderr, "Error: Invalid TTL format for --ttl: %v. Use format like '60s', '5m', '1h'.\n", err)
+		fmt.Fprintf(os.Stderr, "Error: Invalid TTL format for --ttl: %v. Use format like '60s', '5m', '1h'.\\n", err)
 		os.Exit(1)
 	}
 
 	token, err := c.RequestScopeToken(scopes, ttl)
 	if err != nil {
-		logger.Error("Etok request failed", "error", err)
-		fmt.Println("Error:", err)
+		if errors.Is(err, client.ErrTokenNotFound) { // Should not happen on request, but good practice
+			logger.Error("Etok request failed: Token not found", "error", err)
+			fmt.Println("Error: Token not found during request processing.")
+		} else if errors.Is(err, client.ErrTokenInvalid) { // Should not happen on request
+			logger.Error("Etok request failed: Token invalid", "error", err)
+			fmt.Println("Error: Token invalid during request processing.")
+		} else {
+			logger.Error("Etok request failed", "error", err)
+			fmt.Println("Error:", err)
+		}
 		os.Exit(1)
 	}
 
@@ -686,15 +729,24 @@ func handleEtokVerify(c *client.Client, args []string) {
 	scopes, err := parseScopes(*scopesStr)
 	if err != nil {
 		logger.Error("etok verify: failed to parse scopes", "error", err)
-		fmt.Fprintf(os.Stderr, "Error parsing scopes for --scopes: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error parsing scopes for --scopes: %v\\n", err)
 		os.Exit(1)
 	}
 
 	verified, err := c.VerifyScopeToken(*tokenStr, scopes)
 	if err != nil {
 		// This error from client might already indicate not verified (e.g. 401 from server)
-		logger.Error("Etok verification failed or token invalid", "token", *tokenStr, "scopes_requested", scopes, "error", err)
-		fmt.Printf("Token '%s' is NOT valid for the requested scopes. Error: %s\n", *tokenStr, err)
+		// or specific token errors like ErrTokenNotFound or ErrTokenInvalid
+		if errors.Is(err, client.ErrTokenNotFound) {
+			logger.Error("Etok verification failed: Token not found", "token", *tokenStr, "scopes_requested", scopes, "error", err)
+			fmt.Printf("Token '%s' was not found. Error: %s\\n", *tokenStr, err)
+		} else if errors.Is(err, client.ErrTokenInvalid) {
+			logger.Error("Etok verification failed: Token invalid", "token", *tokenStr, "scopes_requested", scopes, "error", err)
+			fmt.Printf("Token '%s' is invalid. Error: %s\\n", *tokenStr, err)
+		} else {
+			logger.Error("Etok verification failed or token invalid", "token", *tokenStr, "scopes_requested", scopes, "error", err)
+			fmt.Printf("Token '%s' is NOT valid for the requested scopes. Error: %s\\n", *tokenStr, err)
+		}
 		os.Exit(1) // Exit because the verification process itself encountered an error.
 	}
 

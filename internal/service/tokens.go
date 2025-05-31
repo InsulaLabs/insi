@@ -109,11 +109,16 @@ func (s *Service) newApiKey(entity string) (string, error) {
 	// store the key in the db
 	internalClientLogger := s.logger.WithGroup("internal-client")
 	c, err := client.NewClient(&client.Config{
-		HostPort:     s.nodeCfg.HttpBinding,
-		ApiKey:       s.authToken,
-		SkipVerify:   s.cfg.ClientSkipVerify,
-		Logger:       internalClientLogger,
-		ClientDomain: s.nodeCfg.ClientDomain,
+		ConnectionType: client.ConnectionTypeDirect,
+		Endpoints: []client.Endpoint{
+			{
+				HostPort:     s.nodeCfg.HttpBinding,
+				ClientDomain: s.nodeCfg.ClientDomain,
+			},
+		},
+		ApiKey:     s.authToken,
+		SkipVerify: s.cfg.ClientSkipVerify,
+		Logger:     internalClientLogger,
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to store key: %w", err)
@@ -179,11 +184,16 @@ func (s *Service) deleteApiKey(targetKey string) error {
 		s.logger.Info("Deleting api key from follower node => forwarding to leader", "key", targetKey)
 		internalClientLogger := s.logger.WithGroup("internal-client-delete-api-key")
 		c, err := client.NewClient(&client.Config{
-			HostPort:     s.nodeCfg.HttpBinding,
-			ApiKey:       s.authToken,
-			SkipVerify:   s.cfg.ClientSkipVerify,
-			Logger:       internalClientLogger,
-			ClientDomain: s.nodeCfg.ClientDomain,
+			ConnectionType: client.ConnectionTypeDirect,
+			Endpoints: []client.Endpoint{
+				{
+					HostPort:     s.nodeCfg.HttpBinding,
+					ClientDomain: s.nodeCfg.ClientDomain,
+				},
+			},
+			ApiKey:     s.authToken,
+			SkipVerify: s.cfg.ClientSkipVerify,
+			Logger:     internalClientLogger,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create client for forwarding delete: %w", err)

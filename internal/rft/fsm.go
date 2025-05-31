@@ -515,8 +515,6 @@ func (kf *kvFsm) Join(followerId string, followerAddress string) error {
 
 func (kf *kvFsm) Publish(topic string, data any) error {
 
-	fmt.Println("DEV> Publish", topic, data)
-
 	payload := models.EventPayload{
 		Topic:     topic,
 		Data:      data,
