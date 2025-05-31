@@ -211,17 +211,19 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cacheEndpoints"))
 	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cacheEndpoints"))
 
+	// Events handlers
+	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
+	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
+
+	// ETOK handlers
+	s.mux.Handle("/db/api/v1/etok/new", s.rateLimitMiddleware(http.HandlerFunc(s.etokNewHandler), "cacheEndpoints"))
+	s.mux.Handle("/db/api/v1/etok/verify", s.rateLimitMiddleware(http.HandlerFunc(s.etokVerifyHandler), "cacheEndpoints"))
+
 	// System handlers
 	s.mux.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
 	s.mux.Handle("/db/api/v1/new-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.newApiKeyHandler), "system"))
 	s.mux.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
-
-	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
-	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
-
-	s.mux.Handle("/db/api/v1/etok/new", s.rateLimitMiddleware(http.HandlerFunc(s.etokNewHandler), "cacheEndpoints"))
-	s.mux.Handle("/db/api/v1/etok/verify", s.rateLimitMiddleware(http.HandlerFunc(s.etokVerifyHandler), "cacheEndpoints"))
 
 	/*
 		TODO: (maybe - not very important)
