@@ -10,32 +10,49 @@ import (
 )
 
 type TokenCache struct {
-	Entity string `json:"entity"`
-	UUID   string `json:"uuid"`
+	Entity    string     `json:"entity"`
+	UUID      string     `json:"uuid"`
+	KeyLimits *KeyLimits `json:"key_limits"`
+}
+type KeyLimits struct {
+	MaxKeySizeBytes   int `json:"max_key_size_bytes"`   // max size of a key
+	MaxValueSizeBytes int `json:"max_value_size_bytes"` // max size of a value
+	MaxBatchSize      int `json:"max_batch_size"`       // max number of keys in a batch (delete and set)
+	WritesPerSecond   int `json:"writes_per_second"`    // max number of writes per second
+	ReadsPerSecond    int `json:"reads_per_second"`     // max number of reads per second
+	MaxTotalKeys      int `json:"max_total_keys"`       // max number of keys stored in the system
+}
+
+var rootKeyLimits = KeyLimits{
+	MaxKeySizeBytes:   1024 * 1024, // 1MB
+	MaxValueSizeBytes: 1024 * 1024, // 1MB
+	MaxBatchSize:      1000,
+	WritesPerSecond:   1000,
+	ReadsPerSecond:    1000,
+	MaxTotalKeys:      100000,
 }
 
 // Returns the entity name (as encoded by user) and then the uuid generated unique to the key
-func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, string, bool) {
+func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, string, *KeyLimits, bool) {
 
 	authHeader := r.Header.Get("Authorization")
 	if mustBeRoot {
-		return EntityRoot, s.cfg.RootPrefix, authHeader == s.authToken
+		return EntityRoot, s.cfg.RootPrefix, &rootKeyLimits, authHeader == s.authToken
 	}
 
 	if authHeader == s.authToken {
-		return EntityRoot, s.cfg.RootPrefix, true
+		return EntityRoot, s.cfg.RootPrefix, &rootKeyLimits, true
 	}
 
-	// Check the cache first
-	item := s.lcs.apiKeys.Get(authHeader)
-	if item != nil {
+	cacheItem := s.lcs.apiKeys.Get(authHeader)
+	if cacheItem != nil {
 		tokenCache := TokenCache{}
-		err := json.Unmarshal([]byte(item.Value()), &tokenCache)
+		err := json.Unmarshal([]byte(cacheItem.Value()), &tokenCache)
 		if err != nil {
 			s.logger.Error("Failed to unmarshal token cache", "error", err)
-			return "", "", false
 		}
-		return tokenCache.Entity, tokenCache.UUID, true
+		fmt.Println("validateToken: CACHE HIT", cacheItem.Value())
+		return tokenCache.Entity, tokenCache.UUID, tokenCache.KeyLimits, true
 	}
 
 	/*
@@ -43,21 +60,28 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 		and we need to scope to the root prefix to get the actual key
 	*/
 	scopedKey := fmt.Sprintf("%s:%s", s.cfg.RootPrefix, authHeader)
-	value, err := s.fsm.Get(scopedKey)
+	limitsValue, err := s.fsm.Get(scopedKey)
 	if err != nil {
 		s.logger.Error(
 			"Failed to get value from valuesDb",
 			"error", err,
 		)
-		return "", "", false
+		return "", "", nil, false
 	}
 
-	if value == "" {
+	if limitsValue == "" {
 		s.logger.Error(
 			"Value is empty",
 			"key", authHeader,
 		)
-		return "", "", false
+		return "", "", nil, false
+	}
+
+	limits := KeyLimits{}
+	err = json.Unmarshal([]byte(limitsValue), &limits)
+	if err != nil {
+		s.logger.Error("Failed to unmarshal key limits", "error", err)
+		return "", "", nil, false
 	}
 
 	keyMan := sentinel.NewSentinel(
@@ -73,12 +97,14 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 			"key", authHeader,
 			"error", err,
 		)
-		return "", "", false
+		return "", "", nil, false
 	}
 
+	// store the key in the cache
 	tokenCache := TokenCache{
-		Entity: entity,
-		UUID:   uuid,
+		Entity:    entity,
+		UUID:      uuid,
+		KeyLimits: &limits,
 	}
 	cacheValue, err := json.Marshal(tokenCache)
 	if err == nil {
@@ -86,10 +112,10 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 		s.lcs.apiKeys.Set(authHeader, string(cacheValue), s.cfg.Cache.Keys)
 	}
 
-	return entity, uuid, true
+	return entity, uuid, &limits, true
 }
 
-func (s *Service) newApiKey(entity string) (string, error) {
+func (s *Service) newApiKey(entity string, keyLimits *KeyLimits) (string, error) {
 
 	if entity == "" {
 		return "", fmt.Errorf("entity is required")
@@ -124,6 +150,11 @@ func (s *Service) newApiKey(entity string) (string, error) {
 		return "", fmt.Errorf("failed to store key: %w", err)
 	}
 
+	limitsEncoded, err := json.Marshal(keyLimits)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal key limits: %w", err)
+	}
+
 	/*
 		STORE:
 			ROOT_PREFIX:api_key:ENTITY_NAME => API_KEY
@@ -132,7 +163,7 @@ func (s *Service) newApiKey(entity string) (string, error) {
 	if err := c.Set(fmt.Sprintf("%s:api_key:%s", s.cfg.RootPrefix, entity), apiKey); err != nil {
 		return "", fmt.Errorf("failed to store key: [set] %w", err)
 	}
-	if err := c.Set(apiKey, entity); err != nil {
+	if err := c.Set(apiKey, string(limitsEncoded)); err != nil {
 		return "", fmt.Errorf("failed to store key: [set] %w", err)
 	}
 

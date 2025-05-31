@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -196,7 +197,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("join"), color.CyanString("<leaderNodeID>"), color.CyanString("<followerNodeID>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<entity_name>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<entity_name>"), color.CyanString("[limits_filepath.json]"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<api_key_value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<api_key_value>"))
 	fmt.Fprintf(os.Stderr, "  %s\n", color.GreenString("ping"))
@@ -525,13 +526,27 @@ func handleApi(c *client.Client, args []string) {
 }
 
 func handleAddApiKey(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("api add: requires <entity_name>")
+	if len(args) < 1 || len(args) > 2 {
+		logger.Error("api add: requires <entity_name> [limits_filepath.json]")
 		printUsage()
 		os.Exit(1)
 	}
 	entityName := args[0]
-	apiKey, err := c.NewAPIKey(entityName)
+	var limitsJSON string
+	var err error
+
+	if len(args) == 2 {
+		limitsFilePath := args[1]
+		limitsBytes, err := os.ReadFile(limitsFilePath)
+		if err != nil {
+			logger.Error("api add: failed to read limits file", "filepath", limitsFilePath, "error", err)
+			fmt.Fprintf(os.Stderr, "%s reading limits file %s: %v\n", color.RedString("Error:"), color.CyanString(limitsFilePath), err)
+			os.Exit(1)
+		}
+		limitsJSON = string(limitsBytes)
+	}
+
+	apiKey, err := c.NewAPIKey(entityName, limitsJSON)
 	if err != nil {
 		logger.Error("API key creation failed", "entity", entityName, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
@@ -611,8 +626,22 @@ func handleVerifyApiKey(cfg *config.Cluster, args []string) {
 
 	resp, err := verificationClient.Ping()
 	if err != nil {
-		logger.Error("API key verification ping failed", "key", apiKeyToVerify, "error", err)
-		fmt.Fprintf(os.Stderr, "API Key '%s' is %s. Error: %s\n", color.CyanString(apiKeyToVerify), color.RedString("NOT valid or server is unreachable"), err)
+		errString := err.Error()
+		// The client.ErrAPIKeyNotFound path would be hit if the server specifically reported API_KEY_NOT_FOUND.
+		// Currently, authedPing sends AUTHENTICATION_FAILED for general auth issues from validateToken.
+		if errors.Is(err, client.ErrAPIKeyNotFound) {
+			logger.Error("API key verification failed: Key specifically reported as not found by server", "key", apiKeyToVerify)
+			fmt.Fprintf(os.Stderr, "API Key '%s' was %s (as reported by server).\n", color.CyanString(apiKeyToVerify), color.RedString("not found"))
+		} else if strings.Contains(errString, "AUTHENTICATION_FAILED") || strings.Contains(errString, "status 401") {
+			// This is the practical path for a 401 from ping with the current server setup.
+			// User wants this to imply "key doesn't exist or is invalid".
+			logger.Warn("API key verification failed: Authentication error. Assuming key not found or invalid.", "key", apiKeyToVerify, "server_response", errString)
+			fmt.Fprintf(os.Stderr, "API Key '%s' %s.\n", color.CyanString(apiKeyToVerify), color.RedString("was not found or is invalid"))
+		} else {
+			// This handles other errors like network issues, etc.
+			logger.Error("API key verification ping failed: Network or other error", "key", apiKeyToVerify, "error", err)
+			fmt.Fprintf(os.Stderr, "Error during API key verification for '%s': %s. The key may be invalid or the server unreachable.\n", color.CyanString(apiKeyToVerify), err)
+		}
 		os.Exit(1)
 	}
 

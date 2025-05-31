@@ -34,9 +34,10 @@ const (
 )
 
 var (
-	ErrKeyNotFound   = errors.New("key not found")
-	ErrTokenNotFound = errors.New("token not found")
-	ErrTokenInvalid  = errors.New("token invalid")
+	ErrKeyNotFound    = errors.New("key not found")
+	ErrTokenNotFound  = errors.New("token not found")
+	ErrTokenInvalid   = errors.New("token invalid")
+	ErrAPIKeyNotFound = errors.New("api key not found") // New distinct error
 )
 
 type Endpoint struct {
@@ -52,6 +53,11 @@ type Config struct {
 	SkipVerify     bool
 	Timeout        time.Duration
 	Logger         *slog.Logger
+}
+
+type ErrorResponse struct {
+	ErrorType string `json:"error_type"`
+	Message   string `json:"message"`
 }
 
 // Client is the API client for the insi service.
@@ -256,7 +262,21 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			c.logger.Warn("Received non-2xx status code", "method", originalMethod, "url", currentReqURL.String(), "status_code", resp.StatusCode)
-			// TODO: Attempt to read error body for more details (as was in original code comment)
+
+			// Attempt to read error body for more details
+			var errorResp ErrorResponse
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			if readErr == nil {
+				if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
+					c.logger.Debug("Parsed JSON error response from server", "error_type", errorResp.ErrorType, "message", errorResp.Message)
+					if errorResp.ErrorType == "API_KEY_NOT_FOUND" { // Matches the error_type from authedPing (if it could send it)
+						return ErrAPIKeyNotFound
+					}
+					// Return a generic error with the server's message if available
+					return fmt.Errorf("server error (status %d): %s - %s", resp.StatusCode, errorResp.ErrorType, errorResp.Message)
+				}
+			}
+			// Fallback if error body can't be parsed or isn't JSON
 			return fmt.Errorf("server returned status %d for %s %s", resp.StatusCode, originalMethod, currentReqURL.String())
 		}
 
@@ -425,11 +445,15 @@ func (c *Client) Join(followerID, followerAddr string) error {
 }
 
 // NewAPIKey requests the server to generate a new API key for the given entity.
-func (c *Client) NewAPIKey(entityName string) (string, error) {
+// It now accepts an optional limitsJSON string to specify API key limits.
+func (c *Client) NewAPIKey(entityName string, limitsJSON string) (string, error) {
 	if entityName == "" {
 		return "", fmt.Errorf("entityName cannot be empty")
 	}
 	params := map[string]string{"entity": entityName}
+	if limitsJSON != "" {
+		params["limits"] = limitsJSON
+	}
 	var response struct {
 		APIKey string `json:"apiKey"`
 	}

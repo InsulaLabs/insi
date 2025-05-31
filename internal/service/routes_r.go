@@ -11,7 +11,7 @@ import (
 
 func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
-	entity, uuid, ok := s.validateToken(r, false)
+	entity, uuid, _, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -49,7 +49,7 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
 
-	entity, uuid, ok := s.validateToken(r, false)
+	entity, uuid, _, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -108,7 +108,7 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 
 func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	entity, uuid, ok := s.validateToken(r, false)
+	entity, uuid, _, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -145,7 +145,7 @@ func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 */
 
 func (s *Service) getObjectHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, ok := s.validateToken(r, false)
+	entity, uuid, _, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -180,7 +180,7 @@ func (s *Service) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) getObjectListHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, ok := s.validateToken(r, false)
+	entity, uuid, _, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

@@ -10,9 +10,15 @@ import (
 const apiKeyIdentifier = "insi_"
 
 func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, _, ok := s.validateToken(r, false) // <----- NOTE: Not root only for system
+	storedRootEntity, _, _, ok := s.validateToken(r, false)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		s.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error_type": "AUTHENTICATION_FAILED",
+			"message":    "Authentication failed. Invalid or missing API key.",
+		})
 		return
 	}
 
@@ -41,7 +47,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only admin "root" key can tell nodes to join the cluster
-	entity, _, ok := s.validateToken(r, true)
+	entity, _, _, ok := s.validateToken(r, true)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -71,7 +77,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 	s.logger.Debug("Enter newApiKeyHandler", "method", r.Method, "url", r.URL.String())
-	storedRootEntity, _, ok := s.validateToken(r, true)
+	storedRootEntity, _, _, ok := s.validateToken(r, true)
 	if !ok || storedRootEntity != "root" {
 		s.logger.Warn("Unauthorized attempt to create API key", "remote_addr", r.RemoteAddr)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -85,8 +91,18 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requestedLimits := r.URL.Query().Get("limits")
+	var limits *KeyLimits
+	if requestedLimits != "" {
+		limits = &KeyLimits{}
+		err := json.Unmarshal([]byte(requestedLimits), limits)
+		if err != nil {
+			s.logger.Error("Failed to unmarshal limits", "error", err)
+		}
+	}
+
 	s.logger.Info("Attempting to create new API key for entity", "entity", entity, "requested_by_root", true)
-	key, err := s.newApiKey(entity)
+	key, err := s.newApiKey(entity, limits)
 	if err != nil {
 		s.logger.Error("Failed to generate or store new API key", "entity", entity, "error", err)
 		http.Error(w, fmt.Sprintf("Failed to generate key: %s", err), http.StatusInternalServerError)
@@ -104,7 +120,7 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteApiKeyHandler(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, _, ok := s.validateToken(r, true)
+	storedRootEntity, _, _, ok := s.validateToken(r, true)
 	if !ok || storedRootEntity != "root" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

@@ -1,0 +1,8 @@
+{
+    "max_key_size_bytes": 244,
+    "max_value_size_bytes": 244,
+    "max_batch_size": 100,
+    "writes_per_second": 100,
+    "reads_per_second": 100,
+    "max_total_keys": 100000
+}
