@@ -209,6 +209,10 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteHandler), "values"))
 	s.mux.Handle("/db/api/v1/iterate/prefix", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByPrefixHandler), "values"))
 
+	// Batch Value handlers
+	s.mux.Handle("/db/api/v1/batchset", s.rateLimitMiddleware(http.HandlerFunc(s.batchSetHandler), "values"))
+	s.mux.Handle("/db/api/v1/batchdelete", s.rateLimitMiddleware(http.HandlerFunc(s.batchDeleteHandler), "values"))
+
 	// Cache handlers
 	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cache"))
 	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cache"))

@@ -12,12 +12,12 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/internal/config" // Assuming this is the correct path
+	"github.com/InsulaLabs/insi/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
@@ -172,6 +172,10 @@ func main() {
 		handleEtok(cli, cmdArgs)
 	case "object": // New top-level command for object operations
 		handleObject(cli, cmdArgs)
+	case "batchset":
+		handleBatchSet(cli, cmdArgs)
+	case "batchdelete":
+		handleBatchDelete(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -204,6 +208,8 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("get"), color.CyanString("<key>"), color.CyanString("<output_filepath>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("object"), color.CyanString("list"), color.CyanString("[prefix]"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchset"), color.CyanString("<filepath.json>"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchdelete"), color.CyanString("<filepath.json>"))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -778,8 +784,6 @@ func handleEtokVerify(c *client.Client, args []string) {
 	}
 }
 
-// --- Object Command Handling ---
-
 func handleObject(c *client.Client, args []string) {
 	if len(args) < 1 {
 		logger.Error("object: requires a sub-command (set|get|delete|list)")
@@ -829,7 +833,6 @@ func handleObjectSet(c *client.Client, args []string) {
 		os.Exit(1)
 	}
 
-	// logger.Info("Object set successful", "key", key, "filepath", filePath) // Redundant
 	color.HiGreen("OK")
 }
 
@@ -861,7 +864,6 @@ func handleObjectGet(c *client.Client, args []string) {
 		os.Exit(1)
 	}
 
-	// logger.Info("Object get successful", "key", key, "output_filepath", outputFilePath) // Redundant
 	fmt.Printf("Object data for key '%s' written to %s\n", color.CyanString(key), color.GreenString(outputFilePath))
 }
 
@@ -874,8 +876,11 @@ func handleObjectDelete(c *client.Client, args []string) {
 	key := args[0]
 	err := c.DeleteObject(key)
 	if err != nil {
-		logger.Error("object delete: failed to delete object", "key", key, "error", err)
-		fmt.Fprintf(os.Stderr, "%s deleting object %s: %v\n", color.RedString("Error"), color.CyanString(key), err)
+		// The client.DeleteObject method already returns nil if the key is not found (matching server behavior).
+		// So, specific client.ErrKeyNotFound check might not be triggered here unless client.DeleteObject changes.
+		// However, maintaining consistency in error logging if other types of errors occur.
+		logger.Error("Object delete failed", "key", key, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
 	// logger.Info("Object delete successful", "key", key) // Redundant
@@ -884,56 +889,101 @@ func handleObjectDelete(c *client.Client, args []string) {
 
 func handleObjectList(c *client.Client, args []string) {
 	prefix := ""
-	offset := 0
-	limit := 100 // Default limit
-	var err error
+	offset, limit := 0, 100 // Defaults
 
 	if len(args) > 0 {
 		prefix = args[0]
 	}
 	if len(args) > 1 {
-		offset, err = strconv.Atoi(args[1])
-		if err != nil {
-			logger.Error("object list: invalid offset", "offset_str", args[1], "error", err)
-			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[1], err)
-			os.Exit(1)
-		}
+		offset, _ = strconv.Atoi(args[1])
 	}
 	if len(args) > 2 {
-		limit, err = strconv.Atoi(args[2])
-		if err != nil {
-			logger.Error("object list: invalid limit", "limit_str", args[2], "error", err)
-			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[2], err)
-			os.Exit(1)
-		}
+		limit, _ = strconv.Atoi(args[2])
 	}
 
 	keys, err := c.GetObjectList(prefix, offset, limit)
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
-			// logger.Info("object list: no objects found matching criteria", "prefix", prefix, "offset", offset, "limit", limit)
-			color.HiRed("No objects found.")
+			logger.Warn("Object list: No keys found matching criteria", "prefix", prefix, "offset", offset, "limit", limit)
+			color.HiRed("No keys found.")
 		} else {
-			logger.Error("object list: failed to list objects", "prefix", prefix, "offset", offset, "limit", limit, "error", err)
-			fmt.Fprintf(os.Stderr, "%s listing objects: %v\n", color.RedString("Error:"), err)
+			logger.Error("Object list failed", "prefix", prefix, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		}
-		os.Exit(1) // Exit if error occurred
+		os.Exit(1)
+	}
+	// logger.Info("Object list successful", "prefix", prefix, "offset", offset, "limit", limit, "count", len(keys))
+	for _, item := range keys {
+		fmt.Println(item)
+	}
+}
+
+func handleBatchSet(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("batchset: requires <filepath.json>")
+		printUsage()
+		os.Exit(1)
+	}
+	filePath := args[0]
+	fileData, err := os.ReadFile(filePath)
+	if err != nil {
+		logger.Error("batchset: failed to read file", "filepath", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s reading file %s: %v\n", color.RedString("Error"), color.CyanString(filePath), err)
+		os.Exit(1)
+	}
+
+	var items []models.KVPayload
+	if err := json.Unmarshal(fileData, &items); err != nil {
+		logger.Error("batchset: failed to unmarshal JSON from file", "filepath", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s unmarshaling JSON from %s: %v\n\t\tExpected format: [ { \"key\": \"k1\", \"value\": \"v1\" }, { \"key\": \"k2\", \"value\": \"v2\" } ]\n",
+			color.RedString("Error"), color.CyanString(filePath), err)
+		os.Exit(1)
+	}
+
+	err = c.BatchSet(items)
+	if err != nil {
+		logger.Error("Batch set failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	// logger.Info("Batch set successful") // Redundant
+	color.HiGreen("OK")
+}
+
+func handleBatchDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("batchdelete: requires <filepath.json>")
+		printUsage()
+		os.Exit(1)
+	}
+	filePath := args[0]
+	fileData, err := os.ReadFile(filePath)
+	if err != nil {
+		logger.Error("batchdelete: failed to read file", "filepath", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s reading file %s: %v\n", color.RedString("Error"), color.CyanString(filePath), err)
+		os.Exit(1)
+	}
+
+	var keys []string
+	if err := json.Unmarshal(fileData, &keys); err != nil {
+		logger.Error("batchdelete: failed to unmarshal JSON from file", "filepath", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s unmarshaling JSON from %s: %v\n\t\tExpected format: [ \"key1\", \"key2\", \"key3\" ]\n",
+			color.RedString("Error"), color.CyanString(filePath), err)
+		os.Exit(1)
 	}
 
 	if len(keys) == 0 {
-		color.HiRed("No objects found.")
-		return
+		logger.Error("batchdelete: no keys found in JSON file", "filepath", filePath)
+		fmt.Fprintf(os.Stderr, "%s No keys to delete in %s.\n", color.RedString("Error"), color.CyanString(filePath))
+		os.Exit(1)
 	}
 
-	// logger.Info("Object list successful", "prefix", prefix, "offset", offset, "limit", limit, "count", len(keys))
-	for _, key := range keys {
-		// remove the first
-		keyParts := strings.Split(key, ":")
-		if len(keyParts) > 2 {
-			key = strings.Join(keyParts[2:], ":")
-		} else if len(keyParts) == 2 {
-			key = keyParts[1]
-		}
-		fmt.Println(color.GreenString("KEY:"), color.CyanString(key))
+	err = c.BatchDelete(keys)
+	if err != nil {
+		logger.Error("batchdelete: failed to delete batch", "error", err)
+		fmt.Fprintf(os.Stderr, "%s deleting batch: %v\n", color.RedString("Error"), err)
+		os.Exit(1)
 	}
+
+	color.HiGreen("OK (%d keys processed)", len(keys))
 }

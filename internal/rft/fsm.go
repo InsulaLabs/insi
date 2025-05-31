@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"unsafe"
 
 	"time"
 
@@ -30,6 +31,26 @@ import (
 
 	"github.com/InsulaLabs/insi/models"
 )
+
+/*
+	See BatchSet for why we perform this check.
+*/
+
+func init() {
+	var kvPayload models.KVPayload
+	var tkvEntry tkv.TKVBatchEntry
+
+	if unsafe.Sizeof(kvPayload) != unsafe.Sizeof(tkvEntry) {
+		panic("rft: unsafe.Slice conversion for BatchSet will fail: models.KVPayload and tkv.TKVBatchEntry have different sizes")
+	}
+
+	if unsafe.Offsetof(kvPayload.Key) != unsafe.Offsetof(tkvEntry.Key) {
+		panic("rft: unsafe.Slice conversion for BatchSet will fail: models.KVPayload.Key and tkv.TKVBatchEntry.Key have different offsets")
+	}
+	if unsafe.Offsetof(kvPayload.Value) != unsafe.Offsetof(tkvEntry.Value) {
+		panic("rft: unsafe.Slice conversion for BatchSet will fail: models.KVPayload.Value and tkv.TKVBatchEntry.Value have different offsets")
+	}
+}
 
 var EventReplayWindow = 30 * time.Second
 
@@ -69,6 +90,10 @@ type FSMInstance interface {
 	EventIF
 	tkv.TKVObjectHandler
 
+	// Raft-specific batch operations, renamed to satisfy FSMInstance requirements
+	BatchSet(items []models.KVPayload) error    // Renamed from BatchSetValuesRaft
+	BatchDelete(keys []models.KeyPayload) error // Renamed from BatchDeleteValuesRaft
+
 	Close() error
 }
 
@@ -85,13 +110,15 @@ type EventReceiverIF interface {
 // will can trigger the remote event listeners attatched to the node that
 // received the command
 const (
-	cmdSetValue     = "set_value"
-	cmdDeleteValue  = "delete_value"
-	cmdSetCache     = "set_cache"
-	cmdDeleteCache  = "delete_cache"
-	cmdPublishEvent = "publish_event"
-	cmdSetObject    = "set_object"    // New command for setting an object
-	cmdDeleteObject = "delete_object" // New command for deleting an object
+	cmdSetValue          = "set_value"
+	cmdDeleteValue       = "delete_value"
+	cmdSetCache          = "set_cache"
+	cmdDeleteCache       = "delete_cache"
+	cmdPublishEvent      = "publish_event"
+	cmdSetObject         = "set_object"          // New command for setting an object
+	cmdDeleteObject      = "delete_object"       // New command for deleting an object
+	cmdBatchSetValues    = "batch_set_values"    // New command for batch setting values
+	cmdBatchDeleteValues = "batch_delete_values" // New command for batch deleting values
 )
 
 // kvFsm holds references to both BadgerDB instances.
@@ -365,6 +392,32 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				return fmt.Errorf("tkv DeleteObject failed (key %s): %w", p.Key, err)
 			}
 			kf.logger.Info("FSM applied delete_object", "key", p.Key)
+			return nil
+		case cmdBatchSetValues:
+			var batchItems []tkv.TKVBatchEntry
+			if err := json.Unmarshal(cmd.Payload, &batchItems); err != nil {
+				kf.logger.Error("Could not unmarshal batch_set_values payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal batch_set_values payload: %w", err)
+			}
+			err := kf.tkv.BatchSet(batchItems)
+			if err != nil {
+				kf.logger.Error("TKV BatchSet failed", "item_count", len(batchItems), "error", err)
+				return fmt.Errorf("tkv BatchSet failed (item_count %d): %w", len(batchItems), err)
+			}
+			kf.logger.Info("FSM applied batch_set_values", "item_count", len(batchItems))
+			return nil
+		case cmdBatchDeleteValues:
+			var keys []string
+			if err := json.Unmarshal(cmd.Payload, &keys); err != nil {
+				kf.logger.Error("Could not unmarshal batch_delete_values payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal batch_delete_values payload: %w", err)
+			}
+			err := kf.tkv.BatchDelete(keys)
+			if err != nil {
+				kf.logger.Error("TKV BatchDelete failed", "key_count", len(keys), "error", err)
+				return fmt.Errorf("tkv BatchDelete failed (key_count %d): %w", len(keys), err)
+			}
+			kf.logger.Info("FSM applied batch_delete_values", "key_count", len(keys))
 			return nil
 		default:
 			kf.logger.Error("Unknown raft command type in Apply", "command_type", cmd.Type)
@@ -784,6 +837,104 @@ func (kf *kvFsm) DeleteObject(key string) error {
 func (kf *kvFsm) GetObjectList(prefix string, offset int, limit int) ([]string, error) {
 	kf.logger.Debug("GetObjectList called", "prefix", prefix, "offset", offset, "limit", limit)
 	return kf.tkv.GetObjectList(prefix, offset, limit)
+}
+
+// ------------
+
+// Batch operations to be called by service layer, these will go through Raft
+func (kf *kvFsm) BatchSet(items []models.KVPayload) error {
+	kf.logger.Debug("FSM BatchSet called", "item_count", len(items))
+	if len(items) == 0 {
+		return nil // This ensures items[0] is safe to access below.
+	}
+
+	// =======================================================================================
+
+	// Unsafe conversion from []models.KVPayload to []tkv.TKVBatchEntry.
+	// WARNING: This is only safe if models.KVPayload and tkv.TKVBatchEntry
+	// have an identical memory layout. Changes to either struct could
+	// lead to memory corruption or crashes. Key prefixing is assumed to be
+	// handled in routes_w.go before calling this FSM method.
+	/*
+		The alternative is to loop over and copy the values into a new slice.
+		That is no bueno and we only seperate the types for the sake of clarity.
+	*/
+	tkvEntries := unsafe.Slice((*tkv.TKVBatchEntry)(unsafe.Pointer(&items[0])), len(items))
+
+	// =======================================================================================
+
+	cmd := RaftCommand{
+		Type: cmdBatchSetValues,
+	}
+	payloadBytes, err := json.Marshal(tkvEntries)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for batch_set_values", "item_count", len(items), "error", err)
+		return fmt.Errorf("could not marshal payload for batch_set_values: %w", err)
+	}
+	cmd.Payload = payloadBytes
+
+	cmdBytesApply, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for batch_set_values", "item_count", len(items), "error", err)
+		return fmt.Errorf("could not marshal raft command for batch_set_values: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytesApply, 5*time.Second)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for BatchSet", "item_count", len(items), "error", err)
+		return fmt.Errorf("raft Apply for BatchSet failed (item_count %d): %w", len(items), err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for BatchSet", "item_count", len(items), "error", responseErr)
+		return fmt.Errorf("fsm application error for BatchSet (item_count %d): %w", len(items), responseErr)
+	}
+	kf.logger.Info("FSM BatchSet Raft Apply successful", "item_count", len(items))
+	return nil
+}
+
+func (kf *kvFsm) BatchDelete(keyPayloads []models.KeyPayload) error {
+	kf.logger.Debug("FSM BatchDelete called", "key_count", len(keyPayloads))
+	if len(keyPayloads) == 0 {
+		return nil
+	}
+
+	keys := make([]string, len(keyPayloads))
+	for i, p := range keyPayloads {
+		// Key prefixing will be handled in routes_w.go before calling this FSM method
+		keys[i] = p.Key
+	}
+
+	cmd := RaftCommand{
+		Type: cmdBatchDeleteValues,
+	}
+	payloadBytes, err := json.Marshal(keys)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for batch_delete_values", "key_count", len(keys), "error", err)
+		return fmt.Errorf("could not marshal payload for batch_delete_values: %w", err)
+	}
+	cmd.Payload = payloadBytes
+
+	cmdBytesApply, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for batch_delete_values", "key_count", len(keys), "error", err)
+		return fmt.Errorf("could not marshal raft command for batch_delete_values: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytesApply, 5*time.Second)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for BatchDelete", "key_count", len(keys), "error", err)
+		return fmt.Errorf("raft Apply for BatchDelete failed (key_count %d): %w", len(keys), err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for BatchDelete", "key_count", len(keys), "error", responseErr)
+		return fmt.Errorf("fsm application error for BatchDelete (key_count %d): %w", len(keys), responseErr)
+	}
+	kf.logger.Info("FSM BatchDelete Raft Apply successful", "key_count", len(keys))
+	return nil
 }
 
 // ------------

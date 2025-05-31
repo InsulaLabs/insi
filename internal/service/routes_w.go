@@ -12,6 +12,9 @@ import (
 	"github.com/InsulaLabs/insi/models"
 )
 
+const maxBatchItems = 1000                       // Example: Limit the number of items in a single batch
+const maxTotalBatchPayloadSize = 1 * 1024 * 1024 // Example: 1MB limit for the entire batch JSON payload
+
 // Badger limits on key and value sizes are 1MB.
 func sizeTooLargeForStorage(value string) bool {
 	return len(value) >= 1024*1024
@@ -407,6 +410,147 @@ func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 	err := s.fsm.DeleteObject(pKey)
 	if err != nil {
 		s.logger.Error("Could not delete object via FSM", "key", pKey, "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+/*
+	Handlers for BATCH VALUE operations
+*/
+
+// Define request structures for batch operations
+
+func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
+	entity, uuid, ok := s.validateToken(r, false)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	s.logger.Debug("BatchSetHandler", "entity", entity, "uuid", uuid)
+
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxTotalBatchPayloadSize)
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for batch set request", "error", err)
+		if errors.As(err, new(*http.MaxBytesError)) {
+			http.Error(w, "Request payload too large for batch set", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var req models.BatchSetRequest
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		s.logger.Error("Invalid JSON payload for batch set request", "error", err)
+		http.Error(w, "Invalid JSON payload for batch set: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Items) == 0 {
+		http.Error(w, "No items in batch set request", http.StatusBadRequest)
+		return
+	}
+	if len(req.Items) > maxBatchItems {
+		http.Error(w, fmt.Sprintf("Too many items in batch set request. Max allowed: %d", maxBatchItems), http.StatusBadRequest)
+		return
+	}
+
+	// Prefix keys and validate individual items
+	// The FSM's BatchSet expects []models.KVPayload directly
+	itemsToSet := make([]models.KVPayload, len(req.Items))
+	for i, item := range req.Items {
+		if item.Key == "" {
+			http.Error(w, fmt.Sprintf("Item at index %d has an empty key", i), http.StatusBadRequest)
+			return
+		}
+		prefixedKey := fmt.Sprintf("%s:%s", uuid, item.Key)
+		if sizeTooLargeForStorage(prefixedKey) {
+			http.Error(w, fmt.Sprintf("Prefixed key '%s' (from item at index %d) is too large", prefixedKey, i), http.StatusBadRequest)
+			return
+		}
+		if sizeTooLargeForStorage(item.Value) {
+			http.Error(w, fmt.Sprintf("Value for key '%s' (from item at index %d) is too large", item.Key, i), http.StatusBadRequest)
+			return
+		}
+		itemsToSet[i] = models.KVPayload{Key: prefixedKey, Value: item.Value}
+	}
+
+	if err := s.fsm.BatchSet(itemsToSet); err != nil {
+		s.logger.Error("Could not batch set values via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	entity, uuid, ok := s.validateToken(r, false)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	s.logger.Debug("BatchDeleteHandler", "entity", entity, "uuid", uuid)
+
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxTotalBatchPayloadSize)
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for batch delete request", "error", err)
+		if errors.As(err, new(*http.MaxBytesError)) {
+			http.Error(w, "Request payload too large for batch delete", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var req models.BatchDeleteRequest
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		s.logger.Error("Invalid JSON payload for batch delete request", "error", err)
+		http.Error(w, "Invalid JSON payload for batch delete: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Keys) == 0 {
+		http.Error(w, "No keys in batch delete request", http.StatusBadRequest)
+		return
+	}
+	if len(req.Keys) > maxBatchItems {
+		http.Error(w, fmt.Sprintf("Too many keys in batch delete request. Max allowed: %d", maxBatchItems), http.StatusBadRequest)
+		return
+	}
+
+	// Prefix keys and convert to []models.KeyPayload for FSM
+	keysToDeleteFSM := make([]models.KeyPayload, len(req.Keys))
+	for i, key := range req.Keys {
+		if key == "" {
+			http.Error(w, fmt.Sprintf("Key at index %d is empty", i), http.StatusBadRequest)
+			return
+		}
+		prefixedKey := fmt.Sprintf("%s:%s", uuid, key)
+		if sizeTooLargeForStorage(prefixedKey) {
+			http.Error(w, fmt.Sprintf("Prefixed key '%s' (from key at index %d) is too large", prefixedKey, i), http.StatusBadRequest)
+			return
+		}
+		keysToDeleteFSM[i] = models.KeyPayload{Key: prefixedKey}
+	}
+
+	if err := s.fsm.BatchDelete(keysToDeleteFSM); err != nil {
+		s.logger.Error("Could not batch delete values via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

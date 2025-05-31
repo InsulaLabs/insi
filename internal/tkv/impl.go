@@ -437,3 +437,55 @@ func (t *tkv) GetObjectList(prefix string, offset int, limit int) ([]string, err
 	}
 	return keys, nil
 }
+
+func (t *tkv) BatchSet(entries []TKVBatchEntry) error {
+	if len(entries) == 0 {
+		return nil // Nothing to do
+	}
+
+	wb := t.db.store.NewWriteBatch()
+	defer wb.Cancel() // Cancel if not committed
+
+	for _, entry := range entries {
+		if entry.Key == "" {
+			// Or return an error, depending on desired behavior for invalid entries within a batch
+			t.logger.Warn("BatchSet encountered an entry with an empty key, skipping.")
+			continue
+		}
+		// Consider adding validation for value size if necessary, similar to single Set.
+		if err := wb.Set([]byte(entry.Key), []byte(entry.Value)); err != nil {
+			// This error is typically for when the batch is too large for badger's buffer.
+			// It might be better to return it and let the caller handle (e.g., retry with smaller batches).
+			return &ErrInternal{Err: fmt.Errorf("failed to add set operation for key '%s' to batch: %w", entry.Key, err)}
+		}
+	}
+
+	if err := wb.Flush(); err != nil { // Flush commits the batch
+		return &ErrInternal{Err: fmt.Errorf("failed to flush batch set: %w", err)}
+	}
+	return nil
+}
+
+func (t *tkv) BatchDelete(keys []string) error {
+	if len(keys) == 0 {
+		return nil // Nothing to do
+	}
+
+	wb := t.db.store.NewWriteBatch()
+	defer wb.Cancel()
+
+	for _, key := range keys {
+		if key == "" {
+			t.logger.Warn("BatchDelete encountered an empty key, skipping.")
+			continue
+		}
+		if err := wb.Delete([]byte(key)); err != nil {
+			return &ErrInternal{Err: fmt.Errorf("failed to add delete operation for key '%s' to batch: %w", key, err)}
+		}
+	}
+
+	if err := wb.Flush(); err != nil {
+		return &ErrInternal{Err: fmt.Errorf("failed to flush batch delete: %w", err)}
+	}
+	return nil
+}

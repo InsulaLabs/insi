@@ -79,3 +79,11 @@ type ObjectPayload struct {
 	Key   string `json:"key"`
 	Value []byte `json:"value"` // Changed from string to []byte
 }
+
+type BatchSetRequest struct {
+	Items []KVPayload `json:"items"`
+}
+
+type BatchDeleteRequest struct {
+	Keys []string `json:"keys"`
+}

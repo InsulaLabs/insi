@@ -696,3 +696,136 @@ func TestTKV_ObjectList(t *testing.T) {
 		}
 	})
 }
+
+func TestTKV_BatchOperations(t *testing.T) {
+	ctx := context.Background()
+	tkvTest, err := createTestTKV(ctx)
+	if err != nil {
+		t.Fatalf("Failed to create test TKV: %v", err)
+	}
+	defer tkvTest.Cleanup()
+
+	tkvBatchHandler, ok := tkvTest.tkv.(TKVBatchHandler)
+	if !ok {
+		t.Fatalf("TKV instance does not implement TKVBatchHandler")
+	}
+
+	t.Run("BatchSet basic functionality", func(t *testing.T) {
+		entries := []TKVBatchEntry{
+			{Key: "batchKey1", Value: "batchValue1"},
+			{Key: "batchKey2", Value: "batchValue2"},
+			{Key: "batchKey3", Value: "batchValue3"},
+		}
+
+		if err := tkvBatchHandler.BatchSet(entries); err != nil {
+			t.Errorf("BatchSet() error = %v, wantErr nil", err)
+		}
+
+		for _, entry := range entries {
+			retrievedVal, err := tkvTest.tkv.Get(entry.Key)
+			if err != nil {
+				t.Errorf("Get() after BatchSet error for key %s: %v", entry.Key, err)
+			}
+			if retrievedVal != entry.Value {
+				t.Errorf("Get() after BatchSet got = %v, want %v for key %s", retrievedVal, entry.Value, entry.Key)
+			}
+		}
+	})
+
+	t.Run("BatchSet with empty slice", func(t *testing.T) {
+		if err := tkvBatchHandler.BatchSet([]TKVBatchEntry{}); err != nil {
+			t.Errorf("BatchSet() with empty slice error = %v, wantErr nil", err)
+		}
+	})
+
+	t.Run("BatchSet with entry having empty key (should be skipped)", func(t *testing.T) {
+		entries := []TKVBatchEntry{
+			{Key: "batchKeyValid1", Value: "batchValueValid1"},
+			{Key: "", Value: "valueForEmptyKey"}, // Invalid entry
+			{Key: "batchKeyValid2", Value: "batchValueValid2"},
+		}
+
+		if err := tkvBatchHandler.BatchSet(entries); err != nil {
+			t.Errorf("BatchSet() with an empty key entry error = %v, wantErr nil (as it should be skipped)", err)
+		}
+
+		// Check valid entries were set
+		val1, err1 := tkvTest.tkv.Get("batchKeyValid1")
+		if err1 != nil || val1 != "batchValueValid1" {
+			t.Errorf("batchKeyValid1 not set correctly after BatchSet with empty key entry")
+		}
+		val2, err2 := tkvTest.tkv.Get("batchKeyValid2")
+		if err2 != nil || val2 != "batchValueValid2" {
+			t.Errorf("batchKeyValid2 not set correctly after BatchSet with empty key entry")
+		}
+
+		// Check empty key was not set (difficult to verify directly, but Get should fail)
+		_, errGetEmpty := tkvTest.tkv.Get("")
+		if !errors.As(errGetEmpty, new(*ErrKeyNotFound)) {
+			// Depending on Badger's behavior for empty keys, this might need adjustment.
+			// The implementation skips empty keys, so it shouldn't be set.
+			t.Logf("Get for empty key after BatchSet returned: %v. Expected ErrKeyNotFound or similar.", errGetEmpty)
+		}
+	})
+
+	t.Run("BatchDelete basic functionality", func(t *testing.T) {
+		// First, set some keys
+		keysToSet := []TKVBatchEntry{
+			{Key: "delBatchKey1", Value: "val1"},
+			{Key: "delBatchKey2", Value: "val2"},
+			{Key: "delBatchKey3", Value: "val3"},
+		}
+		if err := tkvBatchHandler.BatchSet(keysToSet); err != nil {
+			t.Fatalf("Setup for BatchDelete: BatchSet failed: %v", err)
+		}
+
+		keysToDelete := []string{"delBatchKey1", "delBatchKey3"}
+		if err := tkvBatchHandler.BatchDelete(keysToDelete); err != nil {
+			t.Errorf("BatchDelete() error = %v, wantErr nil", err)
+		}
+
+		// Check deleted keys
+		for _, key := range keysToDelete {
+			_, err := tkvTest.tkv.Get(key)
+			if !errors.As(err, new(*ErrKeyNotFound)) {
+				t.Errorf("Get() after BatchDelete for key %s expected ErrKeyNotFound, got %v", key, err)
+			}
+		}
+
+		// Check non-deleted key still exists
+		retrievedVal, err := tkvTest.tkv.Get("delBatchKey2")
+		if err != nil {
+			t.Errorf("Get() for non-deleted key 'delBatchKey2' error = %v", err)
+		}
+		if retrievedVal != "val2" {
+			t.Errorf("Get() for non-deleted key 'delBatchKey2' got = %v, want 'val2'", retrievedVal)
+		}
+	})
+
+	t.Run("BatchDelete with empty slice", func(t *testing.T) {
+		if err := tkvBatchHandler.BatchDelete([]string{}); err != nil {
+			t.Errorf("BatchDelete() with empty slice error = %v, wantErr nil", err)
+		}
+	})
+
+	t.Run("BatchDelete with non-existent keys and empty keys", func(t *testing.T) {
+		// Setup: Ensure a key exists
+		keyToExist := "existingForBatchDeleteTest"
+		if err := tkvTest.tkv.Set(keyToExist, "data"); err != nil {
+			t.Fatalf("Setup for BatchDelete non-existent: Set failed: %v", err)
+		}
+
+		keysToDelete := []string{"nonExistentKey1", keyToExist, "", "nonExistentKey2"}
+		if err := tkvBatchHandler.BatchDelete(keysToDelete); err != nil {
+			t.Errorf("BatchDelete() with non-existent keys error = %v, wantErr nil", err)
+		}
+
+		// Check existing key was deleted
+		_, err := tkvTest.tkv.Get(keyToExist)
+		if !errors.As(err, new(*ErrKeyNotFound)) {
+			t.Errorf("Get() after BatchDelete for key %s expected ErrKeyNotFound, got %v", keyToExist, err)
+		}
+
+		// Verify non-existent keys don't cause issues (implicitly tested by no error from BatchDelete)
+	})
+}

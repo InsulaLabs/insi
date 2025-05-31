@@ -26,6 +26,7 @@ type data struct {
 
 /*
 // TODO:
+*/
 type TKVBatchEntry struct {
 	Key   string
 	Value string
@@ -35,7 +36,6 @@ type TKVBatchHandler interface {
 	BatchSet(entries []TKVBatchEntry) error
 	BatchDelete(keys []string) error
 }
-*/
 
 type TKVDataHandler interface {
 	Get(key string) (string, error)
@@ -87,6 +87,7 @@ type TKV interface {
 	TKVDataHandler
 	TKVCacheHandler
 	TKVObjectHandler
+	TKVBatchHandler
 
 	Close() error
 

@@ -829,3 +829,38 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 		}
 	}
 }
+
+// --- Batch Value Operations ---
+
+// BatchSet sends a batch of key-value pairs to be set.
+func (c *Client) BatchSet(items []models.KVPayload) error {
+	if len(items) == 0 {
+		return fmt.Errorf("items slice cannot be empty for BatchSet")
+	}
+	// The server endpoint for batch set is "/db/api/v1/batchset"
+	// The payload should be `BatchSetRequest struct { Items []models.KVPayload }`
+	// However, the FSM's BatchSet expects []models.KVPayload directly.
+	// The routes_w.go batchSetHandler now expects a JSON body like:
+	// `type BatchSetRequest struct { Items []models.KVPayload `json:"items"` }`
+
+	requestPayload := struct {
+		Items []models.KVPayload `json:"items"`
+	}{Items: items}
+
+	return c.doRequest(http.MethodPost, "db/api/v1/batchset", nil, requestPayload, nil)
+}
+
+// BatchDelete sends a batch of keys to be deleted.
+func (c *Client) BatchDelete(keys []string) error {
+	if len(keys) == 0 {
+		return fmt.Errorf("keys slice cannot be empty for BatchDelete")
+	}
+	// The server endpoint for batch delete is "/db/api/v1/batchdelete"
+	// The routes_w.go batchDeleteHandler expects a JSON body like:
+	// `type BatchDeleteRequest struct { Keys []string `json:"keys"`	}`
+
+	requestPayload := struct {
+		Keys []string `json:"keys"`
+	}{Keys: keys}
+	return c.doRequest(http.MethodPost, "db/api/v1/batchdelete", nil, requestPayload, nil)
+}
