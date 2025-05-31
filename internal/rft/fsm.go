@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/internal/config"
-	"github.com/InsulaLabs/insula/tkv"
+	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/dgraph-io/badger/v3"
 
 	"github.com/hashicorp/raft"
@@ -51,12 +51,6 @@ type ValueStoreIF interface {
 	Iterate(prefix string, offset int, limit int) ([]string, error)
 }
 
-type TagStoreIF interface {
-	Tag(kvp models.KVPayload) error
-	Untag(kvp models.KVPayload) error
-	GetAllKeysWithTag(tag string, offset int, limit int) ([]string, error)
-}
-
 type CacheStoreIF interface {
 	SetCache(kvp models.CachePayload) error
 	GetCache(key string) (string, error)
@@ -71,7 +65,6 @@ type EventIF interface {
 type FSMInstance interface {
 	RaftIF
 	ValueStoreIF
-	TagStoreIF
 	CacheStoreIF
 	EventIF
 
@@ -93,8 +86,6 @@ type EventReceiverIF interface {
 const (
 	cmdSetValue     = "set_value"
 	cmdDeleteValue  = "delete_value"
-	cmdSetTag       = "set_tag"
-	cmdDeleteTag    = "delete_tag"
 	cmdSetCache     = "set_cache"
 	cmdDeleteCache  = "delete_cache"
 	cmdPublishEvent = "publish_event"
@@ -226,32 +217,6 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				return fmt.Errorf("tkv Set failed for valuesDb (key %s): %w", p.Key, err)
 			}
 			kf.logger.Info("FSM applied set_value", "key", p.Key)
-			return nil
-		case cmdSetTag:
-			var p models.KVPayload
-			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-				kf.logger.Error("Could not unmarshal set_tag payload", "error", err, "payload", string(cmd.Payload))
-				return fmt.Errorf("could not unmarshal set_tag payload: %w", err)
-			}
-			err := kf.tkv.Tag(p.Key, p.Value)
-			if err != nil {
-				kf.logger.Error("TKV Tag failed for tagsDb", "key", p.Key, "error", err)
-				return fmt.Errorf("tkv Tag failed for tagsDb (key %s): %w", p.Key, err)
-			}
-			kf.logger.Info("FSM applied set_tag", "key", p.Key)
-			return nil
-		case cmdDeleteTag:
-			var p models.TagPayload
-			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-				kf.logger.Error("Could not unmarshal delete_tag payload", "error", err, "payload", string(cmd.Payload))
-				return fmt.Errorf("could not unmarshal delete_tag payload: %w", err)
-			}
-			err := kf.tkv.Untag(p.Key, p.Tag)
-			if err != nil {
-				kf.logger.Error("TKV Untag failed for tagsDb", "key", p.Key, "error", err)
-				return fmt.Errorf("tkv Untag failed for tagsDb (key %s): %w", p.Key, err)
-			}
-			kf.logger.Info("FSM applied delete_tag", "key", p.Key)
 			return nil
 		case cmdDeleteValue:
 			var p models.KeyPayload
@@ -389,7 +354,6 @@ func (kf *kvFsm) Snapshot() (raft.FSMSnapshot, error) {
 	kf.logger.Info("Creating FSM snapshot")
 	return &badgerFSMSnapshot{
 		valuesDb: kf.tkv.GetDataDB(),
-		tagsDb:   kf.tkv.GetTagDB(),
 		stdCache: kf.tkv.GetCache(),
 	}, nil
 }
@@ -405,13 +369,10 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 	decoder := json.NewDecoder(rc)
 	valuesBatch := kf.tkv.GetDataDB().NewWriteBatch()
 	defer valuesBatch.Cancel()
-	tagsBatch := kf.tkv.GetTagDB().NewWriteBatch()
-	defer tagsBatch.Cancel()
 
 	stdCache := kf.tkv.GetCache()
 
 	valuesCount := 0
-	tagsCount := 0
 	stdCacheCount := 0
 	for {
 		var entry snapshotEntry // Defined in snapshot.go
@@ -429,12 +390,6 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 				return fmt.Errorf("could not set value from snapshot in valuesDb batch (key: %s): %w", entry.Key, err)
 			}
 			valuesCount++
-		case dbTypeTags: // Defined in snapshot.go
-			if err := tagsBatch.Set([]byte(entry.Key), []byte(entry.Value)); err != nil {
-				kf.logger.Error("Could not set value from snapshot in tagsDb batch", "key", entry.Key, "error", err)
-				return fmt.Errorf("could not set value from snapshot in tagsDb batch (key: %s): %w", entry.Key, err)
-			}
-			tagsCount++
 		case cacheType:
 			// Get the time of encoding, add the TTL. If we are past that time dont add
 			timeOfEncoding := time.Unix(entry.TimeEncoded, 0)
@@ -460,17 +415,11 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 		kf.logger.Error("Failed to flush valuesDb batch during restore", "error", err)
 		return fmt.Errorf("failed to flush valuesDb batch during restore: %w", err)
 	}
-	if err := tagsBatch.Flush(); err != nil {
-		kf.logger.Error("Failed to flush tagsDb batch during restore", "error", err)
-		return fmt.Errorf("failed to flush tagsDb batch during restore: %w", err)
-	}
 
 	kf.logger.Info(
 		"FSM restored successfully from snapshot",
 		"values_restored",
 		valuesCount,
-		"tags_restored",
-		tagsCount,
 		"std_cache_restored",
 		stdCacheCount,
 	)
@@ -541,76 +490,6 @@ func (kf *kvFsm) Delete(key string) error {
 		return fmt.Errorf("fsm application error for Delete (key %s): %w", key, responseErr)
 	}
 	kf.logger.Info("Delete Raft Apply successful", "key", key)
-	return nil
-}
-
-func (kf *kvFsm) Tag(kvp models.KVPayload) error {
-	kf.logger.Debug("Tag called", "key", kvp.Key)
-	payloadBytes, err := json.Marshal(kvp)
-	if err != nil {
-		kf.logger.Error("Could not marshal payload for tag", "key", kvp.Key, "error", err)
-		return fmt.Errorf("could not marshal payload for tag: %w", err)
-	}
-	cmd := RaftCommand{
-		Type:    cmdSetTag,
-		Payload: payloadBytes,
-	}
-	cmdBytes, err := json.Marshal(cmd)
-	if err != nil {
-		kf.logger.Error("Could not marshal raft command for tag", "key", kvp.Key, "error", err)
-		return fmt.Errorf("could not marshal raft command for tag: %w", err)
-	}
-
-	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
-	if err := future.Error(); err != nil {
-		kf.logger.Error("Raft Apply failed for Tag", "key", kvp.Key, "error", err)
-		return fmt.Errorf("raft Apply for Tag failed (key %s): %w", kvp.Key, err)
-	}
-
-	response := future.Response()
-	if responseErr, ok := response.(error); ok && responseErr != nil {
-		kf.logger.Error("FSM application error for Tag", "key", kvp.Key, "error", responseErr)
-		return fmt.Errorf("fsm application error for Tag (key %s): %w", kvp.Key, responseErr)
-	}
-	kf.logger.Info("Tag Raft Apply successful", "key", kvp.Key)
-	return nil
-}
-
-func (kf *kvFsm) Untag(kvp models.KVPayload) error {
-	kf.logger.Debug("Untag called", "key", kvp.Key, "tag", kvp.Value)
-	// Create TagPayload using Value from KVPayload as the Tag
-	payload := models.TagPayload{
-		Key: kvp.Key,
-		Tag: kvp.Value, // Assuming kvp.Value holds the tag to be deleted
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		kf.logger.Error("Could not marshal payload for untag", "key", kvp.Key, "tag", kvp.Value, "error", err)
-		return fmt.Errorf("could not marshal payload for untag: %w", err)
-	}
-
-	cmd := RaftCommand{
-		Type:    cmdDeleteTag,
-		Payload: payloadBytes,
-	}
-	cmdBytes, err := json.Marshal(cmd)
-	if err != nil {
-		kf.logger.Error("Could not marshal raft command for untag", "key", kvp.Key, "error", err)
-		return fmt.Errorf("could not marshal raft command for untag: %w", err)
-	}
-
-	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
-	if err := future.Error(); err != nil {
-		kf.logger.Error("Raft Apply failed for Untag", "key", kvp.Key, "error", err)
-		return fmt.Errorf("raft Apply for Untag failed (key %s): %w", kvp.Key, err)
-	}
-
-	response := future.Response()
-	if responseErr, ok := response.(error); ok && responseErr != nil {
-		kf.logger.Error("FSM application error for Untag", "key", kvp.Key, "error", responseErr)
-		return fmt.Errorf("fsm application error for Untag (key %s): %w", kvp.Key, responseErr)
-	}
-	kf.logger.Info("Untag Raft Apply successful", "key", kvp.Key)
 	return nil
 }
 
@@ -702,22 +581,6 @@ func (kf *kvFsm) Iterate(prefix string, offset int, limit int) ([]string, error)
 		return nil, err
 	}
 	kf.logger.Debug("Iterate successful", "prefix", prefix, "offset", offset, "limit", limit)
-	return value, nil
-}
-
-// [tags]
-
-func (kf *kvFsm) GetAllKeysWithTag(tag string, offset int, limit int) ([]string, error) {
-	kf.logger.Debug("GetAllKeysWithTag called", "tag", tag, "offset", offset, "limit", limit)
-	var value []string
-	value, err := kf.tkv.GetAllKeysWithTag(tag, offset, limit)
-	if err != nil {
-		if err != badger.ErrKeyNotFound {
-			kf.logger.Error("Failed to get value from tagsDb", "tag", tag, "offset", offset, "limit", limit, "error", err)
-		}
-		return nil, err
-	}
-	kf.logger.Debug("GetAllKeysWithTag successful", "tag", tag, "offset", offset, "limit", limit)
 	return value, nil
 }
 

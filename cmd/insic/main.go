@@ -140,10 +140,6 @@ func main() {
 		handleSet(cli, cmdArgs)
 	case "delete":
 		handleDelete(cli, cmdArgs)
-	case "tag":
-		handleTag(cli, cmdArgs)
-	case "untag":
-		handleUntag(cli, cmdArgs)
 	case "iterate":
 		handleIterate(cli, cmdArgs)
 	case "cache":
@@ -175,10 +171,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  get <key>\n")
 	fmt.Fprintf(os.Stderr, "  set <key> <value>\n")
 	fmt.Fprintf(os.Stderr, "  delete <key>\n")
-	fmt.Fprintf(os.Stderr, "  tag <key> <tag>\n")
-	fmt.Fprintf(os.Stderr, "  untag <key> <tag>\n")
 	fmt.Fprintf(os.Stderr, "  iterate prefix <prefix> [offset] [limit]\n")
-	fmt.Fprintf(os.Stderr, "  iterate tag <tag> [offset] [limit]\n")
 	fmt.Fprintf(os.Stderr, "  cache set <key> <value> <ttl (e.g., 60s, 5m, 1h)>\n")
 	fmt.Fprintf(os.Stderr, "  cache get <key>\n")
 	fmt.Fprintf(os.Stderr, "  cache delete <key>\n")
@@ -302,40 +295,6 @@ func handleDelete(c *client.Client, args []string) {
 	fmt.Println("OK")
 }
 
-func handleTag(c *client.Client, args []string) {
-	if len(args) != 2 {
-		logger.Error("tag: requires <key> <tag>")
-		printUsage()
-		os.Exit(1)
-	}
-	key, tag := args[0], args[1]
-	err := c.Tag(key, tag)
-	if err != nil {
-		logger.Error("Tag failed", "key", key, "tag", tag, "error", err)
-		fmt.Println("Error:", err)
-		os.Exit(1)
-	}
-	logger.Info("Tag successful", "key", key, "tag", tag)
-	fmt.Println("OK")
-}
-
-func handleUntag(c *client.Client, args []string) {
-	if len(args) != 2 {
-		logger.Error("untag: requires <key> <tag>")
-		printUsage()
-		os.Exit(1)
-	}
-	key, tag := args[0], args[1]
-	err := c.Untag(key, tag)
-	if err != nil {
-		logger.Error("Untag failed", "key", key, "tag", tag, "error", err)
-		fmt.Println("Error:", err)
-		os.Exit(1)
-	}
-	logger.Info("Untag successful", "key", key, "tag", tag)
-	fmt.Println("OK")
-}
-
 func handleIterate(c *client.Client, args []string) {
 	if len(args) < 2 {
 		logger.Error("iterate: requires <type (prefix|tag)> <value> [offset] [limit]")
@@ -366,8 +325,6 @@ func handleIterate(c *client.Client, args []string) {
 	switch iterType {
 	case "prefix":
 		results, err = c.IterateByPrefix(value, offset, limit)
-	case "tag":
-		results, err = c.IterateByTag(value, offset, limit)
 	default:
 		logger.Error("iterate: unknown type", "type", iterType)
 		printUsage()

@@ -14,9 +14,9 @@ import (
 	"github.com/InsulaLabs/insi/internal/etok"
 	"github.com/InsulaLabs/insi/internal/managers"
 	"github.com/InsulaLabs/insi/internal/rft"
+	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
-	"github.com/InsulaLabs/insula/tkv"
 	"github.com/gorilla/websocket"
 	"github.com/jellydator/ttlcache/v3"
 	"golang.org/x/time/rate"
@@ -116,10 +116,6 @@ func NewService(
 		rateLimiters["values"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'values'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
-	if rlConfig := clusterCfg.RateLimiters.Tags; rlConfig.Limit > 0 {
-		rateLimiters["tags"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
-		rlLogger.Info("Initialized rate limiter for 'tags'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
-	}
 	if rlConfig := clusterCfg.RateLimiters.Cache; rlConfig.Limit > 0 {
 		rateLimiters["cacheEndpoints"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'cacheEndpoints'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
@@ -209,11 +205,6 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/get", s.rateLimitMiddleware(http.HandlerFunc(s.getHandler), "values"))
 	s.mux.Handle("/db/api/v1/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteHandler), "values"))
 	s.mux.Handle("/db/api/v1/iterate/prefix", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByPrefixHandler), "values"))
-
-	// Tagging handlers
-	s.mux.Handle("/db/api/v1/tag", s.rateLimitMiddleware(http.HandlerFunc(s.tagHandler), "tags"))
-	s.mux.Handle("/db/api/v1/untag", s.rateLimitMiddleware(http.HandlerFunc(s.untagHandler), "tags"))
-	s.mux.Handle("/db/api/v1/iterate/tags", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByTagsHandler), "tags"))
 
 	// Cache handlers
 	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cacheEndpoints"))

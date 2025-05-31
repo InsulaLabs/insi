@@ -3,20 +3,15 @@ package models
 import "time"
 
 /*
-	Payloads for the various KV, Tag, Key, and Cache operations.
+	Payloads for the various KV, Key, and Cache operations.
 	These are all prefixed by the caller's api key unique identifier.
-	Contextually seperating the accessable keys, tags, and caches for each
+	Contextually seperating the accessable keys, and caches for each
 	api key.
 */
 
 type KVPayload struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
-}
-
-type TagPayload struct {
-	Key string `json:"key"`
-	Tag string `json:"tag"`
 }
 
 type KeyPayload struct {

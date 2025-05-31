@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 )
@@ -45,73 +44,6 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(rsp); err != nil {
 		s.logger.Error("Could not encode response for key", "key", key, "error", err)
-	}
-}
-
-func (s *Service) iterateKeysByTagsHandler(w http.ResponseWriter, r *http.Request) {
-
-	entity, uuid, ok := s.validateToken(r, false)
-	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	s.logger.Debug("IterateKeysByTagsHandler", "entity", entity)
-
-	tag := r.URL.Query().Get("tag")
-	if tag == "" {
-		http.Error(w, "Missing tag parameter", http.StatusBadRequest)
-		return
-	}
-
-	offset := r.URL.Query().Get("offset")
-	limit := r.URL.Query().Get("limit")
-
-	offsetInt, err := strconv.Atoi(offset)
-	if err != nil {
-		http.Error(w, "Invalid offset parameter", http.StatusBadRequest)
-		return
-	}
-
-	limitInt, err := strconv.Atoi(limit)
-	if err != nil {
-		http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
-		return
-	}
-
-	if limitInt <= 0 {
-		limitInt = 100
-	}
-
-	if offsetInt < 0 {
-		offsetInt = 0
-	}
-
-	value, err := s.fsm.GetAllKeysWithTag(tag, offsetInt, limitInt)
-	if err == badger.ErrKeyNotFound {
-		http.NotFound(w, r)
-		return
-	} else if err != nil {
-		s.logger.Error("Could not read tag key via FSM", "tag", tag, "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
-	// TODO: Find a way to parallelize this if needed (later)
-	// Strip the UUID prefix from the keys to be returned
-	strippedKeys := make([]string, len(value))
-	prefixToRemove := uuid + ":"
-	for i, k := range value {
-		strippedKeys[i] = strings.TrimPrefix(k, prefixToRemove)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	rsp := struct {
-		Data []string `json:"data"`
-	}{Data: strippedKeys}
-
-	if err := json.NewEncoder(w).Encode(rsp); err != nil {
-		s.logger.Error("Could not encode response for tag key", "tag", tag, "error", err)
 	}
 }
 

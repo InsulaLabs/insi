@@ -24,9 +24,6 @@ rateLimiters:
   values:
     limit: 100
     burst: 150 
-  tags:
-    limit: 50
-    burst: 75
   cache:
     limit: 200
     burst: 250

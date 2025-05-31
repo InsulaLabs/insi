@@ -297,53 +297,6 @@ func (c *Client) IterateByPrefix(prefix string, offset, limit int) ([]string, er
 	return response.Data, nil
 }
 
-// --- Tag Operations ---
-
-// Tag associates a tag with a key.
-func (c *Client) Tag(key, tag string) error {
-	if key == "" {
-		return fmt.Errorf("key cannot be empty")
-	}
-	if tag == "" {
-		return fmt.Errorf("tag cannot be empty")
-	}
-	payload := map[string]string{"key": key, "value": tag} // Server expects "value" for the tag
-	return c.doRequest(http.MethodPost, "db/api/v1/tag", nil, payload, nil)
-}
-
-// Untag removes a tag association from a key.
-func (c *Client) Untag(key, tag string) error {
-	if key == "" {
-		return fmt.Errorf("key cannot be empty")
-	}
-	if tag == "" {
-		return fmt.Errorf("tag cannot be empty")
-	}
-	// Server's untagHandler expects KVPayload {Key: key, Value: tag}
-	payload := map[string]string{"key": key, "value": tag}
-	return c.doRequest(http.MethodPost, "db/api/v1/untag", nil, payload, nil)
-}
-
-// IterateByTag retrieves a list of keys associated with a given tag.
-func (c *Client) IterateByTag(tag string, offset, limit int) ([]string, error) {
-	if tag == "" {
-		return nil, fmt.Errorf("tag cannot be empty")
-	}
-	params := map[string]string{
-		"tag":    tag,
-		"offset": strconv.Itoa(offset),
-		"limit":  strconv.Itoa(limit),
-	}
-	var response struct {
-		Data []string `json:"data"`
-	}
-	err := c.doRequest(http.MethodGet, "db/api/v1/iterate/tags", params, nil, &response)
-	if err != nil {
-		return nil, err
-	}
-	return response.Data, nil
-}
-
 // --- Cache Operations ---
 
 // SetCache stores a key-value pair in the cache with a specific TTL.

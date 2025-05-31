@@ -59,7 +59,6 @@ type RateLimiterConfig struct {
 
 type RateLimiters struct {
 	Values  RateLimiterConfig `yaml:"values"`
-	Tags    RateLimiterConfig `yaml:"tags"`
 	Cache   RateLimiterConfig `yaml:"cache"`
 	System  RateLimiterConfig `yaml:"system"`
 	Default RateLimiterConfig `yaml:"default"`
@@ -80,7 +79,6 @@ var (
 	ErrCacheStandardTTLMissing                 = errors.New("cache.standardTTL is missing in config")
 	ErrRootPrefixMissing                       = errors.New("rootPrefix is missing in config")
 	ErrRateLimitersValuesLimitMissing          = errors.New("rateLimiters.values.limit is missing in config")
-	ErrRateLimitersTagsLimitMissing            = errors.New("rateLimiters.tags.limit is missing in config")
 	ErrRateLimitersCacheLimitMissing           = errors.New("rateLimiters.cache.limit is missing in config")
 	ErrRateLimitersSystemLimitMissing          = errors.New("rateLimiters.system.limit is missing in config")
 	ErrRateLimitersDefaultLimitMissing         = errors.New("rateLimiters.default.limit is missing in config")
@@ -152,9 +150,6 @@ func LoadConfig(configFile string) (*Cluster, error) {
 
 	if cfg.RateLimiters.Values.Limit == 0 {
 		return nil, ErrRateLimitersValuesLimitMissing
-	}
-	if cfg.RateLimiters.Tags.Limit == 0 {
-		return nil, ErrRateLimitersTagsLimitMissing
 	}
 	if cfg.RateLimiters.Cache.Limit == 0 {
 		return nil, ErrRateLimitersCacheLimitMissing

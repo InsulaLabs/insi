@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insula/security/sentinel"
@@ -102,13 +101,10 @@ func (s *Service) newApiKey(entity string) (string, error) {
 		[]byte(s.cfg.InstanceSecret),
 	)
 
-	fmt.Println("[BUG] constructing key for entity", entity)
-	key, err := keyGen.ConstructApiKey(entity)
+	apiKey, err := keyGen.ConstructApiKey(entity)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate key: %w", err)
 	}
-
-	fmt.Println("[BUG] key generated", key)
 
 	// store the key in the db
 	internalClientLogger := s.logger.WithGroup("internal-client")
@@ -123,19 +119,19 @@ func (s *Service) newApiKey(entity string) (string, error) {
 		return "", fmt.Errorf("failed to store key: %w", err)
 	}
 
-	createdAt := time.Now()
-
-	// Store the key in the db with a prefix that only the service can search for (or otherwise auth'd)
-	if err := c.Set(key, createdAt.String()); err != nil {
+	/*
+		STORE:
+			ROOT_PREFIX:api_key:ENTITY_NAME => API_KEY
+			API_KEY => ENTITY_NAME
+	*/
+	if err := c.Set(fmt.Sprintf("%s:api_key:%s", s.cfg.RootPrefix, entity), apiKey); err != nil {
+		return "", fmt.Errorf("failed to store key: [set] %w", err)
+	}
+	if err := c.Set(apiKey, entity); err != nil {
 		return "", fmt.Errorf("failed to store key: [set] %w", err)
 	}
 
-	// Add a tag that cant be searched by user unless they know the secret hash prefix
-	if err := c.Tag(key, entity); err != nil {
-		return "", fmt.Errorf("failed to store key: [tag] %w", err)
-	}
-
-	return key, nil
+	return apiKey, nil
 }
 
 func (s *Service) deleteApiKey(targetKey string) error {
@@ -147,31 +143,71 @@ func (s *Service) deleteApiKey(targetKey string) error {
 	)
 
 	// Ensure that its valid and created by our secret
-	_, _, err := keyMan.DeconstructApiKey(targetKey)
+	entity, _, err := keyMan.DeconstructApiKey(targetKey)
 	if err != nil {
 		return err
 	}
 
+	// Remove from cache
+	s.lcs.apiKeys.Delete(targetKey)
+
 	if s.fsm.IsLeader() {
+		// Key that validateToken specifically checks in FSM
+		validationSpecificKey := fmt.Sprintf("%s:%s", s.cfg.RootPrefix, targetKey)
+		err = s.fsm.Delete(validationSpecificKey)
+		if err != nil {
+			s.logger.Error("Failed to delete validation-specific API key from leader node", "key", validationSpecificKey, "error", err)
+			// continue to delete the other values if failure occurs
+		}
+
+		// Mapping from ROOT_PREFIX:api_key:ENTITY -> API_KEY
+		entityToApiKeyKey := fmt.Sprintf("%s:api_key:%s", s.cfg.RootPrefix, entity)
+		err = s.fsm.Delete(entityToApiKeyKey)
+		if err != nil {
+			s.logger.Error("Failed to delete entity-to-api-key mapping from leader node", "key", entityToApiKeyKey, "error", err)
+			// continue to delete the other value if failure occurs
+		}
+
+		// Mapping from API_KEY -> ENTITY
 		err = s.fsm.Delete(targetKey)
 		if err != nil {
-			return err
+			s.logger.Error("Failed to delete api-key-to-entity mapping from leader node", "key", targetKey, "error", err)
+			// continue to delete the other value if failure occurs
 		}
+		return nil
 	} else {
 		s.logger.Info("Deleting api key from follower node => forwarding to leader", "key", targetKey)
+		internalClientLogger := s.logger.WithGroup("internal-client-delete-api-key")
 		c, err := client.NewClient(&client.Config{
-			HostPort:   s.nodeCfg.HttpBinding,
-			ApiKey:     s.cfg.InstanceSecret,
-			SkipVerify: s.cfg.ClientSkipVerify,
-			Logger:     s.logger,
+			HostPort:     s.nodeCfg.HttpBinding,
+			ApiKey:       s.authToken,
+			SkipVerify:   s.cfg.ClientSkipVerify,
+			Logger:       internalClientLogger,
+			ClientDomain: s.nodeCfg.ClientDomain,
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create client for forwarding delete: %w", err)
 		}
+
+		// Key that validateToken specifically checks in FSM
+		validationSpecificKey := fmt.Sprintf("%s:%s", s.cfg.RootPrefix, targetKey)
+		err = c.Delete(validationSpecificKey)
+		if err != nil {
+			s.logger.Error("Failed to delete validation-specific API key via follower->leader", "key", validationSpecificKey, "error", err)
+		}
+
+		// Mapping from ROOT_PREFIX:api_key:ENTITY -> API_KEY
+		entityToApiKeyKey := fmt.Sprintf("%s:api_key:%s", s.cfg.RootPrefix, entity)
+		err = c.Delete(entityToApiKeyKey)
+		if err != nil {
+			s.logger.Error("Failed to delete entity-to-api-key mapping via follower->leader", "key", entityToApiKeyKey, "error", err)
+		}
+
 		err = c.Delete(targetKey)
 		if err != nil {
-			return err
+			s.logger.Error("Failed to delete api-key-to-entity mapping via follower->leader", "key", targetKey, "error", err)
+			return fmt.Errorf("failed to delete api-key-to-entity mapping on leader: %w", err)
 		}
+		return nil
 	}
-	return nil
 }

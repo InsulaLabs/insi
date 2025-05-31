@@ -12,7 +12,6 @@ import (
 
 const (
 	dbTypeValues = "values"
-	dbTypeTags   = "tags"
 	cacheType    = "cache"
 )
 
@@ -28,7 +27,6 @@ type snapshotEntry struct {
 
 type badgerFSMSnapshot struct {
 	valuesDb *badger.DB
-	tagsDb   *badger.DB
 
 	stdCache *ttlcache.Cache[string, string]
 }
@@ -83,12 +81,6 @@ func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
 	if err := persistDb(b.valuesDb, dbTypeValues); err != nil {
 		sink.Cancel()
 		return fmt.Errorf("failed to persist snapshot for valuesDb: %w", err)
-	}
-
-	// Persist tagsDb
-	if err := persistDb(b.tagsDb, dbTypeTags); err != nil {
-		sink.Cancel()
-		return fmt.Errorf("failed to persist snapshot for tagsDb: %w", err)
 	}
 
 	persistStdCache := func(cache *ttlcache.Cache[string, string], cacheType string) error {
