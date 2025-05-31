@@ -727,7 +727,7 @@ func (kf *kvFsm) SetObject(key string, object []byte) error {
 		return fmt.Errorf("could not marshal raft command for set_object: %w", err)
 	}
 
-	future := kf.r.Apply(cmdBytesApply, 5*time.Second) // Increased timeout for potentially larger objects
+	future := kf.r.Apply(cmdBytesApply, 64*time.Second) // Increased timeout for potentially larger objects
 	if err := future.Error(); err != nil {
 		kf.logger.Error("Raft Apply failed for SetObject", "key", key, "error", err)
 		return fmt.Errorf("raft Apply for SetObject failed (key %s): %w", key, err)

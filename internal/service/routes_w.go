@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -304,8 +305,22 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	Handlers for OBJECTS
 */
 
+const maxObjectSize = 5 * 1024 * 1024 // 16 MB
+
 func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, ok := s.validateToken(r, false)
+
+	/*
+
+		NOTE:
+		    Larger objects sent over raft will have a higher impact
+			than regular key-value updates.
+
+			For this reason, only root key can set objects.
+
+
+
+	*/
+	entity, uuid, ok := s.validateToken(r, true)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -317,10 +332,20 @@ func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
 		s.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
+
+	// Limit the size of the request body to prevent excessively large uploads
+	r.Body = http.MaxBytesReader(w, r.Body, maxObjectSize)
 	defer r.Body.Close()
+
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		s.logger.Error("Could not read body for set object request", "error", err)
+		// Check if the error is due to the body being too large
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			http.Error(w, "Request entity too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
