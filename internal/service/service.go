@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/internal/config"
+	"github.com/InsulaLabs/insi/internal/etok"
+	"github.com/InsulaLabs/insi/internal/managers"
 	"github.com/InsulaLabs/insi/internal/rft"
 	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
@@ -50,6 +52,8 @@ type Service struct {
 
 	lcs          *localCaches
 	rateLimiters map[string]*rate.Limiter
+
+	securityManager managers.SecurityManager
 
 	// WebSocket event handling
 	eventSubscribers     map[string]map[*eventSession]bool // Changed to store *eventSession
@@ -133,18 +137,28 @@ func NewService(
 		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 
+	rateLimiters["admin"] = rate.NewLimiter(rate.Limit(100), 100)
+	rlLogger.Info("Initialized rate limiter for 'admin'", "limit", 100, "burst", 100)
+
+	// Initialize the security manager
+	securityManager := etok.New(etok.Config{
+		Identity: identity,
+		Logger:   logger,
+	})
+
 	service := &Service{
-		appCtx:       ctx,
-		cfg:          clusterCfg,
-		nodeCfg:      nodeSpecificCfg,
-		logger:       logger,
-		identity:     identity,
-		tkv:          tkv,
-		fsm:          fsm,
-		authToken:    authToken,
-		lcs:          caches,
-		rateLimiters: rateLimiters,
-		mux:          http.NewServeMux(),
+		appCtx:          ctx,
+		cfg:             clusterCfg,
+		nodeCfg:         nodeSpecificCfg,
+		logger:          logger,
+		identity:        identity,
+		tkv:             tkv,
+		fsm:             fsm,
+		authToken:       authToken,
+		lcs:             caches,
+		rateLimiters:    rateLimiters,
+		mux:             http.NewServeMux(),
+		securityManager: securityManager,
 
 		eventSubscribers: make(map[string]map[*eventSession]bool),
 		wsUpgrader: websocket.Upgrader{
@@ -214,6 +228,22 @@ func (s *Service) Run() {
 
 	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
 	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
+
+	s.mux.Handle("/db/api/v1/etok/new", s.rateLimitMiddleware(http.HandlerFunc(s.etokNewHandler), "cacheEndpoints"))
+	s.mux.Handle("/db/api/v1/etok/verify", s.rateLimitMiddleware(http.HandlerFunc(s.etokVerifyHandler), "cacheEndpoints"))
+
+	/*
+		TODO: (maybe - not very important)
+		// Admin routes
+		s.mux.Handle("/db/api/v1/admin/login/view", s.rateLimitMiddleware(http.HandlerFunc(s.adminLoginPageHandler), "admin"))
+		s.mux.Handle("/db/api/v1/admin/login", s.rateLimitMiddleware(http.HandlerFunc(s.adminLoginHandler), "admin"))
+		s.mux.Handle("/db/api/v1/admin/logout", s.rateLimitMiddleware(http.HandlerFunc(s.adminLogoutHandler), "admin"))
+		s.mux.Handle("/db/api/v1/admin/dashboard", s.rateLimitMiddleware(http.HandlerFunc(s.adminDashboardHandler), "admin"))
+
+		s.mux.Handle("/db/api/v1/admin/list-api-keys", s.rateLimitMiddleware(http.HandlerFunc(s.adminListApiKeysHandler), "admin"))
+		s.mux.Handle("/db/api/v1/admin/list-nodes", s.rateLimitMiddleware(http.HandlerFunc(s.adminListNodesHandler), "admin"))
+		// ALL API CRUD DONE VIA TRADITIONAL ROUTES UI IS FOR VIEWING
+	*/
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))

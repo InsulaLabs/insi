@@ -11,6 +11,11 @@ import (
 	"github.com/InsulaLabs/insi/models"
 )
 
+// Badger limits on key and value sizes are 1MB.
+func sizeTooLargeForStorage(value string) bool {
+	return len(value) >= 1024*1024
+}
+
 // Helper function for redirection
 func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string) {
 	// leaderConnectAddress is now expected to be "host:port"
@@ -77,6 +82,16 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
 
+	if sizeTooLargeForStorage(p.Value) {
+		http.Error(w, "Value is too large", http.StatusBadRequest)
+		return
+	}
+
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
+
 	err = s.fsm.Set(p)
 	if err != nil {
 		s.logger.Error("Could not write key-value via FSM", "error", err)
@@ -120,6 +135,11 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
 
 	err = s.fsm.Delete(p.Key)
 	if err != nil {
@@ -169,6 +189,16 @@ func (s *Service) untagHandler(w http.ResponseWriter, r *http.Request) {
 	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
 
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
+
+	if sizeTooLargeForStorage(p.Value) {
+		http.Error(w, "Tag is too large", http.StatusBadRequest)
+		return
+	}
+
 	err = s.fsm.Untag(p)
 	if err != nil {
 		s.logger.Error("Could not untag via FSM", "error", err)
@@ -212,6 +242,16 @@ func (s *Service) tagHandler(w http.ResponseWriter, r *http.Request) {
 
 	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
+
+	if sizeTooLargeForStorage(p.Value) {
+		http.Error(w, "Value is too large", http.StatusBadRequest)
+		return
+	}
 
 	err = s.fsm.Tag(p)
 	if err != nil {
@@ -257,6 +297,16 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
 
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
+
+	if sizeTooLargeForStorage(p.Value) {
+		http.Error(w, "Value is too large", http.StatusBadRequest)
+		return
+	}
+
 	err = s.fsm.SetCache(p)
 	if err != nil {
 		s.logger.Error("Could not set cache via FSM", "error", err)
@@ -300,6 +350,11 @@ func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 
 	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
 
 	err = s.fsm.DeleteCache(p.Key)
 	if err != nil {
