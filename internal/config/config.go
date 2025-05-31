@@ -63,6 +63,7 @@ type RateLimiters struct {
 	System  RateLimiterConfig `yaml:"system"`
 	Default RateLimiterConfig `yaml:"default"`
 	Events  RateLimiterConfig `yaml:"events"`
+	Objects RateLimiterConfig `yaml:"objects"`
 }
 
 var (

@@ -134,9 +134,11 @@ func NewService(
 		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 
-	rateLimiters["admin"] = rate.NewLimiter(rate.Limit(100), 100)
-	rlLogger.Info("Initialized rate limiter for 'admin'", "limit", 100, "burst", 100)
-
+	// Add limiter for objects if configured
+	if rlConfig := clusterCfg.RateLimiters.Objects; rlConfig.Limit > 0 {
+		rateLimiters["objects"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'objects'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
 	// Initialize the security manager
 	securityManager := etok.New(etok.Config{
 		Identity: identity,
@@ -208,17 +210,17 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/iterate/prefix", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByPrefixHandler), "values"))
 
 	// Cache handlers
-	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cacheEndpoints"))
-	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cacheEndpoints"))
-	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cacheEndpoints"))
+	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cache"))
+	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cache"))
+	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cache"))
 
 	// Events handlers
 	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
 	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
 
 	// ETOK handlers
-	s.mux.Handle("/db/api/v1/etok/new", s.rateLimitMiddleware(http.HandlerFunc(s.etokNewHandler), "cacheEndpoints"))
-	s.mux.Handle("/db/api/v1/etok/verify", s.rateLimitMiddleware(http.HandlerFunc(s.etokVerifyHandler), "cacheEndpoints"))
+	s.mux.Handle("/db/api/v1/etok/new", s.rateLimitMiddleware(http.HandlerFunc(s.etokNewHandler), "cache"))
+	s.mux.Handle("/db/api/v1/etok/verify", s.rateLimitMiddleware(http.HandlerFunc(s.etokVerifyHandler), "cache"))
 
 	// System handlers
 	s.mux.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
@@ -226,18 +228,11 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
-	/*
-		TODO: (maybe - not very important)
-		// Admin routes
-		s.mux.Handle("/db/api/v1/admin/login/view", s.rateLimitMiddleware(http.HandlerFunc(s.adminLoginPageHandler), "admin"))
-		s.mux.Handle("/db/api/v1/admin/login", s.rateLimitMiddleware(http.HandlerFunc(s.adminLoginHandler), "admin"))
-		s.mux.Handle("/db/api/v1/admin/logout", s.rateLimitMiddleware(http.HandlerFunc(s.adminLogoutHandler), "admin"))
-		s.mux.Handle("/db/api/v1/admin/dashboard", s.rateLimitMiddleware(http.HandlerFunc(s.adminDashboardHandler), "admin"))
-
-		s.mux.Handle("/db/api/v1/admin/list-api-keys", s.rateLimitMiddleware(http.HandlerFunc(s.adminListApiKeysHandler), "admin"))
-		s.mux.Handle("/db/api/v1/admin/list-nodes", s.rateLimitMiddleware(http.HandlerFunc(s.adminListNodesHandler), "admin"))
-		// ALL API CRUD DONE VIA TRADITIONAL ROUTES UI IS FOR VIEWING
-	*/
+	// Object store handlers
+	s.mux.Handle("/db/api/v1/object", s.rateLimitMiddleware(http.HandlerFunc(s.getObjectHandler), "objects"))
+	s.mux.Handle("/db/api/v1/object/set", s.rateLimitMiddleware(http.HandlerFunc(s.setObjectHandler), "objects"))
+	s.mux.Handle("/db/api/v1/object/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteObjectHandler), "objects"))
+	s.mux.Handle("/db/api/v1/objects/list", s.rateLimitMiddleware(http.HandlerFunc(s.getObjectListHandler), "objects"))
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))

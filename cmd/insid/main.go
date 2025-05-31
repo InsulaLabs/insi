@@ -13,8 +13,8 @@ import (
 
 	"github.com/InsulaLabs/insi/internal/config"
 	"github.com/InsulaLabs/insi/internal/service"
+	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/InsulaLabs/insula/security/badge"
-	"github.com/InsulaLabs/insula/tkv"
 )
 
 var appCtx context.Context
@@ -136,7 +136,15 @@ func startNodeInstance(ctx context.Context, logger *slog.Logger, clusterCfg *con
 	}
 	defer kvm.Close()
 
-	srvc, err := service.NewService(ctx, nodeLogger.WithGroup("service"), &nodeCfg, b, kvm, clusterCfg, nodeId)
+	srvc, err := service.NewService(
+		ctx,
+		nodeLogger.WithGroup("service"),
+		&nodeCfg,
+		b,
+		kvm,
+		clusterCfg,
+		nodeId,
+	)
 	if err != nil {
 		nodeLogger.Error("Failed to create service", "error", err)
 		return

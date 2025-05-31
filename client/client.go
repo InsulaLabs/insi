@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"net" // Added for SplitHostPort and JoinHostPort
@@ -21,7 +22,8 @@ import (
 )
 
 const (
-	defaultTimeout = 10 * time.Second
+	defaultTimeout         = 10 * time.Second
+	objectOperationTimeout = 5 * time.Minute // Increased timeout for object operations
 )
 
 type ConnectionType string
@@ -463,6 +465,171 @@ func (c *Client) Ping() (map[string]string, error) {
 		return nil, err
 	}
 	return response, nil
+}
+
+// --- Object Operations ---
+
+// SetObject stores an object for a given key.
+// The object data is sent as the request body.
+func (c *Client) SetObject(key string, objectData []byte) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	if objectData == nil {
+		return fmt.Errorf("objectData cannot be nil") // Or handle as empty object if allowed
+	}
+
+	// The server expects the key as a query parameter for setObjectHandler
+	params := map[string]string{"key": key}
+
+	// Construct the URL with query parameters
+	initialPathURL := &url.URL{Path: "db/api/v1/object/set"}
+	fullURL := c.baseURL.ResolveReference(initialPathURL)
+	q := fullURL.Query()
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	fullURL.RawQuery = q.Encode()
+
+	// Create the request with the objectData as the body
+	req, err := http.NewRequest(http.MethodPost, fullURL.String(), bytes.NewBuffer(objectData))
+	if err != nil {
+		c.logger.Error("Failed to create new HTTP request for SetObject", "key", key, "url", fullURL.String(), "error", err)
+		return fmt.Errorf("failed to create request for SetObject %s: %w", key, err)
+	}
+
+	req.Header.Set("Content-Type", "application/octet-stream") // Or appropriate content type for your objects
+	req.Header.Set("Authorization", c.apiKey)
+
+	c.logger.Debug("Sending SetObject request", "key", key, "url", fullURL.String())
+
+	// Use a client with a longer timeout for object operations
+	objectClient := &http.Client{
+		Transport:     c.httpClient.Transport,
+		Timeout:       objectOperationTimeout,
+		CheckRedirect: nil, // Allow default redirect handling (e.g., follow 307/308)
+	}
+
+	resp, err := objectClient.Do(req)
+	if err != nil {
+		c.logger.Error("HTTP request failed for SetObject", "key", key, "url", fullURL.String(), "error", err)
+		return fmt.Errorf("http request for SetObject %s failed: %w", key, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.logger.Warn("SetObject received non-2xx status code", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode)
+		// Consider reading error body from resp.Body here if server provides one
+		return fmt.Errorf("server returned status %d for SetObject %s", resp.StatusCode, key)
+	}
+
+	c.logger.Debug("SetObject successful", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode)
+	return nil
+}
+
+// GetObject retrieves an object for a given key.
+// It returns the raw object data.
+func (c *Client) GetObject(key string) ([]byte, error) {
+	if key == "" {
+		return nil, fmt.Errorf("key cannot be empty")
+	}
+	params := map[string]string{"key": key}
+
+	// Construct the URL
+	initialPathURL := &url.URL{Path: "db/api/v1/object"}
+	fullURL := c.baseURL.ResolveReference(initialPathURL)
+	q := fullURL.Query()
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	fullURL.RawQuery = q.Encode()
+
+	req, err := http.NewRequest(http.MethodGet, fullURL.String(), nil)
+	if err != nil {
+		c.logger.Error("Failed to create new HTTP request for GetObject", "key", key, "url", fullURL.String(), "error", err)
+		return nil, fmt.Errorf("failed to create request for GetObject %s: %w", key, err)
+	}
+
+	req.Header.Set("Authorization", c.apiKey)
+	// No "Content-Type" needed for GET with no body. "Accept" could be "application/octet-stream" if needed.
+
+	c.logger.Debug("Sending GetObject request", "key", key, "url", fullURL.String())
+
+	// Use a client with a longer timeout for object operations
+	objectClient := &http.Client{
+		Transport:     c.httpClient.Transport,
+		Timeout:       objectOperationTimeout,
+		CheckRedirect: nil, // Allow default redirect handling
+	}
+
+	resp, err := objectClient.Do(req)
+	if err != nil {
+		c.logger.Error("HTTP request failed for GetObject", "key", key, "url", fullURL.String(), "error", err)
+		return nil, fmt.Errorf("http request for GetObject %s failed: %w", key, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		c.logger.Info("GetObject key not found", "key", key, "url", fullURL.String())
+		return nil, ErrKeyNotFound // Assuming ErrKeyNotFound is appropriate
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.logger.Warn("GetObject received non-2xx status code", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode)
+		return nil, fmt.Errorf("server returned status %d for GetObject %s", resp.StatusCode, key)
+	}
+
+	objectData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.logger.Error("Failed to read response body for GetObject", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode, "error", err)
+		return nil, fmt.Errorf("failed to read response body for GetObject %s: %w", key, err)
+	}
+
+	c.logger.Debug("GetObject successful", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode)
+	return objectData, nil
+}
+
+// DeleteObject removes an object for a given key.
+func (c *Client) DeleteObject(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	// The server's deleteObjectHandler expects key as a query param and uses GET method.
+	params := map[string]string{"key": key}
+	err := c.doRequest(http.MethodGet, "db/api/v1/object/delete", params, nil, nil)
+	if err != nil {
+		// The server's deleteObjectHandler doesn't explicitly return 404 for not found,
+		// but FSM might return an error that translates to it.
+		// For now, we don't map to ErrKeyNotFound unless doRequest does it or server behavior is confirmed.
+		if strings.Contains(err.Error(), "404") { // Basic check
+			c.logger.Info("DeleteObject key not found, treating as success (idempotent)", "key", key)
+			return nil // Idempotent delete: if not found, it's already "deleted"
+		}
+		c.logger.Error("DeleteObject failed", "key", key, "error", err)
+		return err
+	}
+	c.logger.Debug("DeleteObject successful", "key", key)
+	return nil
+}
+
+// GetObjectList retrieves a list of object keys matching a given prefix, with optional offset and limit.
+func (c *Client) GetObjectList(prefix string, offset, limit int) ([]string, error) {
+	params := map[string]string{
+		"prefix": prefix,
+		"offset": strconv.Itoa(offset),
+		"limit":  strconv.Itoa(limit),
+	}
+	var response struct {
+		Data []string `json:"data"`
+	}
+	// Assuming the endpoint is "db/api/v1/objects/list"
+	err := c.doRequest(http.MethodGet, "db/api/v1/objects/list", params, nil, &response)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") { // Or a more specific error check if server provides one
+			return nil, ErrKeyNotFound // Consider if ErrKeyNotFound is appropriate or a new error type
+		}
+		return nil, err
+	}
+	return response.Data, nil
 }
 
 // --- ETOK (Scope Token) Operations ---

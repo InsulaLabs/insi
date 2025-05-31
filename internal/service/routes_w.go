@@ -299,3 +299,91 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
+
+/*
+	Handlers for OBJECTS
+*/
+
+func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
+	entity, uuid, ok := s.validateToken(r, false)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	s.logger.Debug("SetObjectHandler", "entity", entity)
+
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for set object request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	// We expect the client to send a models.ObjectPayload with the key in the JSON body
+	// and the raw object data as the value. However, for HTTP, it's more common to get the raw bytes
+	// directly from the body if it's purely binary, or use multipart/form-data for metadata + binary.
+	// For simplicity here, we'll assume a JSON payload that contains the key, and the value is the raw object data.
+	// This means the client needs to base64 encode the object if sending as part of JSON string, or we adjust the model.
+
+	// Let's assume the request body *is* the object, and key is a query param for simplicity with large objects.
+	// This deviates from other set handlers but is more practical for binary blobs.
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		http.Error(w, "Missing key parameter for set object request", http.StatusBadRequest)
+		return
+	}
+
+	// prefix to lock to the api key holding entity
+	pKey := fmt.Sprintf("%s:%s", uuid, key)
+
+	// Note: Size check for objects might be complex as they are chunked.
+	// The underlying TKV SetObject will handle chunking. We might want a total size limit here.
+	// For now, we rely on TKV's internal handling.
+
+	err = s.fsm.SetObject(pKey, bodyBytes)
+	if err != nil {
+		s.logger.Error("Could not write object via FSM", "key", pKey, "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
+	entity, uuid, ok := s.validateToken(r, false)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	s.logger.Debug("DeleteObjectHandler", "entity", entity)
+
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+
+	// Expect key in query parameters for DELETE operations on objects
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		http.Error(w, "Missing key parameter for delete object request", http.StatusBadRequest)
+		return
+	}
+
+	// prefix to lock to the api key holding entity
+	pKey := fmt.Sprintf("%s:%s", uuid, key)
+
+	err := s.fsm.DeleteObject(pKey)
+	if err != nil {
+		s.logger.Error("Could not delete object via FSM", "key", pKey, "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}

@@ -72,3 +72,10 @@ type EtokenVerifyRequest struct {
 type EtokenVerifyResponse struct {
 	Verified bool `json:"verified"`
 }
+
+// ObjectPayload is used for transferring objects.
+// The Value is expected to be a byte slice representing the object data.
+type ObjectPayload struct {
+	Key   string `json:"key"`
+	Value []byte `json:"value"` // Changed from string to []byte
+}
