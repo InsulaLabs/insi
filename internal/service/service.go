@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/etok"
-	"github.com/InsulaLabs/insi/internal/managers"
 	"github.com/InsulaLabs/insi/internal/rft"
 	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/InsulaLabs/insi/models"
@@ -45,8 +43,6 @@ type Service struct {
 	startedAt time.Time
 
 	rateLimiters map[string]*rate.Limiter
-
-	securityManager managers.SecurityManager
 
 	// WebSocket event handling
 	eventSubscribers     map[string]map[*eventSession]bool // Changed to store *eventSession
@@ -137,11 +133,6 @@ func NewService(
 		rateLimiters["objects"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'objects'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
-	// Initialize the security manager
-	securityManager := etok.New(etok.Config{
-		Identity: identity,
-		Logger:   logger,
-	})
 
 	service := &Service{
 		appCtx:           ctx,
@@ -154,7 +145,6 @@ func NewService(
 		authToken:        authToken,
 		rateLimiters:     rateLimiters,
 		mux:              http.NewServeMux(),
-		securityManager:  securityManager,
 		eventSubscribers: make(map[string]map[*eventSession]bool),
 		wsUpgrader: websocket.Upgrader{
 			ReadBufferSize:  clusterCfg.Sessions.WebSocketReadBufferSize,
@@ -228,10 +218,6 @@ func (s *Service) Run() {
 	// Events handlers
 	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
 	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
-
-	// ETOK handlers
-	s.mux.Handle("/db/api/v1/etok/new", s.rateLimitMiddleware(http.HandlerFunc(s.etokNewHandler), "cache"))
-	s.mux.Handle("/db/api/v1/etok/verify", s.rateLimitMiddleware(http.HandlerFunc(s.etokVerifyHandler), "cache"))
 
 	// System handlers
 	s.mux.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))

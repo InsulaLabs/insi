@@ -619,59 +619,6 @@ func (c *Client) GetObjectList(prefix string, offset, limit int) ([]string, erro
 	return response.Data, nil
 }
 
-// --- ETOK (Scope Token) Operations ---
-
-// RequestScopeToken requests a new scope token from the server.
-func (c *Client) RequestScopeToken(scopes map[string]string, ttl time.Duration) (string, error) {
-	if len(scopes) == 0 {
-		return "", fmt.Errorf("scopes cannot be empty")
-	}
-	if ttl <= 0 {
-		return "", fmt.Errorf("ttl must be greater than 0")
-	}
-
-	payload := models.EtokenRequest{
-		Scopes: scopes,
-		TTL:    ttl,
-	}
-	var response models.EtokenResponse
-
-	err := c.doRequest(http.MethodPost, "db/api/v1/etok/new", nil, payload, &response)
-	if err != nil {
-		if strings.Contains(err.Error(), "404") {
-			return "", ErrTokenNotFound
-		}
-		return "", err
-	}
-	return response.Token, nil
-}
-
-// VerifyScopeToken verifies an existing scope token with the server.
-// The `scopes` parameter here represents the scopes the client is *currently* requesting to use/validate against the token.
-// The server handler `etokVerifyHandler` checks if these requested scopes are a subset of (or equal to) the scopes embedded in the token.
-func (c *Client) VerifyScopeToken(token string, scopesBeingRequested map[string]string) (bool, error) {
-	if token == "" {
-		return false, ErrTokenInvalid
-	}
-	// scopesBeingRequested can be empty if the verification is just to check token validity without specific scope assertion at this point.
-	// However, the server side handler currently expects a DeepEqual match, so for a true verification against specific scopes, they must be provided.
-
-	payload := models.EtokenVerifyRequest{
-		Token:  token,
-		Scopes: scopesBeingRequested, // These are the scopes the client is trying to assert with this token
-	}
-	var response models.EtokenVerifyResponse
-
-	err := c.doRequest(http.MethodPost, "db/api/v1/etok/verify", nil, payload, &response)
-	if err != nil {
-		if strings.Contains(err.Error(), "404") {
-			return false, ErrTokenNotFound
-		}
-		return false, ErrTokenInvalid // This will include HTTP errors (like 401 Unauthorized if token/scopes don't match)
-	}
-	return response.Verified, nil
-}
-
 // SubscribeToEvents connects to the event subscription WebSocket endpoint and prints incoming events.
 func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent func(data any)) error {
 	if topic == "" {

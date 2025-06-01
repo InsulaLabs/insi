@@ -160,9 +160,7 @@ func main() {
 		handlePublish(cli, cmdArgs)
 	case "subscribe":
 		handleSubscribe(cli, cmdArgs)
-	case "etok": // New top-level command for etok operations
-		handleEtok(cli, cmdArgs)
-	case "object": // New top-level command for object operations
+	case "object":
 		handleObject(cli, cmdArgs)
 	case "batchset":
 		handleBatchSet(cli, cmdArgs)
@@ -191,8 +189,6 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s\n", color.GreenString("ping"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("publish"), color.CyanString("<topic>"), color.CyanString("<data>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("subscribe"), color.CyanString("<topic>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("etok"), color.CyanString("request"), color.YellowString("--scopes"), color.CyanString("<json_scopes>"), color.YellowString("--ttl"), color.CyanString("<duration>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("etok"), color.CyanString("verify"), color.YellowString("--token"), color.CyanString("<token>"), color.YellowString("--scopes"), color.CyanString("<json_scopes>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<filepath>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("get"), color.CyanString("<key>"), color.CyanString("<output_filepath>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("delete"), color.CyanString("<key>"))
@@ -510,145 +506,7 @@ func handlePing(c *client.Client, args []string) {
 	}
 }
 
-// --- ETOK Command Handling ---
-
-func handleEtok(c *client.Client, args []string) {
-	if len(args) < 1 {
-		logger.Error("etok: requires a sub-command (request|verify)")
-		printUsage()
-		os.Exit(1)
-	}
-
-	subCommand := args[0]
-	subArgs := args[1:]
-
-	switch subCommand {
-	case "request":
-		handleEtokRequest(c, subArgs)
-	case "verify":
-		handleEtokVerify(c, subArgs)
-	default:
-		logger.Error("etok: unknown sub-command", "sub_command", subCommand)
-		printUsage()
-		os.Exit(1)
-	}
-}
-
-func parseScopes(scopesStr string) (map[string]string, error) {
-	var scopes map[string]string
-	if err := json.Unmarshal([]byte(scopesStr), &scopes); err != nil {
-		return nil, fmt.Errorf("invalid JSON format for scopes: %w. Expected map, e.g., {\"read\":\"data\"}", err)
-	}
-	return scopes, nil
-}
-
-func handleEtokRequest(c *client.Client, args []string) {
-	fs := flag.NewFlagSet("etok request", flag.ExitOnError)
-	scopesStr := fs.String("scopes", "", "JSON string of scopes (e.g., '{\"resource\":\"id\", \"action\":\"read\"}')")
-	ttlStr := fs.String("ttl", "", "Token time-to-live (e.g., '1m', '1h')")
-
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: insic etok request --scopes <json_scopes> --ttl <duration>\n")
-		fs.PrintDefaults()
-	}
-	fs.Parse(args)
-
-	if *scopesStr == "" {
-		logger.Error("etok request: --scopes is required")
-		fs.Usage()
-		os.Exit(1)
-	}
-	if *ttlStr == "" {
-		logger.Error("etok request: --ttl is required")
-		fs.Usage()
-		os.Exit(1)
-	}
-
-	scopes, err := parseScopes(*scopesStr)
-	if err != nil {
-		logger.Error("etok request: failed to parse scopes", "error", err)
-		fmt.Fprintf(os.Stderr, "%s parsing scopes: %v\n", color.RedString("Error"), err)
-		os.Exit(1)
-	}
-
-	ttl, err := time.ParseDuration(*ttlStr)
-	if err != nil {
-		logger.Error("etok request: invalid TTL format", "ttl_str", *ttlStr, "error", err)
-		fmt.Fprintf(os.Stderr, "%s Invalid TTL format for --ttl: %v. Use format like '60s', '5m', '1h'.\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-
-	token, err := c.RequestScopeToken(scopes, ttl)
-	if err != nil {
-		if errors.Is(err, client.ErrTokenNotFound) { // Should not happen on request, but good practice
-			logger.Error("Etok request failed: Token not found", "error", err)
-			fmt.Fprintf(os.Stderr, "%s Token not found during request processing.\n", color.RedString("Error:"))
-		} else if errors.Is(err, client.ErrTokenInvalid) { // Should not happen on request
-			logger.Error("Etok request failed: Token invalid", "error", err)
-			fmt.Fprintf(os.Stderr, "%s Token invalid during request processing.\n", color.RedString("Error:"))
-		} else {
-			logger.Error("Etok request failed", "error", err)
-			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		}
-		os.Exit(1)
-	}
-
-	logger.Info("Etok request successful")
-	fmt.Printf("Token: %s\n", color.CyanString(token))
-}
-
-func handleEtokVerify(c *client.Client, args []string) {
-	fs := flag.NewFlagSet("etok verify", flag.ExitOnError)
-	tokenStr := fs.String("token", "", "The etok token string to verify")
-	scopesStr := fs.String("scopes", "{}", "JSON string of scopes being requested/asserted (e.g., '{\"resource\":\"id\"}'). Defaults to empty map for general validity check.")
-
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: insic etok verify --token <token> --scopes <json_scopes>\n")
-		fs.PrintDefaults()
-	}
-	fs.Parse(args)
-
-	if *tokenStr == "" {
-		logger.Error("etok verify: --token is required")
-		fs.Usage()
-		os.Exit(1)
-	}
-
-	scopes, err := parseScopes(*scopesStr)
-	if err != nil {
-		logger.Error("etok verify: failed to parse scopes", "error", err)
-		fmt.Fprintf(os.Stderr, "%s parsing scopes for --scopes: %v\n", color.RedString("Error"), err)
-		os.Exit(1)
-	}
-
-	verified, err := c.VerifyScopeToken(*tokenStr, scopes)
-	if err != nil {
-		// This error from client might already indicate not verified (e.g. 401 from server)
-		// or specific token errors like ErrTokenNotFound or ErrTokenInvalid
-		if errors.Is(err, client.ErrTokenNotFound) {
-			logger.Error("Etok verification failed: Token not found", "token", *tokenStr, "scopes_requested", scopes, "error", err)
-			fmt.Fprintf(os.Stderr, "Token '%s' was %s. Error: %s\n", color.CyanString(*tokenStr), color.RedString("not found"), err)
-		} else if errors.Is(err, client.ErrTokenInvalid) {
-			logger.Error("Etok verification failed: Token invalid", "token", *tokenStr, "scopes_requested", scopes, "error", err)
-			fmt.Fprintf(os.Stderr, "Token '%s' is %s. Error: %s\n", color.CyanString(*tokenStr), color.RedString("invalid"), err)
-		} else {
-			logger.Error("Etok verification failed or token invalid", "token", *tokenStr, "scopes_requested", scopes, "error", err)
-			fmt.Fprintf(os.Stderr, "Token '%s' is %s for the requested scopes. Error: %s\n", color.CyanString(*tokenStr), color.RedString("NOT valid"), err)
-		}
-		os.Exit(1) // Exit because the verification process itself encountered an error.
-	}
-
-	if verified {
-		logger.Info("Etok verification successful", "token", *tokenStr, "scopes_requested", scopes)
-		fmt.Printf("Token '%s' IS %s for the requested scopes.\n", color.CyanString(*tokenStr), color.HiGreenString("valid"))
-	} else {
-		// This case might be less common if server returns non-200 for invalid tokens, caught by `err != nil` above.
-		// However, if server returns 200 OK with `{"verified": false}`, this handles it.
-		logger.Warn("Etok verification returned false", "token", *tokenStr, "scopes_requested", scopes)
-		fmt.Fprintf(os.Stderr, "Token '%s' is %s for the requested scopes (server indicated not verified).\n", color.CyanString(*tokenStr), color.RedString("NOT valid"))
-		os.Exit(1) // Exit with error code for not verified.
-	}
-}
+// --- Object Command Handling ---
 
 func handleObject(c *client.Client, args []string) {
 	if len(args) < 1 {
