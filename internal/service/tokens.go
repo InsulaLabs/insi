@@ -6,24 +6,17 @@ import (
 	"net/http"
 
 	"github.com/InsulaLabs/insi/client"
+	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/sentinel"
 )
 
 type TokenCache struct {
-	Entity    string     `json:"entity"`
-	UUID      string     `json:"uuid"`
-	KeyLimits *KeyLimits `json:"key_limits"`
-}
-type KeyLimits struct {
-	MaxKeySizeBytes   int `json:"max_key_size_bytes"`   // max size of a key
-	MaxValueSizeBytes int `json:"max_value_size_bytes"` // max size of a value
-	MaxBatchSize      int `json:"max_batch_size"`       // max number of keys in a batch (delete and set)
-	WritesPerSecond   int `json:"writes_per_second"`    // max number of writes per second
-	ReadsPerSecond    int `json:"reads_per_second"`     // max number of reads per second
-	MaxTotalBytes     int `json:"max_total_bytes"`      // max sum of all data stored in the system (delete and set)
+	Entity    string            `json:"entity"`
+	UUID      string            `json:"uuid"`
+	KeyLimits *models.KeyLimits `json:"key_limits"`
 }
 
-var rootKeyLimits = KeyLimits{
+var rootKeyLimits = models.KeyLimits{
 	MaxKeySizeBytes:   1024 * 1024, // 1MB
 	MaxValueSizeBytes: 1024 * 1024, // 1MB
 	MaxBatchSize:      1000,
@@ -33,7 +26,7 @@ var rootKeyLimits = KeyLimits{
 }
 
 // Returns the entity name (as encoded by user) and then the uuid generated unique to the key
-func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, string, *KeyLimits, bool) {
+func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, string, *models.KeyLimits, bool) {
 
 	authHeader := r.Header.Get("Authorization")
 	if mustBeRoot {
@@ -77,7 +70,7 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 		return "", "", nil, false
 	}
 
-	limits := KeyLimits{}
+	limits := models.KeyLimits{}
 	err = json.Unmarshal([]byte(limitsValue), &limits)
 	if err != nil {
 		s.logger.Error("Failed to unmarshal key limits", "error", err)
@@ -115,7 +108,7 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 	return entity, uuid, &limits, true
 }
 
-func (s *Service) newApiKey(entity string, keyLimits *KeyLimits) (string, error) {
+func (s *Service) newApiKey(entity string, keyLimits *models.KeyLimits) (string, error) {
 
 	if entity == "" {
 		return "", fmt.Errorf("entity is required")

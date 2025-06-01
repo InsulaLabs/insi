@@ -939,6 +939,28 @@ func (kf *kvFsm) BatchDelete(keyPayloads []models.KeyPayload) error {
 
 // ------------
 
+func (kf *kvFsm) UpdateUsage(key string, bytesAdded int) error {
+
+	// TODO: WHOLE KEY given (the exact lookup) no prefixing here
+
+	// TODO: Load and +/- the stored usage -bytesAdded means some
+	// were removed.
+
+	// TODO: ensure bytes total not negative
+
+	// TODO: return ErrInsufficientSpace if bytesAdded exceeds
+	// the total bytes available and dont save the new usage
+	// (this indicates the write should fail)
+
+	// todo: read from the ROOT_PREFIX:usage:ENTITY_NAME:KEY
+	// to get usage
+
+	// TODO: write to the ROOT_PREFIX:usage:ENTITY_NAME:KEY:tracker
+	// to store the new usage
+
+	return nil
+}
+
 type BadgerLogger struct {
 	slogger *slog.Logger
 }

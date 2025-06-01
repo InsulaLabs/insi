@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/InsulaLabs/insi/models"
 )
 
 const apiKeyIdentifier = "insi_"
@@ -92,9 +94,9 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestedLimits := r.URL.Query().Get("limits")
-	var limits *KeyLimits
+	var limits *models.KeyLimits
 	if requestedLimits != "" {
-		limits = &KeyLimits{}
+		limits = &models.KeyLimits{}
 		err := json.Unmarshal([]byte(requestedLimits), limits)
 		if err != nil {
 			s.logger.Error("Failed to unmarshal limits", "error", err)
