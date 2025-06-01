@@ -52,13 +52,13 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 */
 
 func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, _, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("SetHandler", "entity", entity)
+	s.logger.Debug("SetHandler", "entity", td.Entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -84,7 +84,7 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+	p.Key = fmt.Sprintf("%s:%s", td.UUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Value) {
 		http.Error(w, "Value is too large", http.StatusBadRequest)
@@ -106,13 +106,13 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, _, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("DeleteHandler", "entity", entity)
+	s.logger.Debug("DeleteHandler", "entity", td.Entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -138,7 +138,7 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+	p.Key = fmt.Sprintf("%s:%s", td.UUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Key) {
 		http.Error(w, "Key is too large", http.StatusBadRequest)
@@ -155,13 +155,13 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, _, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("SetCacheHandler", "entity", entity)
+	s.logger.Debug("SetCacheHandler", "entity", td.Entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -187,7 +187,7 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+	p.Key = fmt.Sprintf("%s:%s", td.UUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Key) {
 		http.Error(w, "Key is too large", http.StatusBadRequest)
@@ -209,13 +209,13 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, _, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("DeleteCacheHandler", "entity", entity)
+	s.logger.Debug("DeleteCacheHandler", "entity", td.Entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -241,7 +241,7 @@ func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	p.Key = fmt.Sprintf("%s:%s", uuid, p.Key)
+	p.Key = fmt.Sprintf("%s:%s", td.UUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Key) {
 		http.Error(w, "Key is too large", http.StatusBadRequest)
@@ -264,7 +264,7 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity, uuid, _, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -275,7 +275,7 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Println("DEV> eventsHandler", entity, uuid)
+	fmt.Println("DEV> eventsHandler", td.Entity, td.UUID)
 
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -293,8 +293,8 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prefix the topic with the entity's UUID to scope it
-	prefixedTopic := fmt.Sprintf("%s:%s", uuid, p.Topic)
-	s.logger.Debug("Publishing event with prefixed topic", "original_topic", p.Topic, "prefixed_topic", prefixedTopic, "entity_uuid", uuid)
+	prefixedTopic := fmt.Sprintf("%s:%s", td.UUID, p.Topic)
+	s.logger.Debug("Publishing event with prefixed topic", "original_topic", p.Topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.UUID)
 
 	err = s.fsm.Publish(prefixedTopic, p.Data)
 	if err != nil {
@@ -323,13 +323,13 @@ func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 
 	*/
-	entity, uuid, _, ok := s.validateToken(r, true)
+	td, ok := s.validateToken(r, true)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("SetObjectHandler", "entity", entity)
+	s.logger.Debug("SetObjectHandler", "entity", td.Entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -368,7 +368,7 @@ func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	pKey := fmt.Sprintf("%s:%s", uuid, key)
+	pKey := fmt.Sprintf("%s:%s", td.UUID, key)
 
 	// Note: Size check for objects might be complex as they are chunked.
 	// The underlying TKV SetObject will handle chunking. We might want a total size limit here.
@@ -384,13 +384,13 @@ func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, _, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("DeleteObjectHandler", "entity", entity)
+	s.logger.Debug("DeleteObjectHandler", "entity", td.Entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -405,7 +405,7 @@ func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	pKey := fmt.Sprintf("%s:%s", uuid, key)
+	pKey := fmt.Sprintf("%s:%s", td.UUID, key)
 
 	err := s.fsm.DeleteObject(pKey)
 	if err != nil {
@@ -423,12 +423,12 @@ func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 // Define request structures for batch operations
 
 func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, limits, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	s.logger.Debug("BatchSetHandler", "entity", entity, "uuid", uuid, "limits", limits)
+	s.logger.Debug("BatchSetHandler", "entity", td.Entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -472,7 +472,7 @@ func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Item at index %d has an empty key", i), http.StatusBadRequest)
 			return
 		}
-		prefixedKey := fmt.Sprintf("%s:%s", uuid, item.Key)
+		prefixedKey := fmt.Sprintf("%s:%s", td.UUID, item.Key)
 		if sizeTooLargeForStorage(prefixedKey) {
 			http.Error(w, fmt.Sprintf("Prefixed key '%s' (from item at index %d) is too large", prefixedKey, i), http.StatusBadRequest)
 			return
@@ -493,12 +493,12 @@ func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	entity, uuid, _, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	s.logger.Debug("BatchDeleteHandler", "entity", entity, "uuid", uuid)
+	s.logger.Debug("BatchDeleteHandler", "entity", td.Entity)
 
 	if !s.fsm.IsLeader() {
 		s.redirectToLeader(w, r, r.URL.Path)
@@ -541,7 +541,7 @@ func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Key at index %d is empty", i), http.StatusBadRequest)
 			return
 		}
-		prefixedKey := fmt.Sprintf("%s:%s", uuid, key)
+		prefixedKey := fmt.Sprintf("%s:%s", td.UUID, key)
 		if sizeTooLargeForStorage(prefixedKey) {
 			http.Error(w, fmt.Sprintf("Prefixed key '%s' (from key at index %d) is too large", prefixedKey, i), http.StatusBadRequest)
 			return

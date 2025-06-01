@@ -25,16 +25,33 @@ var rootKeyLimits = models.KeyLimits{
 	MaxTotalBytes:     100 * 1024 * 1024 * 1024, // 100	GB
 }
 
+type TokenData struct {
+	Entity    string
+	UUID      string
+	ApiKey    string
+	KeyLimits *models.KeyLimits
+}
+
 // Returns the entity name (as encoded by user) and then the uuid generated unique to the key
-func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, string, *models.KeyLimits, bool) {
+func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (TokenData, bool) {
 
 	authHeader := r.Header.Get("Authorization")
 	if mustBeRoot {
-		return EntityRoot, s.cfg.RootPrefix, &rootKeyLimits, authHeader == s.authToken
+		return TokenData{
+			Entity:    EntityRoot,
+			UUID:      s.cfg.RootPrefix,
+			ApiKey:    authHeader,
+			KeyLimits: &rootKeyLimits,
+		}, authHeader == s.authToken
 	}
 
 	if authHeader == s.authToken {
-		return EntityRoot, s.cfg.RootPrefix, &rootKeyLimits, true
+		return TokenData{
+			Entity:    EntityRoot,
+			UUID:      s.cfg.RootPrefix,
+			ApiKey:    authHeader,
+			KeyLimits: &rootKeyLimits,
+		}, true
 	}
 
 	cacheItem := s.lcs.apiKeys.Get(authHeader)
@@ -45,7 +62,12 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 			s.logger.Error("Failed to unmarshal token cache", "error", err)
 		}
 		fmt.Println("validateToken: CACHE HIT", cacheItem.Value())
-		return tokenCache.Entity, tokenCache.UUID, tokenCache.KeyLimits, true
+		return TokenData{
+			Entity:    tokenCache.Entity,
+			UUID:      tokenCache.UUID,
+			ApiKey:    authHeader,
+			KeyLimits: tokenCache.KeyLimits,
+		}, true
 	}
 
 	/*
@@ -59,7 +81,7 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 			"Failed to get value from valuesDb",
 			"error", err,
 		)
-		return "", "", nil, false
+		return TokenData{}, false
 	}
 
 	if limitsValue == "" {
@@ -67,14 +89,14 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 			"Value is empty",
 			"key", authHeader,
 		)
-		return "", "", nil, false
+		return TokenData{}, false
 	}
 
 	limits := models.KeyLimits{}
 	err = json.Unmarshal([]byte(limitsValue), &limits)
 	if err != nil {
 		s.logger.Error("Failed to unmarshal key limits", "error", err)
-		return "", "", nil, false
+		return TokenData{}, false
 	}
 
 	keyMan := sentinel.NewSentinel(
@@ -90,7 +112,7 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 			"key", authHeader,
 			"error", err,
 		)
-		return "", "", nil, false
+		return TokenData{}, false
 	}
 
 	// store the key in the cache
@@ -105,7 +127,12 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (string, strin
 		s.lcs.apiKeys.Set(authHeader, string(cacheValue), s.cfg.Cache.Keys)
 	}
 
-	return entity, uuid, &limits, true
+	return TokenData{
+		Entity:    entity,
+		UUID:      uuid,
+		ApiKey:    authHeader,
+		KeyLimits: &limits,
+	}, true
 }
 
 func (s *Service) newApiKey(entity string, keyLimits *models.KeyLimits) (string, error) {

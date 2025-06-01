@@ -31,7 +31,7 @@ func (s *Service) etokNewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity, uuid, _, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -64,7 +64,7 @@ func (s *Service) etokNewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.securityManager.NewScopeToken(entity, uuid, p.Scopes, p.TTL)
+	token, err := s.securityManager.NewScopeToken(td.Entity, td.UUID, p.Scopes, p.TTL)
 	if err != nil {
 		s.logger.Error("Could not create scope token", "error", err)
 		http.Error(w, "Could not create scope token: "+err.Error(), http.StatusInternalServerError)

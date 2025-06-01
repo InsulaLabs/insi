@@ -12,7 +12,7 @@ import (
 const apiKeyIdentifier = "insi_"
 
 func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, _, _, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r, false)
 	if !ok {
 		s.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
@@ -29,7 +29,7 @@ func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":        "ok",
-		"entity":        storedRootEntity,
+		"entity":        td.Entity,
 		"node-badge-id": s.identity.GetID(),
 		"leader":        s.fsm.Leader(),
 		"uptime":        uptime,
@@ -49,7 +49,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only admin "root" key can tell nodes to join the cluster
-	entity, _, _, ok := s.validateToken(r, true)
+	td, ok := s.validateToken(r, true)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -57,7 +57,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 
 	// We already enforced that its root, but this will be a sanity check to ensure that
 	// something isn't corrupted or otherwise malicious
-	if entity != EntityRoot {
+	if td.Entity != EntityRoot {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -79,8 +79,8 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 	s.logger.Debug("Enter newApiKeyHandler", "method", r.Method, "url", r.URL.String())
-	storedRootEntity, _, _, ok := s.validateToken(r, true)
-	if !ok || storedRootEntity != "root" {
+	td, ok := s.validateToken(r, true)
+	if !ok || td.Entity != "root" {
 		s.logger.Warn("Unauthorized attempt to create API key", "remote_addr", r.RemoteAddr)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -122,8 +122,8 @@ func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteApiKeyHandler(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, _, _, ok := s.validateToken(r, true)
-	if !ok || storedRootEntity != "root" {
+	td, ok := s.validateToken(r, true)
+	if !ok || td.Entity != "root" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
