@@ -10,6 +10,27 @@ import (
 // PluginRuntimeIF implementation
 // ------------------------------------------------------------
 
+/*
+	A note on implementation decsisions:
+
+		Instead of having an interface that connects directlry to the
+		service internals that can put directly to the raft fsm, i opted
+		to use http clients to request onto the network. This is about
+		distributing the load of requests from all node plugins across
+		all nodes equally.
+
+		In a once node cluster, this is a bit of a waste of resources, but
+		consider the scale. In a 5 node cluster, inundating one server with
+		requests can cause lots of problems. With the client-map setup we
+		can distribute the load (reads) across all nodes
+
+		Some functions like writing to the datastore will still need to
+		locate the leader so the client takes care of this for us as well
+		and we can also leverage the client for websocket subscription connections
+		to remote nodes facilitating off-raft data transfer using the same
+		code [client] that we have to maintain anyway (massive W)
+*/
+
 func (r *Runtime) RT_IsRunning() bool {
 	return r.appCtx.Err() == nil
 }
