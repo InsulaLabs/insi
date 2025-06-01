@@ -1,7 +1,7 @@
 package service
 
 import (
-	"github.com/InsulaLabs/insi/internal/config"
+	"github.com/InsulaLabs/insi/config"
 	"github.com/jellydator/ttlcache/v3"
 )
 

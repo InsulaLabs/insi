@@ -180,3 +180,62 @@ func LoadConfig(configFile string) (*Cluster, error) {
 
 	return &cfg, nil
 }
+
+func GenerateConfig(configFile string) (*Cluster, error) {
+	cfg := Cluster{
+		InstanceSecret:   "please_change_this_secret_in_production_!!!",
+		DefaultLeader:    "node0",
+		Nodes:            make(map[string]Node),
+		ClientSkipVerify: false,
+		InsudbDir:        "data/insudb", // Relative path for easier default setup
+		ServerMustUseTLS: true,
+		TLS: TLS{
+			Cert: "config/tls/server.crt", // Placeholder - user needs to generate these
+			Key:  "config/tls/server.key", // Placeholder - user needs to generate these
+		},
+		Cache: Cache{
+			StandardTTL: 5 * time.Minute,
+			Keys:        1 * time.Hour,
+		},
+		RootPrefix: "please_change_this_root_key_prefix!!!!!",
+		RateLimiters: RateLimiters{
+			Values:  RateLimiterConfig{Limit: 100.0, Burst: 200},
+			Cache:   RateLimiterConfig{Limit: 100.0, Burst: 200},
+			System:  RateLimiterConfig{Limit: 50.0, Burst: 100},
+			Default: RateLimiterConfig{Limit: 100.0, Burst: 200},
+			Events:  RateLimiterConfig{Limit: 200.0, Burst: 400},
+			Objects: RateLimiterConfig{Limit: 100.0, Burst: 200},
+		},
+		Sessions: SessionsConfig{
+			EventChannelSize:         1000,
+			WebSocketReadBufferSize:  4096,
+			WebSocketWriteBufferSize: 4096,
+			MaxConnections:           100,
+		},
+	}
+
+	cfg.Nodes["node0"] = Node{
+		RaftBinding:  "127.0.0.1:7000",
+		HttpBinding:  "127.0.0.1:7001",
+		NodeSecret:   "node0_secret_please_change_!!!",
+		ClientDomain: "localhost",
+	}
+	// Add more nodes if desired for a default multi-node setup example
+	cfg.Nodes["node1"] = Node{
+		RaftBinding:  "127.0.0.1:7002",
+		HttpBinding:  "127.0.0.1:7003",
+		NodeSecret:   "node1_secret_please_change_!!!",
+		ClientDomain: "localhost",
+	}
+	cfg.Nodes["node2"] = Node{
+		RaftBinding:  "127.0.0.1:7004",
+		HttpBinding:  "127.0.0.1:7005",
+		NodeSecret:   "node2_secret_please_change_!!!",
+		ClientDomain: "localhost",
+	}
+
+	// The configFile argument is not used by this function to generate the content,
+	// but its presence matches the function signature. The actual writing to a file
+	// based on a command-line flag is handled in the runtime.
+	return &cfg, nil
+}

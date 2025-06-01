@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
-	"github.com/InsulaLabs/insi/internal/config" // Assuming this is the correct path
+	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"

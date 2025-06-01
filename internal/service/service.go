@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/InsulaLabs/insi/internal/config"
+	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/internal/etok"
 	"github.com/InsulaLabs/insi/internal/managers"
 	"github.com/InsulaLabs/insi/internal/rft"

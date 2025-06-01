@@ -23,7 +23,7 @@ import (
 
 	"time"
 
-	"github.com/InsulaLabs/insi/internal/config"
+	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/dgraph-io/badger/v3"
 
