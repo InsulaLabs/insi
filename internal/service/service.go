@@ -62,7 +62,6 @@ type Service struct {
 	eventCh              chan models.Event // Central event channel for the service
 	activeWsConnections  int32             // Counter for active WebSocket connections
 	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
-
 }
 
 func NewService(
@@ -198,6 +197,17 @@ func (s *Service) rateLimitMiddleware(next http.Handler, category string) http.H
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Service) WithRoute(path string, handler http.Handler, limit int, burst int) {
+	limiter := rate.NewLimiter(rate.Limit(limit), burst)
+	s.mux.Handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
 }
 
 // Run forever until the context is cancelled

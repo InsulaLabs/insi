@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -29,7 +31,11 @@ type Runtime struct {
 	asNodeId   string
 	hostMode   bool
 	rawArgs    []string // To allow flag parsing within New
+
+	plugins map[string]Plugin
 }
+
+var _ PluginRuntimeIF = &Runtime{}
 
 // New creates a new Runtime instance.
 // It initializes the application context, sets up signal handling,
@@ -37,6 +43,7 @@ type Runtime struct {
 func New(args []string, defaultConfigFile string) (*Runtime, error) {
 	r := &Runtime{
 		rawArgs: args,
+		plugins: make(map[string]Plugin),
 	}
 
 	r.appCtx, r.appCancel = context.WithCancel(context.Background())
@@ -74,9 +81,8 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 			return nil, fmt.Errorf("failed to marshal generated config to YAML: %w", err)
 		}
 
-		// Ensure the directory exists
 		dir := filepath.Dir(genConfigFile)
-		if dir != "." && dir != "" { // Avoid creating '.' or empty dir
+		if dir != "." && dir != "" {
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				return nil, fmt.Errorf("failed to create directory for config file %s: %w", genConfigFile, err)
 			}
@@ -87,18 +93,6 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 		}
 
 		r.logger.Info("Successfully generated new configuration file", "path", genConfigFile)
-		// After generating the config, the program's purpose is fulfilled.
-		// We can indicate that no further runtime operations should proceed by returning a specific error
-		// or by setting a flag that Run() can check. For now, returning a distinct error or nil if successful generation means exit.
-		// A simple way is to ensure `Run()` is not called, or the caller of `New()` handles this.
-		// For instance, the main function could check if genConfigFile was set and not proceed to r.Run() if so.
-		// Let's make New return a special value or the main func checks. For now, we'll just log and the caller should handle it.
-		// A common pattern is for New to return (nil, nil) if the operation (like config gen) completes successfully and implies exit.
-		// Or, as done here, allow the Runtime object to be returned but the caller of New needs to check if genConfigFile was processed.
-		// To make it explicit that the runtime should not continue, we can os.Exit here, or return a sentinel error.
-		// For simplicity and to avoid os.Exit in library code, we'll assume the caller checks.
-		// The linter error for `cfg` being unused will be resolved because it's now used by `yaml.Marshal(cfg)`.
-
 		os.Exit(0)
 	}
 
@@ -114,6 +108,11 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 	}
 
 	return r, nil
+}
+
+func (r *Runtime) WithPlugin(plugin Plugin) *Runtime {
+	r.plugins[plugin.GetName()] = plugin
+	return r
 }
 
 // Run executes the runtime based on the parsed flags,
@@ -170,9 +169,6 @@ func (r *Runtime) runAsHost() error {
 	go func() {
 		wg.Wait()
 		r.logger.Info("All node instances have completed.")
-		// If all nodes complete naturally, we might want to initiate a shutdown.
-		// However, typical server behavior is to keep running until signaled.
-		// For now, rely on external signal or cancellation of appCtx.
 	}()
 
 	<-r.appCtx.Done()
@@ -187,38 +183,37 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 
 	if err := os.MkdirAll(r.clusterCfg.InsudbDir, os.ModePerm); err != nil {
 		nodeLogger.Error("Failed to create insudbDir", "path", r.clusterCfg.InsudbDir, "error", err)
-		// In a real scenario, might return error or panic depending on recovery strategy
-		return
+		os.Exit(1)
 	}
 
 	nodeDataRootPath := filepath.Join(r.clusterCfg.InsudbDir, nodeId)
 	if err := os.MkdirAll(nodeDataRootPath, os.ModePerm); err != nil {
 		nodeLogger.Error("Could not create node data root directory", "path", nodeDataRootPath, "error", err)
-		return
+		os.Exit(1)
 	}
 
 	b, err := loadOrCreateBadge(nodeId, nodeDataRootPath, nodeCfg.NodeSecret)
 	if err != nil {
 		nodeLogger.Error("Failed to load or create badge", "error", err)
-		return
+		os.Exit(1)
 	}
 
-	nodeDir := filepath.Join(nodeDataRootPath, nodeId) // This was originally nodeDataRootPath + "/" + *asNodeId
+	nodeDir := filepath.Join(nodeDataRootPath, nodeId)
 	if err := os.MkdirAll(nodeDir, os.ModePerm); err != nil {
 		nodeLogger.Error("Failed to create node specific data directory", "path", nodeDir, "error", err)
-		return
+		os.Exit(1)
 	}
 
 	kvm, err := tkv.New(tkv.Config{
 		Identity:  b,
 		Logger:    nodeLogger.WithGroup("tkv"),
 		Directory: nodeDir,
-		AppCtx:    r.appCtx, // Use the runtime's app context
+		AppCtx:    r.appCtx,
 		CacheTTL:  r.clusterCfg.Cache.StandardTTL,
 	})
 	if err != nil {
 		nodeLogger.Error("Failed to create KV manager", "error", err)
-		return
+		os.Exit(1)
 	}
 	defer kvm.Close()
 
@@ -233,14 +228,55 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	)
 	if err != nil {
 		nodeLogger.Error("Failed to create service", "error", err)
-		return
+		os.Exit(1)
+	}
+
+	// Mount the plugins
+	nodeLogger.Info("Mounting plugins", "count", len(r.plugins))
+
+	createRoute := func(plugin Plugin, route PluginRoute) string {
+		nodeLogger.Info("Mounting plugin route", "plugin", plugin.GetName(), "path", route.Path)
+		pName := strings.Trim(plugin.GetName(), "/")
+		rPath := strings.Trim(route.Path, "/")
+		mountPath := "/" // Always start with a slash for the root
+		if pName != "" {
+			mountPath = path.Join(mountPath, pName)
+		}
+		if rPath != "" {
+			mountPath = path.Join(mountPath, rPath)
+		}
+		return mountPath
+	}
+
+	/*
+		Setup the routes for the plugin and init it so it has
+		a means to access the runtime.
+	*/
+	for _, plugin := range r.plugins {
+
+		r.logger.Info(
+			"Mounting routes for plugin",
+			"plugin", plugin.GetName(),
+			"count", len(plugin.GetRoutes()),
+		)
+
+		for _, route := range plugin.GetRoutes() {
+			srvc.WithRoute(
+				createRoute(plugin, route),
+				route.Handler,
+				route.Limit,
+				route.Burst,
+			)
+		}
+
+		plugin.Init(r)
 	}
 
 	// Run the service. This should block until the service is done or context is cancelled.
 	// We need to handle the completion of this service within the broader context
 	// of the runtime (e.g., if one node fails, does it affect others in host mode?).
 	// For now, each node runs somewhat independently until the main appCtx is cancelled.
-	srvc.Run() // This blocks. Consider running in a goroutine if startNodeInstance needs to be non-blocking itself.
+	srvc.Run()
 
 	nodeLogger.Info("Node instance shut down gracefully.")
 }
@@ -270,7 +306,7 @@ func loadOrCreateBadge(nodeId string, installDir string, secret string) (badge.B
 			return nil, fmt.Errorf("failed to encrypt badge: %w", err)
 		}
 
-		if err := os.WriteFile(fileName, encryptedBadge, 0600); err != nil { // More restrictive permissions
+		if err := os.WriteFile(fileName, encryptedBadge, 0600); err != nil {
 			return nil, fmt.Errorf("failed to write encrypted badge: %w", err)
 		}
 		return badge, nil
@@ -299,4 +335,23 @@ func (r *Runtime) Wait() {
 func (r *Runtime) Stop() {
 	r.logger.Info("Runtime stop requested.")
 	r.appCancel()
+}
+
+// ------------------------------------------------------------
+// PluginRuntimeIF implementation
+// ------------------------------------------------------------
+
+/*
+
+
+	TODO:
+
+		Now that we have the ability to plugin routes
+
+
+
+*/
+
+func (r *Runtime) IsRunning() bool {
+	return r.appCtx.Err() == nil
 }

@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/InsulaLabs/insi/plugins/status"
 	"github.com/InsulaLabs/insi/runtime"
 )
 
@@ -16,6 +17,8 @@ func main() {
 		slog.Error("Failed to initialize runtime", "error", err)
 		os.Exit(1)
 	}
+
+	rt.WithPlugin(status.New(slog.Default()))
 
 	if err := rt.Run(); err != nil {
 		slog.Error("Runtime exited with error", "error", err)
