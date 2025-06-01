@@ -23,6 +23,8 @@ type eventSession struct {
 	conn *websocket.Conn
 	// The topic this session is subscribed to.
 	topic string
+	// The API key of the authenticated user for this session.
+	apiKey string
 	// Buffered channel of outbound messages.
 	send chan []byte
 	// Service pointer to access logger, etc.
@@ -92,6 +94,11 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !s.canRegisterSubscriber(&td) {
+		http.Error(w, "Too many subscribers", http.StatusTooManyRequests)
+		return
+	}
+
 	topic := r.URL.Query().Get("topic")
 	if topic == "" {
 		s.logger.Warn("WebSocket connection attempt without topic")
@@ -123,6 +130,7 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 	session := &eventSession{
 		conn:    conn,
 		topic:   prefixedTopic,
+		apiKey:  td.ApiKey,              // Store the user's API key
 		send:    make(chan []byte, 256), // Buffered channel
 		service: s,
 	}
@@ -132,6 +140,15 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 	// Launch goroutines for this session
 	go session.writePump()
 	go session.readPump()
+}
+
+func (s *Service) canRegisterSubscriber(td *TokenData) bool {
+
+	s.lcs.apiKeyUsageLock.RLock()
+	usageData := s.lcs.apiKeyUsage[td.ApiKey]
+	s.lcs.apiKeyUsageLock.RUnlock()
+
+	return usageData.ActiveSubsOnNode < td.KeyLimits.SubscribersPerNode
 }
 
 func (s *Service) registerSubscriber(session *eventSession) {
@@ -156,7 +173,29 @@ func (s *Service) registerSubscriber(session *eventSession) {
 		s.eventSubscribers[session.topic] = make(map[*eventSession]bool) // Inner map stores *eventSession
 	}
 	s.eventSubscribers[session.topic][session] = true // Store the session itself
-	s.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
+
+	s.lcs.apiKeyUsageLock.Lock()
+	// Use session.apiKey to correctly attribute subscriber count
+	usageData, exists := s.lcs.apiKeyUsage[session.apiKey]
+	if !exists {
+		s.logger.Error("API key not found in usage map during registerSubscriber", "apiKey", session.apiKey, "topic", session.topic)
+		// This is an unexpected state if canRegisterSubscriber passed based on this key.
+		// However, to prevent panic, we might need to initialize it or handle error.
+		// For now, log and proceed, but this key should have been in the map.
+		// To be safe, create a default entry if it's missing to avoid nil dereference on usageData.
+		// This assumes keyLimits should have been loaded; if not, this default might be too permissive/restrictive.
+		// A better approach might be to fetch KeyLimits here if missing, or ensure newApiKey always populates.
+		// Given the flow, `canRegisterSubscriber` should have already confirmed limits exist for `td.ApiKey`.
+		// So, `exists` should ideally be true.
+		// If `!exists` here, it suggests a problem. We'll log and create a default entry to avoid panic, but this needs monitoring.
+		usageData = apiKeyUsageData{} // Default/empty struct, ActiveSubsOnNode will be 0
+		// Ideally, we'd also log an error here about the key missing, which is done above.
+	}
+	usageData.ActiveSubsOnNode++
+	s.lcs.apiKeyUsage[session.apiKey] = usageData
+	s.lcs.apiKeyUsageLock.Unlock()
+
+	s.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String(), "apiKey", session.apiKey, "activeSubsForThisKey", usageData.ActiveSubsOnNode)
 }
 
 func (s *Service) unregisterSubscriber(session *eventSession) {
@@ -186,6 +225,27 @@ func (s *Service) unregisterSubscriber(session *eventSession) {
 		}
 	}
 	close(session.send)
+
+	s.lcs.apiKeyUsageLock.Lock()
+	// Use session.apiKey to correctly attribute subscriber count
+	usageData, exists := s.lcs.apiKeyUsage[session.apiKey]
+	if !exists {
+		s.logger.Error("API key not found in usage map during unregisterSubscriber", "apiKey", session.apiKey, "topic", session.topic)
+		// If the key doesn't exist, there's nothing to decrement. Log and return.
+		s.lcs.apiKeyUsageLock.Unlock()
+		return
+	}
+
+	usageData.ActiveSubsOnNode--
+	if usageData.ActiveSubsOnNode < 0 {
+		s.logger.Error("Attempted to decrement active subscribers below zero for key",
+			"topic", session.topic,
+			"apiKey", session.apiKey)
+		usageData.ActiveSubsOnNode = 0 // Correct to zero if it went negative
+	}
+	s.lcs.apiKeyUsage[session.apiKey] = usageData
+	s.lcs.apiKeyUsageLock.Unlock()
+	s.logger.Info("Subscriber count updated after unregistration", "apiKey", session.apiKey, "activeSubsForThisKey", usageData.ActiveSubsOnNode)
 }
 
 // Central event processing loop for the service.

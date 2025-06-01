@@ -16,6 +16,7 @@ func initLocalCaches(cacheConfig *config.Cache) (*localCaches, error) {
 			ttlcache.WithTTL[string, string](cacheConfig.Keys),
 			ttlcache.WithDisableTouchOnHit[string, string](), // dont bump ttl on hit
 		),
+		apiKeyUsage: make(map[string]apiKeyUsageData),
 	}
 
 	/*
@@ -25,6 +26,5 @@ func initLocalCaches(cacheConfig *config.Cache) (*localCaches, error) {
 		so passing a context for cancel is stupid
 	*/
 	go lc.apiKeys.Start()
-
 	return lc, nil
 }

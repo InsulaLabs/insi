@@ -1,8 +1,10 @@
 {
-    "max_key_size_bytes": 244,
-    "max_value_size_bytes": 244,
-    "max_batch_size": 100,
-    "writes_per_second": 100,
-    "reads_per_second": 100,
-    "max_total_bytes": 52428800
+    "max_key_size_bytes": 15,
+    "max_value_size_bytes": 10,
+    "max_batch_size": 10,
+    "writes_per_second": 1,
+    "reads_per_second": 1,
+    "events_per_second": 1,
+    "subscribers_per_node": 1,
+    "max_total_bytes": 1024
 }

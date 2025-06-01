@@ -31,8 +31,20 @@ const (
 	we actually hit the db.
 */
 
+type apiKeyUsageData struct {
+	ReadLimiter  *rate.Limiter
+	WriteLimiter *rate.Limiter
+	EventLimiter *rate.Limiter
+
+	ActiveSubsOnNode int // current number of subscribers on this node for the api key events
+}
+
 type localCaches struct {
 	apiKeys *ttlcache.Cache[string, string]
+
+	// Map each API KEY that the system has to a usage data struct
+	apiKeyUsage     map[string]apiKeyUsageData
+	apiKeyUsageLock sync.RWMutex // for when new api keys are created
 }
 
 type Service struct {
@@ -267,6 +279,19 @@ func (s *Service) Run() {
 	}()
 
 	s.startedAt = time.Now()
+
+	knownApiKeys, err := s.getAllApiKeyDetails()
+	if err != nil {
+		s.logger.Error("Failed to get known api keys", "error", err)
+	}
+	for _, apiKey := range knownApiKeys {
+		s.lcs.apiKeyUsage[apiKey.ApiKey] = apiKeyUsageData{
+			ReadLimiter:      rate.NewLimiter(rate.Limit(apiKey.KeyLimits.ReadsPerSecond), apiKey.KeyLimits.ReadsPerSecond),
+			WriteLimiter:     rate.NewLimiter(rate.Limit(apiKey.KeyLimits.WritesPerSecond), apiKey.KeyLimits.WritesPerSecond),
+			EventLimiter:     rate.NewLimiter(rate.Limit(apiKey.KeyLimits.EventsPerSecond), apiKey.KeyLimits.EventsPerSecond),
+			ActiveSubsOnNode: 0,
+		}
+	}
 
 	if s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != "" {
 		s.logger.Info("Starting HTTPS server", "cert", s.cfg.TLS.Cert, "key", s.cfg.TLS.Key)

@@ -91,10 +91,12 @@ type BatchDeleteRequest struct {
 // api key limits
 
 type KeyLimits struct {
-	MaxKeySizeBytes   int `json:"max_key_size_bytes"`   // max size of a key
-	MaxValueSizeBytes int `json:"max_value_size_bytes"` // max size of a value
-	MaxBatchSize      int `json:"max_batch_size"`       // max number of keys in a batch (delete and set)
-	WritesPerSecond   int `json:"writes_per_second"`    // max number of writes per second
-	ReadsPerSecond    int `json:"reads_per_second"`     // max number of reads per second
-	MaxTotalBytes     int `json:"max_total_bytes"`      // max sum of all data stored in the system (delete and set)
+	MaxKeySizeBytes    int `json:"max_key_size_bytes"`   // max size of a key
+	MaxValueSizeBytes  int `json:"max_value_size_bytes"` // max size of a value
+	MaxBatchSize       int `json:"max_batch_size"`       // max number of keys in a batch (delete and set)
+	WritesPerSecond    int `json:"writes_per_second"`    // max number of writes per second
+	ReadsPerSecond     int `json:"reads_per_second"`     // max number of reads per second
+	EventsPerSecond    int `json:"events_per_second"`    // max number of events per second
+	SubscribersPerNode int `json:"subscribers_per_node"` // max number of subscribers per node
+	MaxTotalBytes      int `json:"max_total_bytes"`      // max sum of all data stored in the system (delete and set)
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/sentinel"
+	"golang.org/x/time/rate"
 )
 
 type TokenCache struct {
@@ -17,12 +18,14 @@ type TokenCache struct {
 }
 
 var rootKeyLimits = models.KeyLimits{
-	MaxKeySizeBytes:   1024 * 1024, // 1MB
-	MaxValueSizeBytes: 1024 * 1024, // 1MB
-	MaxBatchSize:      1000,
-	WritesPerSecond:   1000,
-	ReadsPerSecond:    1000,
-	MaxTotalBytes:     100 * 1024 * 1024 * 1024, // 100	GB
+	MaxKeySizeBytes:    1024 * 1024, // 1MB
+	MaxValueSizeBytes:  1024 * 1024, // 1MB
+	MaxBatchSize:       1000,
+	WritesPerSecond:    1000,
+	ReadsPerSecond:     1000,
+	EventsPerSecond:    1000,
+	SubscribersPerNode: 100,
+	MaxTotalBytes:      100 * 1024 * 1024 * 1024, // 100	GB
 }
 
 type TokenData struct {
@@ -30,6 +33,13 @@ type TokenData struct {
 	UUID      string
 	ApiKey    string
 	KeyLimits *models.KeyLimits
+}
+
+// ApiKeyDetails holds an API key and its associated usage limits.
+// This is used to retrieve all keys and their configurations, for example, on startup.
+type ApiKeyDetails struct {
+	ApiKey    string            `json:"api_key"`
+	KeyLimits *models.KeyLimits `json:"key_limits"`
 }
 
 // Returns the entity name (as encoded by user) and then the uuid generated unique to the key
@@ -137,6 +147,7 @@ func (s *Service) validateToken(r *http.Request, mustBeRoot bool) (TokenData, bo
 
 func (s *Service) newApiKey(entity string, keyLimits *models.KeyLimits) (string, error) {
 
+	fmt.Println("newApiKey", entity, keyLimits)
 	if entity == "" {
 		return "", fmt.Errorf("entity is required")
 	}
@@ -187,6 +198,16 @@ func (s *Service) newApiKey(entity string, keyLimits *models.KeyLimits) (string,
 		return "", fmt.Errorf("failed to store key: [set] %w", err)
 	}
 
+	// Add to usage map for limiting
+	s.lcs.apiKeyUsageLock.Lock()
+	s.lcs.apiKeyUsage[apiKey] = apiKeyUsageData{
+		ReadLimiter:      rate.NewLimiter(rate.Limit(keyLimits.ReadsPerSecond), keyLimits.ReadsPerSecond),
+		WriteLimiter:     rate.NewLimiter(rate.Limit(keyLimits.WritesPerSecond), keyLimits.WritesPerSecond),
+		EventLimiter:     rate.NewLimiter(rate.Limit(keyLimits.EventsPerSecond), keyLimits.EventsPerSecond),
+		ActiveSubsOnNode: 0,
+	}
+	s.lcs.apiKeyUsageLock.Unlock()
+
 	return apiKey, nil
 }
 
@@ -206,6 +227,11 @@ func (s *Service) deleteApiKey(targetKey string) error {
 
 	// Remove from cache
 	s.lcs.apiKeys.Delete(targetKey)
+
+	// Remove from usage map
+	s.lcs.apiKeyUsageLock.Lock()
+	delete(s.lcs.apiKeyUsage, targetKey)
+	s.lcs.apiKeyUsageLock.Unlock()
 
 	if s.fsm.IsLeader() {
 		// Key that validateToken specifically checks in FSM
@@ -271,4 +297,89 @@ func (s *Service) deleteApiKey(targetKey string) error {
 		}
 		return nil
 	}
+}
+
+// getAllApiKeyDetails retrieves all configured API keys along with their associated KeyLimits.
+func (s *Service) getAllApiKeyDetails() ([]ApiKeyDetails, error) {
+	// Step 1: Get all unique API key strings.
+	// API keys are stored as values for FSM keys of the pattern: RootPrefix + ":api_key:" + EntityName.
+	iterationPrefix := fmt.Sprintf("%s:api_key:", s.cfg.RootPrefix)
+
+	rawApiKeys, err := s.fsm.Iterate(iterationPrefix, 0, 0) // Offset 0, Limit 0 (no limit)
+	if err != nil {
+		s.logger.Error("Failed to list API keys from FSM using Iterate for getAllApiKeyDetails", "prefix", iterationPrefix, "error", err)
+		return nil, fmt.Errorf("failed to retrieve API keys from FSM: %w", err)
+	}
+
+	uniqueApiKeys := make(map[string]struct{})
+	for _, apiKey := range rawApiKeys {
+		if apiKey != "" {
+			uniqueApiKeys[apiKey] = struct{}{}
+		}
+	}
+
+	apiKeyDetailsList := make([]ApiKeyDetails, 0, len(uniqueApiKeys))
+
+	for apiKey := range uniqueApiKeys {
+		fsmLimitsKey := fmt.Sprintf("%s:%s", s.cfg.RootPrefix, apiKey)
+		limitsValueString, errGet := s.fsm.Get(fsmLimitsKey)
+		if errGet != nil {
+			s.logger.Error(
+				"Failed to get KeyLimits from FSM for API key",
+				"apiKey", apiKey,
+				"fsmLimitsKey", fsmLimitsKey,
+				"error", errGet,
+			)
+			continue
+		}
+
+		if limitsValueString == "" {
+			s.logger.Warn(
+				"KeyLimits value is empty in FSM for API key",
+				"apiKey", apiKey,
+				"fsmLimitsKey", fsmLimitsKey,
+			)
+			continue
+		}
+
+		var limits models.KeyLimits
+		if errUnmarshal := json.Unmarshal([]byte(limitsValueString), &limits); errUnmarshal != nil {
+			s.logger.Error(
+				"Failed to unmarshal KeyLimits for API key",
+				"apiKey", apiKey,
+				"fsmLimitsKey", fsmLimitsKey,
+				"error", errUnmarshal,
+			)
+			continue
+		}
+
+		apiKeyDetailsList = append(apiKeyDetailsList, ApiKeyDetails{
+			ApiKey:    apiKey,
+			KeyLimits: &limits,
+		})
+	}
+
+	// Ensure root API key and its limits are included
+	if s.authToken != "" {
+		foundRootKeyInList := false
+		for i, detail := range apiKeyDetailsList {
+			if detail.ApiKey == s.authToken {
+				s.logger.Info("Root API key found in list from FSM scan; ensuring its limits are set to rootKeyLimits.", "apiKey", s.authToken)
+				apiKeyDetailsList[i].KeyLimits = &rootKeyLimits // Ensure canonical root limits
+				foundRootKeyInList = true
+				break
+			}
+		}
+		if !foundRootKeyInList {
+			s.logger.Info("Adding root API key and its limits to the API details list.", "apiKey", s.authToken)
+			apiKeyDetailsList = append(apiKeyDetailsList, ApiKeyDetails{
+				ApiKey:    s.authToken,
+				KeyLimits: &rootKeyLimits, // Use the global rootKeyLimits
+			})
+		}
+	} else {
+		s.logger.Warn("s.authToken is empty; cannot add root API key details.")
+	}
+
+	return apiKeyDetailsList, nil
 }
