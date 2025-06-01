@@ -3,6 +3,7 @@ package runtime
 import (
 	"time"
 
+	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/models"
 )
 
@@ -85,4 +86,12 @@ func (r *Runtime) RT_DeleteCache(key string) error {
 
 func (r *Runtime) RT_PublishEvent(topic string, data any) error {
 	return r.rtClients["publishEvent"].PublishEvent(topic, data)
+}
+
+// ------------------------------------------------------------
+// PluginRuntimeIF implementation
+// ------------------------------------------------------------
+
+func (r *Runtime) RT_GetClusterConfig() *config.Cluster {
+	return r.clusterCfg
 }

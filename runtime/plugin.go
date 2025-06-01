@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/models"
 )
 
@@ -36,6 +37,7 @@ type EventStoreIF interface {
 // implementation to interact with the runtime.
 type PluginRuntimeIF interface {
 	RT_IsRunning() bool
+	RT_GetClusterConfig() *config.Cluster
 
 	ValueStoreIF
 	ObjectStoreIF
