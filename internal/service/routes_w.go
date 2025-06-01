@@ -52,28 +52,9 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 */
 
 func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.WriteLimiter
-	if limiter == nil {
-		s.logger.Error("WriteLimiter is nil for API key in usage map for setHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -102,11 +83,6 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(p.Value) > td.KeyLimits.MaxValueSizeBytes {
-		http.Error(w, "Value is too large", http.StatusBadRequest)
-		return
-	}
-
 	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", td.UUID, p.Key)
 
@@ -130,28 +106,9 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.WriteLimiter
-	if limiter == nil {
-		s.logger.Error("WriteLimiter is nil for API key in usage map for deleteHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -205,28 +162,9 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 			  to root-only operations
 
 	*/
-	td, ok := s.validateToken(r, true)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.WriteLimiter
-	if limiter == nil {
-		s.logger.Error("WriteLimiter is nil for API key in usage map for setCacheHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -285,28 +223,9 @@ func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 			  to root-only operations
 
 	*/
-	td, ok := s.validateToken(r, true)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.WriteLimiter
-	if limiter == nil {
-		s.logger.Error("WriteLimiter is nil for API key in usage map for deleteCacheHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -359,28 +278,9 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.EventLimiter
-	if limiter == nil {
-		s.logger.Error("EventLimiter is nil for API key in usage map for eventsHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -438,28 +338,9 @@ func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 
 	*/
-	td, ok := s.validateToken(r, true)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.WriteLimiter
-	if limiter == nil {
-		s.logger.Error("WriteLimiter is nil for API key in usage map for setObjectHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -523,28 +404,9 @@ func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 // root only
 func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r, true)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.WriteLimiter
-	if limiter == nil {
-		s.logger.Error("WriteLimiter is nil for API key in usage map for deleteObjectHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -581,28 +443,9 @@ func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 // Define request structures for batch operations
 
 func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.WriteLimiter
-	if limiter == nil {
-		s.logger.Error("WriteLimiter is nil for API key in usage map for batchSetHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -633,11 +476,6 @@ func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Items) > td.KeyLimits.MaxBatchSize {
-		http.Error(w, fmt.Sprintf("Too many items in batch set request. Max allowed: %d", td.KeyLimits.MaxBatchSize), http.StatusBadRequest)
-		return
-	}
-
 	if len(req.Items) == 0 {
 		http.Error(w, "No items in batch set request", http.StatusBadRequest)
 		return
@@ -656,10 +494,6 @@ func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		prefixedKey := fmt.Sprintf("%s:%s", td.UUID, item.Key)
-		if len(item.Value) > td.KeyLimits.MaxValueSizeBytes {
-			http.Error(w, fmt.Sprintf("Value for key '%s' (from item at index %d) is too large", item.Key, i), http.StatusBadRequest)
-			return
-		}
 		if sizeTooLargeForStorage(prefixedKey) {
 			http.Error(w, fmt.Sprintf("Prefixed key '%s' (from item at index %d) is too large", prefixedKey, i), http.StatusBadRequest)
 			return
@@ -680,28 +514,9 @@ func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.WriteLimiter
-	if limiter == nil {
-		s.logger.Error("WriteLimiter is nil for API key in usage map for batchDeleteHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -729,11 +544,6 @@ func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		s.logger.Error("Invalid JSON payload for batch delete request", "error", err)
 		http.Error(w, "Invalid JSON payload for batch delete: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if len(req.Keys) > td.KeyLimits.MaxBatchSize {
-		http.Error(w, fmt.Sprintf("Too many keys in batch delete request. Max allowed: %d", td.KeyLimits.MaxBatchSize), http.StatusBadRequest)
 		return
 	}
 

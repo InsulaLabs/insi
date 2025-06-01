@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -134,16 +133,10 @@ func main() {
 	// Default client (usually to DefaultLeader)
 	// For 'join', a specific client will be created.
 	var cli *client.Client
-	if command != "join" && command != "api" { // 'join' and 'api verify' command handles its client creation specifically
-		cli, err = getClient(clusterCfg, targetNode) // Use targetNode from flag
-		if err != nil {
-			logger.Error("Failed to initialize default API client", "error", err)
-			os.Exit(1)
-		}
-	} else if command == "api" && len(args) > 1 && args[1] != "verify" { // For api add/delete etc.
+	if command != "join" { // 'join' command handles its client creation specifically
 		cli, err = getClient(clusterCfg, targetNode)
 		if err != nil {
-			logger.Error("Failed to initialize default API client for API operation", "error", err)
+			logger.Error("Failed to initialize default API client", "error", err)
 			os.Exit(1)
 		}
 	}
@@ -161,8 +154,6 @@ func main() {
 		handleCache(cli, cmdArgs)
 	case "join":
 		handleJoin(cmdArgs) // Special handling as it targets a specific leader
-	case "api":
-		handleApi(cli, cmdArgs)
 	case "ping":
 		handlePing(cli, cmdArgs)
 	case "publish":
@@ -197,9 +188,6 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("join"), color.CyanString("<leaderNodeID>"), color.CyanString("<followerNodeID>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<entity_name>"), color.CyanString("[limits_filepath.json]"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<api_key_value>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<api_key_value>"))
 	fmt.Fprintf(os.Stderr, "  %s\n", color.GreenString("ping"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("publish"), color.CyanString("<topic>"), color.CyanString("<data>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("subscribe"), color.CyanString("<topic>"))
@@ -500,157 +488,6 @@ func handleJoin(args []string) {
 	}
 	logger.Info("Join successful", "leader_node", color.CyanString(leaderNodeID), "follower_node", color.CyanString(followerNodeID))
 	color.HiGreen("OK")
-}
-
-func handleApi(c *client.Client, args []string) {
-	if len(args) < 1 {
-		logger.Error("api: requires <sub-command> [args...]")
-		printUsage()
-		os.Exit(1)
-	}
-	subCommand := args[0]
-	subArgs := args[1:]
-
-	switch subCommand {
-	case "add":
-		handleAddApiKey(c, subArgs)
-	case "delete":
-		handleDeleteApiKey(c, subArgs)
-	case "verify":
-		handleVerifyApiKey(clusterCfg, subArgs)
-	default:
-		logger.Error("api: unknown sub-command", "sub_command", subCommand)
-		printUsage()
-		os.Exit(1)
-	}
-}
-
-func handleAddApiKey(c *client.Client, args []string) {
-	if len(args) < 1 || len(args) > 2 {
-		logger.Error("api add: requires <entity_name> [limits_filepath.json]")
-		printUsage()
-		os.Exit(1)
-	}
-	entityName := args[0]
-	var limitsJSON string
-	var err error
-
-	if len(args) == 2 {
-		limitsFilePath := args[1]
-		limitsBytes, err := os.ReadFile(limitsFilePath)
-		if err != nil {
-			logger.Error("api add: failed to read limits file", "filepath", limitsFilePath, "error", err)
-			fmt.Fprintf(os.Stderr, "%s reading limits file %s: %v\n", color.RedString("Error:"), color.CyanString(limitsFilePath), err)
-			os.Exit(1)
-		}
-		limitsJSON = string(limitsBytes)
-	}
-
-	apiKey, err := c.NewAPIKey(entityName, limitsJSON)
-	if err != nil {
-		logger.Error("API key creation failed", "entity", entityName, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	logger.Info("API key created successfully", "entity", entityName)
-	fmt.Printf("API Key: %s\n", color.CyanString(apiKey))
-}
-
-func handleDeleteApiKey(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("api delete: requires <api_key_value>")
-		printUsage()
-		os.Exit(1)
-	}
-	apiKey := args[0]
-	err := c.DeleteAPIKey(apiKey)
-	if err != nil {
-		logger.Error("API key deletion failed", "key", apiKey, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	// logger.Info("API key deleted successfully", "key", apiKey) // Redundant
-	color.HiGreen("OK")
-}
-
-func handleVerifyApiKey(cfg *config.Cluster, args []string) {
-	if len(args) != 1 {
-		logger.Error("api verify: requires <api_key_value>")
-		printUsage()
-		os.Exit(1)
-	}
-	apiKeyToVerify := args[0]
-
-	// Create a new client instance specifically for this verification,
-	// using the provided API key as the authToken.
-	nodeToConnect := targetNode // Use the global targetNode flag first
-	if nodeToConnect == "" {    // If --target was not specified
-		if cfg.DefaultLeader == "" {
-			logger.Error("Cannot verify API key: --target flag not set and DefaultLeader not set in config and no specific node given for verification.")
-			fmt.Fprintf(os.Stderr, "%s Cannot verify API key. No target node specified via --target and no DefaultLeader in config.\n", color.RedString("Error:"))
-			os.Exit(1)
-		}
-		nodeToConnect = cfg.DefaultLeader
-		logger.Info("No --target specified for API key verification, using DefaultLeader", "node_id", color.CyanString(nodeToConnect))
-	} else {
-		logger.Info("Using --target for API key verification", "node_id", color.CyanString(nodeToConnect))
-	}
-
-	nodeDetails, ok := cfg.Nodes[nodeToConnect]
-	if !ok {
-		logger.Error("Cannot verify API key: Target node details not found in configuration.", "node_id", nodeToConnect)
-		fmt.Fprintf(os.Stderr, "%s Node ID '%s' (from --target or DefaultLeader) not found in configuration.\n", color.RedString("Error:"), color.CyanString(nodeToConnect))
-		os.Exit(1)
-	}
-
-	verificationClientLogger := logger.WithGroup("api-verify-client")
-	verificationClient, err := client.NewClient(&client.Config{
-		ConnectionType: client.ConnectionTypeDirect,
-		Endpoints: []client.Endpoint{
-			{
-				HostPort:     nodeDetails.HttpBinding,
-				ClientDomain: nodeDetails.ClientDomain,
-			},
-		},
-		ApiKey:     apiKeyToVerify,
-		SkipVerify: cfg.ClientSkipVerify,
-		Logger:     verificationClientLogger,
-	})
-	if err != nil {
-		// This typically means the apiKeyToVerify was not in the correct format (e.g. hex encoded sha256)
-		// or hostPort was invalid, NewClient would catch empty apiKeyToVerify but good to be mindful.
-		logger.Error("Failed to create client for API key verification", "error", err)
-		fmt.Fprintf(os.Stderr, "%s Could not initialize client for verification. Ensure API key is valid and server is reachable.\n", color.RedString("Error:"))
-		os.Exit(1)
-	}
-
-	resp, err := verificationClient.Ping()
-	if err != nil {
-		errString := err.Error()
-		// The client.ErrAPIKeyNotFound path would be hit if the server specifically reported API_KEY_NOT_FOUND.
-		// Currently, authedPing sends AUTHENTICATION_FAILED for general auth issues from validateToken.
-		if errors.Is(err, client.ErrAPIKeyNotFound) {
-			logger.Error("API key verification failed: Key specifically reported as not found by server", "key", apiKeyToVerify)
-			fmt.Fprintf(os.Stderr, "API Key '%s' was %s (as reported by server).\n", color.CyanString(apiKeyToVerify), color.RedString("not found"))
-		} else if strings.Contains(errString, "AUTHENTICATION_FAILED") || strings.Contains(errString, "status 401") {
-			// This is the practical path for a 401 from ping with the current server setup.
-			// User wants this to imply "key doesn't exist or is invalid".
-			logger.Warn("API key verification failed: Authentication error. Assuming key not found or invalid.", "key", apiKeyToVerify, "server_response", errString)
-			fmt.Fprintf(os.Stderr, "API Key '%s' %s.\n", color.CyanString(apiKeyToVerify), color.RedString("was not found or is invalid"))
-		} else {
-			// This handles other errors like network issues, etc.
-			logger.Error("API key verification ping failed: Network or other error", "key", apiKeyToVerify, "error", err)
-			fmt.Fprintf(os.Stderr, "Error during API key verification for '%s': %s. The key may be invalid or the server unreachable.\n", color.CyanString(apiKeyToVerify), err)
-		}
-		os.Exit(1)
-	}
-
-	logger.Info("API key verification ping successful", "key", apiKeyToVerify)
-	fmt.Printf("API Key '%s' IS %s.\n", color.CyanString(apiKeyToVerify), color.HiGreenString("valid"))
-	fmt.Println("Ping Response from server:")
-	for k, v := range resp {
-		fmt.Printf("  %s: %s\n", color.CyanString(k), v)
-	}
 }
 
 func handlePing(c *client.Client, args []string) {

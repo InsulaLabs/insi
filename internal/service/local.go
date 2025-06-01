@@ -31,7 +31,7 @@ func (s *Service) etokNewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

@@ -16,7 +16,6 @@ import (
 	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/gorilla/websocket"
-	"github.com/jellydator/ttlcache/v3"
 	"golang.org/x/time/rate"
 )
 
@@ -31,22 +30,6 @@ const (
 	we actually hit the db.
 */
 
-type apiKeyUsageData struct {
-	ReadLimiter  *rate.Limiter
-	WriteLimiter *rate.Limiter
-	EventLimiter *rate.Limiter
-
-	ActiveSubsOnNode int // current number of subscribers on this node for the api key events
-}
-
-type localCaches struct {
-	apiKeys *ttlcache.Cache[string, string]
-
-	// Map each API KEY that the system has to a usage data struct
-	apiKeyUsage     map[string]apiKeyUsageData
-	apiKeyUsageLock sync.RWMutex // for when new api keys are created
-}
-
 type Service struct {
 	appCtx    context.Context
 	cfg       *config.Cluster
@@ -60,7 +43,6 @@ type Service struct {
 
 	startedAt time.Time
 
-	lcs          *localCaches
 	rateLimiters map[string]*rate.Limiter
 
 	securityManager managers.SecurityManager
@@ -114,11 +96,6 @@ func NewService(
 		return nil, err
 	}
 
-	caches, err := initLocalCaches(&clusterCfg.Cache)
-	if err != nil {
-		return nil, err
-	}
-
 	authToken := rootApiKey
 
 	// Initialize rate limiters
@@ -166,7 +143,6 @@ func NewService(
 		tkv:              tkv,
 		fsm:              fsm,
 		authToken:        authToken,
-		lcs:              caches,
 		rateLimiters:     rateLimiters,
 		mux:              http.NewServeMux(),
 		securityManager:  securityManager,
@@ -250,8 +226,6 @@ func (s *Service) Run() {
 
 	// System handlers
 	s.mux.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
-	s.mux.Handle("/db/api/v1/new-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.newApiKeyHandler), "system"))
-	s.mux.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
 	// Object store handlers
@@ -279,19 +253,6 @@ func (s *Service) Run() {
 	}()
 
 	s.startedAt = time.Now()
-
-	knownApiKeys, err := s.getAllApiKeyDetails()
-	if err != nil {
-		s.logger.Error("Failed to get known api keys", "error", err)
-	}
-	for _, apiKey := range knownApiKeys {
-		s.lcs.apiKeyUsage[apiKey.ApiKey] = apiKeyUsageData{
-			ReadLimiter:      rate.NewLimiter(rate.Limit(apiKey.KeyLimits.ReadsPerSecond), apiKey.KeyLimits.ReadsPerSecond),
-			WriteLimiter:     rate.NewLimiter(rate.Limit(apiKey.KeyLimits.WritesPerSecond), apiKey.KeyLimits.WritesPerSecond),
-			EventLimiter:     rate.NewLimiter(rate.Limit(apiKey.KeyLimits.EventsPerSecond), apiKey.KeyLimits.EventsPerSecond),
-			ActiveSubsOnNode: 0,
-		}
-	}
 
 	if s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != "" {
 		s.logger.Info("Starting HTTPS server", "cert", s.cfg.TLS.Cert, "key", s.cfg.TLS.Key)

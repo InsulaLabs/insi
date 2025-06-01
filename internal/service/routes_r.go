@@ -11,28 +11,9 @@ import (
 
 func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.ReadLimiter
-	if limiter == nil {
-		s.logger.Error("ReadLimiter is nil for API key in usage map for getHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -68,28 +49,9 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.ReadLimiter
-	if limiter == nil {
-		s.logger.Error("ReadLimiter is nil for API key in usage map for iterateKeysByPrefixHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -146,28 +108,9 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 
 func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.ReadLimiter
-	if limiter == nil {
-		s.logger.Error("ReadLimiter is nil for API key in usage map for getCacheHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -202,28 +145,9 @@ func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 */
 
 func (s *Service) getObjectHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.ReadLimiter
-	if limiter == nil {
-		s.logger.Error("ReadLimiter is nil for API key in usage map for getObjectHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -256,28 +180,9 @@ func (s *Service) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) getObjectListHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Rate limit the request per api key
-	s.lcs.apiKeyUsageLock.RLock()
-	usageData := s.lcs.apiKeyUsage[td.ApiKey]
-	s.lcs.apiKeyUsageLock.RUnlock()
-
-	limiter := usageData.ReadLimiter
-	if limiter == nil {
-		s.logger.Error("ReadLimiter is nil for API key in usage map for getObjectListHandler",
-			"apiKey", td.ApiKey,
-			"help", "This implies an issue with limiter initialization for a validated key.")
-		http.Error(w, "Internal server error: rate limiter not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if !limiter.Allow() {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 

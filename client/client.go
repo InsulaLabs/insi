@@ -444,43 +444,6 @@ func (c *Client) Join(followerID, followerAddr string) error {
 	return c.doRequest(http.MethodGet, "db/api/v1/join", params, nil, nil)
 }
 
-// NewAPIKey requests the server to generate a new API key for the given entity.
-// It now accepts an optional limitsJSON string to specify API key limits.
-func (c *Client) NewAPIKey(entityName string, limitsJSON string) (string, error) {
-	if entityName == "" {
-		return "", fmt.Errorf("entityName cannot be empty")
-	}
-	params := map[string]string{"entity": entityName}
-	if limitsJSON != "" {
-		params["limits"] = limitsJSON
-	}
-	var response struct {
-		APIKey string `json:"apiKey"`
-	}
-	err := c.doRequest(http.MethodGet, "db/api/v1/new-api-key", params, nil, &response)
-	if err != nil {
-		return "", err
-	}
-	return response.APIKey, nil
-}
-
-// DeleteAPIKey requests the server to delete an existing API key.
-func (c *Client) DeleteAPIKey(apiKey string) error {
-	if apiKey == "" {
-		return fmt.Errorf("apiKey cannot be empty")
-	}
-	params := map[string]string{"key": apiKey}
-	err := c.doRequest(http.MethodGet, "db/api/v1/delete-api-key", params, nil, nil)
-	if err != nil {
-		if strings.Contains(err.Error(), "404") {
-			// If the key is not found, we return nil
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
 // Ping sends a ping request to the server and returns the response.
 func (c *Client) Ping() (map[string]string, error) {
 	var response map[string]string

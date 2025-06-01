@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/InsulaLabs/insi/models"
 )
 
 const apiKeyIdentifier = "insi_"
 
 func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r, false)
+	td, ok := s.validateToken(r)
 	if !ok {
 		s.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
@@ -49,7 +47,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only admin "root" key can tell nodes to join the cluster
-	td, ok := s.validateToken(r, true)
+	td, ok := s.validateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -73,70 +71,6 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	if err := s.fsm.Join(followerId, followerAddr); err != nil {
 		s.logger.Error("Failed to join follower", "followerId", followerId, "followerAddr", followerAddr, "error", err)
 		http.Error(w, fmt.Sprintf("Failed to join follower: %s", err), http.StatusInternalServerError)
-		return
-	}
-}
-
-func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
-	s.logger.Debug("Enter newApiKeyHandler", "method", r.Method, "url", r.URL.String())
-	td, ok := s.validateToken(r, true)
-	if !ok || td.Entity != "root" {
-		s.logger.Warn("Unauthorized attempt to create API key", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	entity := r.URL.Query().Get("entity")
-	if entity == "" {
-		s.logger.Warn("Missing entity parameter in newApiKeyHandler", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Missing entity parameter", http.StatusBadRequest)
-		return
-	}
-
-	requestedLimits := r.URL.Query().Get("limits")
-	var limits *models.KeyLimits
-	if requestedLimits != "" {
-		limits = &models.KeyLimits{}
-		err := json.Unmarshal([]byte(requestedLimits), limits)
-		if err != nil {
-			s.logger.Error("Failed to unmarshal limits", "error", err)
-		}
-	}
-
-	s.logger.Info("Attempting to create new API key for entity", "entity", entity, "requested_by_root", true)
-	key, err := s.newApiKey(entity, limits)
-	if err != nil {
-		s.logger.Error("Failed to generate or store new API key", "entity", entity, "error", err)
-		http.Error(w, fmt.Sprintf("Failed to generate key: %s", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	// respond with the json key
-	if err := json.NewEncoder(w).Encode(map[string]string{"apiKey": key}); err != nil {
-		s.logger.Error("Failed to encode/write new API key response", "entity", entity, "error", err)
-		// Don't try to write another http.Error here as headers might already be sent
-		return
-	}
-	s.logger.Info("Successfully created and returned new API key", "entity", entity, "key_prefix", key[:4]+"...")
-}
-
-func (s *Service) deleteApiKeyHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r, true)
-	if !ok || td.Entity != "root" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	targetKey := r.URL.Query().Get("key")
-	if targetKey == "" {
-		http.Error(w, "Missing key parameter", http.StatusBadRequest)
-		return
-	}
-
-	err := s.deleteApiKey(targetKey)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to delete key: %s", err), http.StatusInternalServerError)
 		return
 	}
 }
