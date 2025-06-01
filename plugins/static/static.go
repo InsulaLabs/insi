@@ -17,8 +17,6 @@ then we can serve directly from "/static" automatically, and serve out the stati
 files from the dir handed to the plugin on creation.
 
 ALlowing the server to server static files without modifying the internals
-
-
 */
 
 type StaticPlugin struct {
@@ -53,45 +51,10 @@ func (p *StaticPlugin) Init(prif runtime.PluginRuntimeIF) *runtime.PluginImplErr
 	if err != nil {
 		return &runtime.PluginImplError{Err: fmt.Errorf("failed to mount static files: %w", err)}
 	}
-
 	return nil
 }
 
 func (p *StaticPlugin) GetRoutes() []runtime.PluginRoute {
-	return []runtime.PluginRoute{
-		/*
-			IMPORTANT:
-				DO NOT PREFIX THE PATH WITH TEH NAME OF THE PLUGIN
-
-				THIS IS OF PARAMOUNT IMPORTANCE AS THE ROUTES ARE AUTOMATICALLY MOUNTED
-				TO THE SERVICE PREFIXED BY THE NAME OF THE PLUGIN.
-				ADDING "/service-name" HERE WILL CASUSE "/service-name/service-name/uptime"
-				TO BE MOUNTED.
-		*/
-		{Path: "uptime", Handler: http.HandlerFunc(p.uptimeHandler), Limit: 10, Burst: 10},
-	}
-}
-
-// / -------- routes --------
-func (p *StaticPlugin) uptimeHandler(w http.ResponseWriter, r *http.Request) {
-	now := time.Now()
-	uptime := now.Sub(p.startedAt)
-
-	// Set cache busting headers
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
-	w.Header().Set("Content-Type", "application/json")
-
-	w.Write(
-		[]byte(
-			fmt.Sprintf(
-				`{"status":"OK","startedAt":"%s","uptime":"%s"}`,
-				p.startedAt.Format(time.RFC3339),
-				uptime.String(),
-			),
-		),
-	)
-	w.Write([]byte("\n"))
-	w.WriteHeader(http.StatusOK)
+	// No routes for static plugin
+	return []runtime.PluginRoute{}
 }

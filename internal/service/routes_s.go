@@ -10,7 +10,7 @@ import (
 const apiKeyIdentifier = "insi_"
 
 func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		s.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
@@ -47,7 +47,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only admin "root" key can tell nodes to join the cluster
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

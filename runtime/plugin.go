@@ -35,6 +35,7 @@ type EventStoreIF interface {
 
 type WebServerIF interface {
 	RT_MountStatic(caller Plugin, fs http.Handler) error
+	RT_ValidateAuthToken(req *http.Request) (models.TokenData, bool)
 }
 
 // The restricted interfaces that permit the plugin

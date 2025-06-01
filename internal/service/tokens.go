@@ -2,26 +2,21 @@ package service
 
 import (
 	"net/http"
+
+	"github.com/InsulaLabs/insi/models"
 )
 
-type TokenData struct {
-	Entity string `json:"entity"`
-	UUID   string `json:"uuid"`
-	ApiKey string `json:"api_key"`
-}
-
 // Returns the entity name (as encoded by user) and then the uuid generated unique to the key
-func (s *Service) validateToken(r *http.Request) (TokenData, bool) {
+func (s *Service) ValidateToken(r *http.Request) (models.TokenData, bool) {
 
 	authHeader := r.Header.Get("Authorization")
 
 	if authHeader == s.authToken {
-		return TokenData{
+		return models.TokenData{
 			Entity: EntityRoot,
 			UUID:   s.cfg.RootPrefix,
-			ApiKey: authHeader,
 		}, true
 	}
 
-	return TokenData{}, false
+	return models.TokenData{}, false
 }

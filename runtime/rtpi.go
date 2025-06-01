@@ -110,3 +110,7 @@ func (r *Runtime) RT_MountStatic(caller Plugin, fs http.Handler) error {
 	strippedHandler := http.StripPrefix(mountPathPrefix, fs)
 	return r.service.AddHandler(mountPathPrefix, strippedHandler)
 }
+
+func (r *Runtime) RT_ValidateAuthToken(req *http.Request) (models.TokenData, bool) {
+	return r.service.ValidateToken(req)
+}

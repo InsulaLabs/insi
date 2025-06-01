@@ -87,3 +87,8 @@ type BatchSetRequest struct {
 type BatchDeleteRequest struct {
 	Keys []string `json:"keys"`
 }
+
+type TokenData struct {
+	Entity string `json:"entity"`
+	UUID   string `json:"uuid"`
+}

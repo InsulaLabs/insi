@@ -52,7 +52,7 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 */
 
 func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -106,7 +106,7 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -162,7 +162,7 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 			  to root-only operations
 
 	*/
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -223,7 +223,7 @@ func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 			  to root-only operations
 
 	*/
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -278,7 +278,7 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -338,7 +338,7 @@ func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 
 	*/
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -404,7 +404,7 @@ func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 // root only
 func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -443,7 +443,7 @@ func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 // Define request structures for batch operations
 
 func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -514,7 +514,7 @@ func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

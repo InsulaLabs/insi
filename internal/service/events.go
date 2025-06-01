@@ -23,8 +23,6 @@ type eventSession struct {
 	conn *websocket.Conn
 	// The topic this session is subscribed to.
 	topic string
-	// The API key of the authenticated user for this session.
-	apiKey string
 	// Buffered channel of outbound messages.
 	send chan []byte
 	// Service pointer to access logger, etc.
@@ -88,7 +86,7 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	td, ok := s.validateToken(r)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
@@ -125,7 +123,6 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 	session := &eventSession{
 		conn:    conn,
 		topic:   prefixedTopic,
-		apiKey:  td.ApiKey,              // Store the user's API key
 		send:    make(chan []byte, 256), // Buffered channel
 		service: s,
 	}
@@ -160,7 +157,7 @@ func (s *Service) registerSubscriber(session *eventSession) {
 	}
 	s.eventSubscribers[session.topic][session] = true // Store the session itself
 
-	s.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String(), "apiKey", session.apiKey)
+	s.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 }
 
 func (s *Service) unregisterSubscriber(session *eventSession) {
