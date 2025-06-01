@@ -13,6 +13,9 @@ import (
 	"sync"
 	"syscall"
 
+	"crypto/sha256"
+	"encoding/hex"
+
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/internal/service"
@@ -34,6 +37,8 @@ type Runtime struct {
 	rawArgs    []string // To allow flag parsing within New
 	service    *service.Service
 
+	rootApiKey string // Root API key generated from instance secret
+
 	rtClients map[string]*client.Client
 
 	plugins map[string]Plugin
@@ -47,8 +52,9 @@ var _ PluginRuntimeIF = &Runtime{}
 func New(args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r := &Runtime{
-		rawArgs: args,
-		plugins: make(map[string]Plugin),
+		rawArgs:   args,
+		plugins:   make(map[string]Plugin),
+		rtClients: make(map[string]*client.Client),
 	}
 
 	r.appCtx, r.appCancel = context.WithCancel(context.Background())
@@ -112,6 +118,15 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 		return nil, fmt.Errorf("failed to load configuration from %s: %w", r.configFile, err)
 	}
 
+	// Generate the root API key from the instance secret
+	// This key is used by runtime's internal clients and passed to services.
+	if r.clusterCfg.InstanceSecret == "" {
+		return nil, fmt.Errorf("InstanceSecret is not defined in the cluster configuration, cannot generate root API key")
+	}
+	h := sha256.New()
+	h.Write([]byte(r.clusterCfg.InstanceSecret))
+	r.rootApiKey = hex.EncodeToString(h.Sum(nil))
+
 	// Convert the cluster config into a list of endpoints
 	// for the client to use when utilizing a client for the backend
 	// of a runtime request
@@ -141,7 +156,7 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 		rtClient, err := client.NewClient(&client.Config{
 			ConnectionType: client.ConnectionTypeRandom,
 			Logger:         r.logger.With("service", "insiClient").With("useCase", useCase),
-			ApiKey:         r.service.GetRootClientKey(),
+			ApiKey:         r.rootApiKey, // Use the runtime's generated root API key
 			Endpoints:      getEndpoints(),
 		})
 		if err != nil {
@@ -268,6 +283,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		kvm,
 		r.clusterCfg,
 		nodeId,
+		r.rootApiKey, // Pass the runtime's root API key to the service
 	)
 	if err != nil {
 		nodeLogger.Error("Failed to create service", "error", err)

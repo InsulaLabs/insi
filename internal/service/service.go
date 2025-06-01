@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -76,6 +74,7 @@ func NewService(
 	tkv tkv.TKV,
 	clusterCfg *config.Cluster,
 	asNodeId string,
+	rootApiKey string,
 ) (*Service, error) {
 
 	// This eventCh is for the FSM to signal the service.
@@ -108,9 +107,7 @@ func NewService(
 		return nil, err
 	}
 
-	secHash := sha256.New()
-	secHash.Write([]byte(clusterCfg.InstanceSecret))
-	authToken := hex.EncodeToString(secHash.Sum(nil))
+	authToken := rootApiKey
 
 	// Initialize rate limiters
 	rateLimiters := make(map[string]*rate.Limiter)
@@ -149,19 +146,18 @@ func NewService(
 	})
 
 	service := &Service{
-		appCtx:          ctx,
-		cfg:             clusterCfg,
-		nodeCfg:         nodeSpecificCfg,
-		logger:          logger,
-		identity:        identity,
-		tkv:             tkv,
-		fsm:             fsm,
-		authToken:       authToken,
-		lcs:             caches,
-		rateLimiters:    rateLimiters,
-		mux:             http.NewServeMux(),
-		securityManager: securityManager,
-
+		appCtx:           ctx,
+		cfg:              clusterCfg,
+		nodeCfg:          nodeSpecificCfg,
+		logger:           logger,
+		identity:         identity,
+		tkv:              tkv,
+		fsm:              fsm,
+		authToken:        authToken,
+		lcs:              caches,
+		rateLimiters:     rateLimiters,
+		mux:              http.NewServeMux(),
+		securityManager:  securityManager,
 		eventSubscribers: make(map[string]map[*eventSession]bool),
 		wsUpgrader: websocket.Upgrader{
 			ReadBufferSize:  clusterCfg.Sessions.WebSocketReadBufferSize,
