@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -58,6 +59,14 @@ type Service struct {
 
 func (s *Service) GetRootClientKey() string {
 	return s.authToken
+}
+
+func (s *Service) AddHandler(path string, handler http.Handler) error {
+	if !s.startedAt.IsZero() {
+		return fmt.Errorf("service already started, cannot add handler after startup")
+	}
+	s.mux.Handle(path, handler)
+	return nil
 }
 
 func NewService(

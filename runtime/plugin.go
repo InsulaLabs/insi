@@ -33,6 +33,10 @@ type EventStoreIF interface {
 	RT_PublishEvent(topic string, data any) error
 }
 
+type WebServerIF interface {
+	RT_MountStatic(caller Plugin, fs http.Handler) error
+}
+
 // The restricted interfaces that permit the plugin
 // implementation to interact with the runtime.
 type PluginRuntimeIF interface {
@@ -43,6 +47,7 @@ type PluginRuntimeIF interface {
 	ObjectStoreIF
 	CacheStoreIF
 	EventStoreIF
+	WebServerIF
 }
 
 /*

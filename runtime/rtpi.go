@@ -1,6 +1,9 @@
 package runtime
 
 import (
+	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/InsulaLabs/insi/config"
@@ -94,4 +97,16 @@ func (r *Runtime) RT_PublishEvent(topic string, data any) error {
 
 func (r *Runtime) RT_GetClusterConfig() *config.Cluster {
 	return r.clusterCfg
+}
+
+// A Special case command made for static plugin (no better way - only exception)
+func (r *Runtime) RT_MountStatic(caller Plugin, fs http.Handler) error {
+	pluginName := strings.Trim(caller.GetName(), "/")
+	if pluginName == "" {
+		return fmt.Errorf("plugin name cannot be empty for mounting static files")
+	}
+	mountPathPrefix := fmt.Sprintf("/%s/", pluginName)
+
+	strippedHandler := http.StripPrefix(mountPathPrefix, fs)
+	return r.service.AddHandler(mountPathPrefix, strippedHandler)
 }
