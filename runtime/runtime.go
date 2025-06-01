@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/internal/service"
 	"github.com/InsulaLabs/insi/internal/tkv"
@@ -31,6 +32,9 @@ type Runtime struct {
 	asNodeId   string
 	hostMode   bool
 	rawArgs    []string // To allow flag parsing within New
+	service    *service.Service
+
+	rtClients map[string]*client.Client
 
 	plugins map[string]Plugin
 }
@@ -41,6 +45,7 @@ var _ PluginRuntimeIF = &Runtime{}
 // It initializes the application context, sets up signal handling,
 // parses command-line flags, and loads the cluster configuration.
 func New(args []string, defaultConfigFile string) (*Runtime, error) {
+
 	r := &Runtime{
 		rawArgs: args,
 		plugins: make(map[string]Plugin),
@@ -105,6 +110,44 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 	r.clusterCfg, err = config.LoadConfig(r.configFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configuration from %s: %w", r.configFile, err)
+	}
+
+	// Convert the cluster config into a list of endpoints
+	// for the client to use when utilizing a client for the backend
+	// of a runtime request
+	getEndpoints := func() []client.Endpoint {
+		eps := make([]client.Endpoint, 0, len(r.clusterCfg.Nodes))
+		for nodeId, node := range r.clusterCfg.Nodes {
+			ep := client.Endpoint{
+				HostPort:     node.HttpBinding,
+				ClientDomain: node.ClientDomain,
+				Logger:       r.logger.With("service", "insiClient").With("node", nodeId),
+			}
+			eps = append(eps, ep)
+		}
+		return eps
+	}
+
+	/*
+		Create a series of clients for the runtime to isolate operations
+		to single-use clients.
+	*/
+	for _, useCase := range []string{
+		"set", "get", "delete", "iterate",
+		"setObject", "getObject", "deleteObject", "iterateObject", "getObjectList",
+		"setCache", "getCache", "deleteCache",
+		"publishEvent",
+	} {
+		rtClient, err := client.NewClient(&client.Config{
+			ConnectionType: client.ConnectionTypeRandom,
+			Logger:         r.logger.With("service", "insiClient").With("useCase", useCase),
+			ApiKey:         r.service.GetRootClientKey(),
+			Endpoints:      getEndpoints(),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create insi client: %w", err)
+		}
+		r.rtClients[useCase] = rtClient
 	}
 
 	return r, nil
@@ -217,7 +260,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 	defer kvm.Close()
 
-	srvc, err := service.NewService(
+	r.service, err = service.NewService(
 		r.appCtx, // Use the runtime's app context
 		nodeLogger.WithGroup("service"),
 		&nodeCfg,
@@ -261,7 +304,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		)
 
 		for _, route := range plugin.GetRoutes() {
-			srvc.WithRoute(
+			r.service.WithRoute(
 				createRoute(plugin, route),
 				route.Handler,
 				route.Limit,
@@ -276,7 +319,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	// We need to handle the completion of this service within the broader context
 	// of the runtime (e.g., if one node fails, does it affect others in host mode?).
 	// For now, each node runs somewhat independently until the main appCtx is cancelled.
-	srvc.Run()
+	r.service.Run()
 
 	nodeLogger.Info("Node instance shut down gracefully.")
 }
@@ -335,23 +378,4 @@ func (r *Runtime) Wait() {
 func (r *Runtime) Stop() {
 	r.logger.Info("Runtime stop requested.")
 	r.appCancel()
-}
-
-// ------------------------------------------------------------
-// PluginRuntimeIF implementation
-// ------------------------------------------------------------
-
-/*
-
-
-	TODO:
-
-		Now that we have the ability to plugin routes
-
-
-
-*/
-
-func (r *Runtime) IsRunning() bool {
-	return r.appCtx.Err() == nil
 }

@@ -64,6 +64,10 @@ type Service struct {
 	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
 }
 
+func (s *Service) GetRootClientKey() string {
+	return s.authToken
+}
+
 func NewService(
 	ctx context.Context,
 	logger *slog.Logger,

@@ -1,11 +1,46 @@
 package runtime
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+
+	"github.com/InsulaLabs/insi/models"
+)
+
+type ValueStoreIF interface {
+	RT_Set(kvp models.KVPayload) error
+	RT_Get(key string) (string, error)
+	RT_Delete(key string) error
+	RT_Iterate(prefix string, offset int, limit int) ([]string, error)
+}
+
+type ObjectStoreIF interface {
+	RT_SetObject(key string, object []byte) error
+	RT_GetObject(key string) ([]byte, error)
+	RT_DeleteObject(key string) error
+	RT_IterateObject(prefix string, offset int, limit int) ([]string, error)
+	RT_GetObjectList(prefix string, offset int, limit int) ([]string, error)
+}
+
+type CacheStoreIF interface {
+	RT_SetCache(key string, value string, ttl time.Duration) error
+	RT_GetCache(key string) (string, error)
+	RT_DeleteCache(key string) error
+}
+
+type EventStoreIF interface {
+	RT_PublishEvent(topic string, data any) error
+}
 
 // The restricted interfaces that permit the plugin
 // implementation to interact with the runtime.
 type PluginRuntimeIF interface {
-	IsRunning() bool
+	RT_IsRunning() bool
+
+	ValueStoreIF
+	ObjectStoreIF
+	CacheStoreIF
+	EventStoreIF
 }
 
 /*
@@ -57,10 +92,18 @@ to perform runtime operations upon request.
 */
 
 type Plugin interface {
+
+	// Used to mount the plugin to the runtime.
+	// and must be unique to the mounted plugins.
 	GetName() string
 
+	// Inform the plugin that the runtime is about to start
+	// and to be ready to handle requests.
 	Init(prif PluginRuntimeIF) *PluginImplError
 
-	// Routes open to public clients (even web)
+	// Get all of the http routes and their rate limit specifications
+	// for the plugin.
+	// We _could_ allow them to limit themselves but if we force
+	// them to specify we know they will defintely be limited (good.)
 	GetRoutes() []PluginRoute
 }
