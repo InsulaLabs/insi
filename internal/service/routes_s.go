@@ -10,9 +10,15 @@ import (
 const apiKeyIdentifier = "insi_"
 
 func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, _, ok := s.validateToken(r, false) // <----- NOTE: Not root only for system
+	td, ok := s.ValidateToken(r)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		s.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error_type": "AUTHENTICATION_FAILED",
+			"message":    "Authentication failed. Invalid or missing API key.",
+		})
 		return
 	}
 
@@ -21,7 +27,7 @@ func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":        "ok",
-		"entity":        storedRootEntity,
+		"entity":        td.Entity,
 		"node-badge-id": s.identity.GetID(),
 		"leader":        s.fsm.Leader(),
 		"uptime":        uptime,
@@ -41,7 +47,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only admin "root" key can tell nodes to join the cluster
-	entity, _, ok := s.validateToken(r, true)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -49,7 +55,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 
 	// We already enforced that its root, but this will be a sanity check to ensure that
 	// something isn't corrupted or otherwise malicious
-	if entity != EntityRoot {
+	if td.Entity != EntityRoot {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -65,57 +71,6 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	if err := s.fsm.Join(followerId, followerAddr); err != nil {
 		s.logger.Error("Failed to join follower", "followerId", followerId, "followerAddr", followerAddr, "error", err)
 		http.Error(w, fmt.Sprintf("Failed to join follower: %s", err), http.StatusInternalServerError)
-		return
-	}
-}
-
-func (s *Service) newApiKeyHandler(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, _, ok := s.validateToken(r, true)
-	if !ok || storedRootEntity != "root" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	entity := r.URL.Query().Get("entity")
-	if entity == "" {
-		http.Error(w, "Missing entity parameter", http.StatusBadRequest)
-		return
-	}
-
-	if entity == "" {
-		http.Error(w, "Invalid entity parameter", http.StatusBadRequest)
-		return
-	}
-
-	fmt.Println("[BUG] making new api key for entity", entity)
-	key, err := s.newApiKey(entity)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to generate key: %s", err), http.StatusInternalServerError)
-		return
-	}
-
-	// respond with the json key
-	json.NewEncoder(w).Encode(map[string]string{"apiKey": key})
-
-	w.Header().Set("Content-Type", "application/json")
-}
-
-func (s *Service) deleteApiKeyHandler(w http.ResponseWriter, r *http.Request) {
-	storedRootEntity, _, ok := s.validateToken(r, true)
-	if !ok || storedRootEntity != "root" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	targetKey := r.URL.Query().Get("key")
-	if targetKey == "" {
-		http.Error(w, "Missing key parameter", http.StatusBadRequest)
-		return
-	}
-
-	err := s.deleteApiKey(targetKey)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to delete key: %s", err), http.StatusInternalServerError)
 		return
 	}
 }

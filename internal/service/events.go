@@ -86,7 +86,7 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_, uuid, ok := s.validateToken(r, false)
+	td, ok := s.ValidateToken(r)
 	if !ok {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
@@ -100,8 +100,8 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Prefix the topic with the entity's UUID to scope it
-	prefixedTopic := fmt.Sprintf("%s:%s", uuid, topic)
-	s.logger.Debug("Subscription request for prefixed topic", "original_topic", topic, "prefixed_topic", prefixedTopic, "entity_uuid", uuid)
+	prefixedTopic := fmt.Sprintf("%s:%s", td.UUID, topic)
+	s.logger.Debug("Subscription request for prefixed topic", "original_topic", topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.UUID)
 
 	s.wsConnectionLock.Lock()
 	if s.activeWsConnections >= int32(s.cfg.Sessions.MaxConnections) {
@@ -156,6 +156,7 @@ func (s *Service) registerSubscriber(session *eventSession) {
 		s.eventSubscribers[session.topic] = make(map[*eventSession]bool) // Inner map stores *eventSession
 	}
 	s.eventSubscribers[session.topic][session] = true // Store the session itself
+
 	s.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 }
 

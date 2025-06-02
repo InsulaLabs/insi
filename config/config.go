@@ -59,11 +59,11 @@ type RateLimiterConfig struct {
 
 type RateLimiters struct {
 	Values  RateLimiterConfig `yaml:"values"`
-	Tags    RateLimiterConfig `yaml:"tags"`
 	Cache   RateLimiterConfig `yaml:"cache"`
 	System  RateLimiterConfig `yaml:"system"`
 	Default RateLimiterConfig `yaml:"default"`
 	Events  RateLimiterConfig `yaml:"events"`
+	Objects RateLimiterConfig `yaml:"objects"`
 }
 
 var (
@@ -80,7 +80,6 @@ var (
 	ErrCacheStandardTTLMissing                 = errors.New("cache.standardTTL is missing in config")
 	ErrRootPrefixMissing                       = errors.New("rootPrefix is missing in config")
 	ErrRateLimitersValuesLimitMissing          = errors.New("rateLimiters.values.limit is missing in config")
-	ErrRateLimitersTagsLimitMissing            = errors.New("rateLimiters.tags.limit is missing in config")
 	ErrRateLimitersCacheLimitMissing           = errors.New("rateLimiters.cache.limit is missing in config")
 	ErrRateLimitersSystemLimitMissing          = errors.New("rateLimiters.system.limit is missing in config")
 	ErrRateLimitersDefaultLimitMissing         = errors.New("rateLimiters.default.limit is missing in config")
@@ -153,9 +152,6 @@ func LoadConfig(configFile string) (*Cluster, error) {
 	if cfg.RateLimiters.Values.Limit == 0 {
 		return nil, ErrRateLimitersValuesLimitMissing
 	}
-	if cfg.RateLimiters.Tags.Limit == 0 {
-		return nil, ErrRateLimitersTagsLimitMissing
-	}
 	if cfg.RateLimiters.Cache.Limit == 0 {
 		return nil, ErrRateLimitersCacheLimitMissing
 	}
@@ -182,5 +178,64 @@ func LoadConfig(configFile string) (*Cluster, error) {
 		return nil, ErrSessionsMaxConnectionsMissing
 	}
 
+	return &cfg, nil
+}
+
+func GenerateConfig(configFile string) (*Cluster, error) {
+	cfg := Cluster{
+		InstanceSecret:   "please_change_this_secret_in_production_!!!",
+		DefaultLeader:    "node0",
+		Nodes:            make(map[string]Node),
+		ClientSkipVerify: false,
+		InsudbDir:        "data/insudb", // Relative path for easier default setup
+		ServerMustUseTLS: true,
+		TLS: TLS{
+			Cert: "config/tls/server.crt", // Placeholder - user needs to generate these
+			Key:  "config/tls/server.key", // Placeholder - user needs to generate these
+		},
+		Cache: Cache{
+			StandardTTL: 5 * time.Minute,
+			Keys:        1 * time.Hour,
+		},
+		RootPrefix: "please_change_this_root_key_prefix!!!!!",
+		RateLimiters: RateLimiters{
+			Values:  RateLimiterConfig{Limit: 100.0, Burst: 200},
+			Cache:   RateLimiterConfig{Limit: 100.0, Burst: 200},
+			System:  RateLimiterConfig{Limit: 50.0, Burst: 100},
+			Default: RateLimiterConfig{Limit: 100.0, Burst: 200},
+			Events:  RateLimiterConfig{Limit: 200.0, Burst: 400},
+			Objects: RateLimiterConfig{Limit: 100.0, Burst: 200},
+		},
+		Sessions: SessionsConfig{
+			EventChannelSize:         1000,
+			WebSocketReadBufferSize:  4096,
+			WebSocketWriteBufferSize: 4096,
+			MaxConnections:           100,
+		},
+	}
+
+	cfg.Nodes["node0"] = Node{
+		RaftBinding:  "127.0.0.1:7000",
+		HttpBinding:  "127.0.0.1:7001",
+		NodeSecret:   "node0_secret_please_change_!!!",
+		ClientDomain: "localhost",
+	}
+	// Add more nodes if desired for a default multi-node setup example
+	cfg.Nodes["node1"] = Node{
+		RaftBinding:  "127.0.0.1:7002",
+		HttpBinding:  "127.0.0.1:7003",
+		NodeSecret:   "node1_secret_please_change_!!!",
+		ClientDomain: "localhost",
+	}
+	cfg.Nodes["node2"] = Node{
+		RaftBinding:  "127.0.0.1:7004",
+		HttpBinding:  "127.0.0.1:7005",
+		NodeSecret:   "node2_secret_please_change_!!!",
+		ClientDomain: "localhost",
+	}
+
+	// The configFile argument is not used by this function to generate the content,
+	// but its presence matches the function signature. The actual writing to a file
+	// based on a command-line flag is handled in the runtime.
 	return &cfg, nil
 }

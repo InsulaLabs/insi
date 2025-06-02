@@ -5,12 +5,16 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"math/rand"
 	"net" // Added for SplitHostPort and JoinHostPort
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/InsulaLabs/insi/models" // Assuming models.Event is defined here
@@ -18,16 +22,42 @@ import (
 )
 
 const (
-	defaultTimeout = 10 * time.Second
+	defaultTimeout         = 10 * time.Second
+	objectOperationTimeout = 5 * time.Minute // Increased timeout for object operations
 )
 
-type Config struct {
+type ConnectionType string
+
+const (
+	ConnectionTypeDirect ConnectionType = "direct"
+	ConnectionTypeRandom ConnectionType = "random"
+)
+
+var (
+	ErrKeyNotFound    = errors.New("key not found")
+	ErrTokenNotFound  = errors.New("token not found")
+	ErrTokenInvalid   = errors.New("token invalid")
+	ErrAPIKeyNotFound = errors.New("api key not found") // New distinct error
+)
+
+type Endpoint struct {
 	HostPort     string
-	ClientDomain string // For TLS verification against a domain name AND for constructing baseURL
-	ApiKey       string
-	SkipVerify   bool
+	ClientDomain string
 	Logger       *slog.Logger
-	Timeout      time.Duration
+}
+
+type Config struct {
+	ConnectionType ConnectionType // Direct will use Endpoints[0] always
+	Endpoints      []Endpoint
+	ApiKey         string
+	SkipVerify     bool
+	Timeout        time.Duration
+	Logger         *slog.Logger
+}
+
+type ErrorResponse struct {
+	ErrorType string `json:"error_type"`
+	Message   string `json:"message"`
 }
 
 // Client is the API client for the insi service.
@@ -40,9 +70,13 @@ type Client struct {
 
 // NewClient creates a new insi API client.
 func NewClient(cfg *Config) (*Client, error) {
-	if cfg.HostPort == "" { // HostPort is still mandatory for port information
-		return nil, fmt.Errorf("hostPort cannot be empty")
+
+	for _, endpoint := range cfg.Endpoints {
+		if endpoint.HostPort == "" {
+			return nil, fmt.Errorf("hostPort cannot be empty")
+		}
 	}
+
 	if cfg.ApiKey == "" {
 		return nil, fmt.Errorf("apiKey cannot be empty")
 	}
@@ -50,22 +84,31 @@ func NewClient(cfg *Config) (*Client, error) {
 
 	connectHost := ""
 	connectPort := ""
+	connectClientDomain := ""
+
+	if cfg.ConnectionType == ConnectionTypeDirect {
+		connectHost = cfg.Endpoints[0].HostPort
+		connectClientDomain = cfg.Endpoints[0].ClientDomain
+	} else if cfg.ConnectionType == ConnectionTypeRandom {
+		connectHost = cfg.Endpoints[rand.Intn(len(cfg.Endpoints))].HostPort
+		connectClientDomain = cfg.Endpoints[rand.Intn(len(cfg.Endpoints))].ClientDomain
+	}
 
 	// Parse port from HostPort. HostPort might be IP:port or Domain:port.
-	_, parsedPort, err := net.SplitHostPort(cfg.HostPort)
+	_, parsedPort, err := net.SplitHostPort(connectHost)
 	if err != nil {
-		clientLogger.Error("Failed to parse port from HostPort", "hostPort", cfg.HostPort, "error", err)
-		return nil, fmt.Errorf("failed to parse port from HostPort '%s': %w", cfg.HostPort, err)
+		clientLogger.Error("Failed to parse port from HostPort", "hostPort", connectHost, "error", err)
+		return nil, fmt.Errorf("failed to parse port from HostPort '%s': %w", connectHost, err)
 	}
 	connectPort = parsedPort
 
 	// Determine the host for the connection URL.
-	if cfg.ClientDomain != "" {
-		connectHost = cfg.ClientDomain // Prefer ClientDomain if available
-		clientLogger.Info("Using ClientDomain for connection URL host", "domain", cfg.ClientDomain)
+	if connectClientDomain != "" {
+		connectHost = connectClientDomain // Prefer ClientDomain if available
+		clientLogger.Info("Using ClientDomain for connection URL host", "domain", connectClientDomain)
 	} else {
 		// Fallback to host from HostPort if ClientDomain is not set.
-		hostFromHostPort, _, _ := net.SplitHostPort(cfg.HostPort) // Error already handled for port, ignore here for host.
+		hostFromHostPort, _, _ := net.SplitHostPort(connectHost) // Error already handled for port, ignore here for host.
 		connectHost = hostFromHostPort
 		clientLogger.Info("Using host from HostPort for connection URL (ClientDomain not provided)", "host", connectHost)
 	}
@@ -84,10 +127,13 @@ func NewClient(cfg *Config) (*Client, error) {
 	}
 
 	if !cfg.SkipVerify {
-		// ServerName for TLS verification should be the host we are connecting to,
-		// which is connectHost (ideally the ClientDomain).
-		tlsClientCfg.ServerName = connectHost
-		clientLogger.Info("TLS verification will use ServerName derived from connection host", "server_name", tlsClientCfg.ServerName)
+		// ServerName for TLS verification should be the host we are connecting to.
+		// By leaving tlsClientCfg.ServerName as "" (its zero value), the crypto/tls
+		// package will automatically use the host from the dial address for SNI
+		// and certificate validation. This works correctly across redirects.
+		// Our `connectHost` (derived from ClientDomain or HostPort) is already used in the baseURL.
+		// tlsClientCfg.ServerName = connectHost // REMOVED: Let crypto/tls handle it based on target host
+		clientLogger.Info("TLS verification active. ServerName for SNI will be derived from target URL host.", "initial_target_host", connectHost)
 	} else {
 		clientLogger.Info("TLS verification is skipped.")
 	}
@@ -108,7 +154,7 @@ func NewClient(cfg *Config) (*Client, error) {
 		},
 	}
 
-	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify, "tls_server_name", tlsClientCfg.ServerName)
+	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify /*, "explicit_tls_server_name_set", tlsClientCfg.ServerName != "" */) // tlsClientCfg.ServerName will be empty
 
 	return &Client{
 		baseURL:    baseURL,
@@ -183,14 +229,14 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 			loc := resp.Header.Get("Location")
 			if loc == "" {
-				resp.Body.Close()
+				resp.Body.Close() // Close current redirect response body
 				c.logger.Error("Redirect response missing Location header", "status_code", resp.StatusCode, "url", currentReqURL.String())
 				return fmt.Errorf("redirect (status %d) missing Location header from %s", resp.StatusCode, currentReqURL.String())
 			}
 
 			redirectURL, err := currentReqURL.Parse(loc) // Resolve Location relative to currentReqURL
 			if err != nil {
-				resp.Body.Close()
+				resp.Body.Close() // Close current redirect response body
 				c.logger.Error("Failed to parse redirect Location header", "location", loc, "error", err)
 				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
 			}
@@ -202,13 +248,8 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 				"method", originalMethod)
 
 			currentReqURL = redirectURL // Update URL for the next iteration
-
-			// Note: We are preserving originalMethod for all these redirect codes.
-			// For 303 See Other, the spec suggests changing to GET. If strict 303 behavior is needed,
-			// this would require adjustment. For the current use case (e.g. "set" command), preserving
-			// the method seems to be the desired outcome.
-
-			continue // Continue to the next iteration of the loop for the redirect
+			resp.Body.Close()           // Close current redirect response body before continuing
+			continue                    // Continue to the next iteration of the loop for the redirect
 		}
 
 		// Not a redirect, or unhandled status by the loop; this is the final response to process.
@@ -216,7 +257,21 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			c.logger.Warn("Received non-2xx status code", "method", originalMethod, "url", currentReqURL.String(), "status_code", resp.StatusCode)
-			// TODO: Attempt to read error body for more details (as was in original code comment)
+
+			// Attempt to read error body for more details
+			var errorResp ErrorResponse
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			if readErr == nil {
+				if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
+					c.logger.Debug("Parsed JSON error response from server", "error_type", errorResp.ErrorType, "message", errorResp.Message)
+					if errorResp.ErrorType == "API_KEY_NOT_FOUND" { // Matches the error_type from authedPing (if it could send it)
+						return ErrAPIKeyNotFound
+					}
+					// Return a generic error with the server's message if available
+					return fmt.Errorf("server error (status %d): %s - %s", resp.StatusCode, errorResp.ErrorType, errorResp.Message)
+				}
+			}
+			// Fallback if error body can't be parsed or isn't JSON
 			return fmt.Errorf("server returned status %d for %s %s", resp.StatusCode, originalMethod, currentReqURL.String())
 		}
 
@@ -251,6 +306,9 @@ func (c *Client) Get(key string) (string, error) {
 	}
 	err := c.doRequest(http.MethodGet, "db/api/v1/get", params, nil, &response)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return "", ErrKeyNotFound
+		}
 		return "", err
 	}
 	return response.Data, nil
@@ -271,7 +329,15 @@ func (c *Client) Delete(key string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key}
-	return c.doRequest(http.MethodPost, "db/api/v1/delete", nil, payload, nil)
+	err := c.doRequest(http.MethodPost, "db/api/v1/delete", nil, payload, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			// If the key is not found, we return nil
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // IterateByPrefix retrieves a list of keys matching a given prefix.
@@ -289,53 +355,9 @@ func (c *Client) IterateByPrefix(prefix string, offset, limit int) ([]string, er
 	}
 	err := c.doRequest(http.MethodGet, "db/api/v1/iterate/prefix", params, nil, &response)
 	if err != nil {
-		return nil, err
-	}
-	return response.Data, nil
-}
-
-// --- Tag Operations ---
-
-// Tag associates a tag with a key.
-func (c *Client) Tag(key, tag string) error {
-	if key == "" {
-		return fmt.Errorf("key cannot be empty")
-	}
-	if tag == "" {
-		return fmt.Errorf("tag cannot be empty")
-	}
-	payload := map[string]string{"key": key, "value": tag} // Server expects "value" for the tag
-	return c.doRequest(http.MethodPost, "db/api/v1/tag", nil, payload, nil)
-}
-
-// Untag removes a tag association from a key.
-func (c *Client) Untag(key, tag string) error {
-	if key == "" {
-		return fmt.Errorf("key cannot be empty")
-	}
-	if tag == "" {
-		return fmt.Errorf("tag cannot be empty")
-	}
-	// Server's untagHandler expects KVPayload {Key: key, Value: tag}
-	payload := map[string]string{"key": key, "value": tag}
-	return c.doRequest(http.MethodPost, "db/api/v1/untag", nil, payload, nil)
-}
-
-// IterateByTag retrieves a list of keys associated with a given tag.
-func (c *Client) IterateByTag(tag string, offset, limit int) ([]string, error) {
-	if tag == "" {
-		return nil, fmt.Errorf("tag cannot be empty")
-	}
-	params := map[string]string{
-		"tag":    tag,
-		"offset": strconv.Itoa(offset),
-		"limit":  strconv.Itoa(limit),
-	}
-	var response struct {
-		Data []string `json:"data"`
-	}
-	err := c.doRequest(http.MethodGet, "db/api/v1/iterate/tags", params, nil, &response)
-	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, ErrKeyNotFound
+		}
 		return nil, err
 	}
 	return response.Data, nil
@@ -367,6 +389,9 @@ func (c *Client) GetCache(key string) (string, error) {
 	}
 	err := c.doRequest(http.MethodGet, "db/api/v1/cache/get", params, nil, &response)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return "", ErrKeyNotFound
+		}
 		return "", err
 	}
 	return response.Data, nil
@@ -378,7 +403,14 @@ func (c *Client) DeleteCache(key string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key}
-	return c.doRequest(http.MethodPost, "db/api/v1/cache/delete", nil, payload, nil)
+	err := c.doRequest(http.MethodPost, "db/api/v1/cache/delete", nil, payload, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return ErrKeyNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *Client) PublishEvent(topic string, data any) error {
@@ -407,31 +439,6 @@ func (c *Client) Join(followerID, followerAddr string) error {
 	return c.doRequest(http.MethodGet, "db/api/v1/join", params, nil, nil)
 }
 
-// NewAPIKey requests the server to generate a new API key for the given entity.
-func (c *Client) NewAPIKey(entityName string) (string, error) {
-	if entityName == "" {
-		return "", fmt.Errorf("entityName cannot be empty")
-	}
-	params := map[string]string{"entity": entityName}
-	var response struct {
-		APIKey string `json:"apiKey"`
-	}
-	err := c.doRequest(http.MethodGet, "db/api/v1/new-api-key", params, nil, &response)
-	if err != nil {
-		return "", err
-	}
-	return response.APIKey, nil
-}
-
-// DeleteAPIKey requests the server to delete an existing API key.
-func (c *Client) DeleteAPIKey(apiKey string) error {
-	if apiKey == "" {
-		return fmt.Errorf("apiKey cannot be empty")
-	}
-	params := map[string]string{"key": apiKey}
-	return c.doRequest(http.MethodGet, "db/api/v1/delete-api-key", params, nil, nil)
-}
-
 // Ping sends a ping request to the server and returns the response.
 func (c *Client) Ping() (map[string]string, error) {
 	var response map[string]string
@@ -440,6 +447,171 @@ func (c *Client) Ping() (map[string]string, error) {
 		return nil, err
 	}
 	return response, nil
+}
+
+// --- Object Operations ---
+
+// SetObject stores an object for a given key.
+// The object data is sent as the request body.
+func (c *Client) SetObject(key string, objectData []byte) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	if objectData == nil {
+		return fmt.Errorf("objectData cannot be nil") // Or handle as empty object if allowed
+	}
+
+	// The server expects the key as a query parameter for setObjectHandler
+	params := map[string]string{"key": key}
+
+	// Construct the URL with query parameters
+	initialPathURL := &url.URL{Path: "db/api/v1/object/set"}
+	fullURL := c.baseURL.ResolveReference(initialPathURL)
+	q := fullURL.Query()
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	fullURL.RawQuery = q.Encode()
+
+	// Create the request with the objectData as the body
+	req, err := http.NewRequest(http.MethodPost, fullURL.String(), bytes.NewBuffer(objectData))
+	if err != nil {
+		c.logger.Error("Failed to create new HTTP request for SetObject", "key", key, "url", fullURL.String(), "error", err)
+		return fmt.Errorf("failed to create request for SetObject %s: %w", key, err)
+	}
+
+	req.Header.Set("Content-Type", "application/octet-stream") // Or appropriate content type for your objects
+	req.Header.Set("Authorization", c.apiKey)
+
+	c.logger.Debug("Sending SetObject request", "key", key, "url", fullURL.String())
+
+	// Use a client with a longer timeout for object operations
+	objectClient := &http.Client{
+		Transport:     c.httpClient.Transport,
+		Timeout:       objectOperationTimeout,
+		CheckRedirect: nil, // Allow default redirect handling (e.g., follow 307/308)
+	}
+
+	resp, err := objectClient.Do(req)
+	if err != nil {
+		c.logger.Error("HTTP request failed for SetObject", "key", key, "url", fullURL.String(), "error", err)
+		return fmt.Errorf("http request for SetObject %s failed: %w", key, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.logger.Warn("SetObject received non-2xx status code", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode)
+		// Consider reading error body from resp.Body here if server provides one
+		return fmt.Errorf("server returned status %d for SetObject %s", resp.StatusCode, key)
+	}
+
+	c.logger.Debug("SetObject successful", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode)
+	return nil
+}
+
+// GetObject retrieves an object for a given key.
+// It returns the raw object data.
+func (c *Client) GetObject(key string) ([]byte, error) {
+	if key == "" {
+		return nil, fmt.Errorf("key cannot be empty")
+	}
+	params := map[string]string{"key": key}
+
+	// Construct the URL
+	initialPathURL := &url.URL{Path: "db/api/v1/object"}
+	fullURL := c.baseURL.ResolveReference(initialPathURL)
+	q := fullURL.Query()
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	fullURL.RawQuery = q.Encode()
+
+	req, err := http.NewRequest(http.MethodGet, fullURL.String(), nil)
+	if err != nil {
+		c.logger.Error("Failed to create new HTTP request for GetObject", "key", key, "url", fullURL.String(), "error", err)
+		return nil, fmt.Errorf("failed to create request for GetObject %s: %w", key, err)
+	}
+
+	req.Header.Set("Authorization", c.apiKey)
+	// No "Content-Type" needed for GET with no body. "Accept" could be "application/octet-stream" if needed.
+
+	c.logger.Debug("Sending GetObject request", "key", key, "url", fullURL.String())
+
+	// Use a client with a longer timeout for object operations
+	objectClient := &http.Client{
+		Transport:     c.httpClient.Transport,
+		Timeout:       objectOperationTimeout,
+		CheckRedirect: nil, // Allow default redirect handling
+	}
+
+	resp, err := objectClient.Do(req)
+	if err != nil {
+		c.logger.Error("HTTP request failed for GetObject", "key", key, "url", fullURL.String(), "error", err)
+		return nil, fmt.Errorf("http request for GetObject %s failed: %w", key, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		c.logger.Info("GetObject key not found", "key", key, "url", fullURL.String())
+		return nil, ErrKeyNotFound // Assuming ErrKeyNotFound is appropriate
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.logger.Warn("GetObject received non-2xx status code", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode)
+		return nil, fmt.Errorf("server returned status %d for GetObject %s", resp.StatusCode, key)
+	}
+
+	objectData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.logger.Error("Failed to read response body for GetObject", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode, "error", err)
+		return nil, fmt.Errorf("failed to read response body for GetObject %s: %w", key, err)
+	}
+
+	c.logger.Debug("GetObject successful", "key", key, "url", fullURL.String(), "status_code", resp.StatusCode)
+	return objectData, nil
+}
+
+// DeleteObject removes an object for a given key.
+func (c *Client) DeleteObject(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	// The server's deleteObjectHandler expects key as a query param and uses GET method.
+	params := map[string]string{"key": key}
+	err := c.doRequest(http.MethodGet, "db/api/v1/object/delete", params, nil, nil)
+	if err != nil {
+		// The server's deleteObjectHandler doesn't explicitly return 404 for not found,
+		// but FSM might return an error that translates to it.
+		// For now, we don't map to ErrKeyNotFound unless doRequest does it or server behavior is confirmed.
+		if strings.Contains(err.Error(), "404") { // Basic check
+			c.logger.Info("DeleteObject key not found, treating as success (idempotent)", "key", key)
+			return nil // Idempotent delete: if not found, it's already "deleted"
+		}
+		c.logger.Error("DeleteObject failed", "key", key, "error", err)
+		return err
+	}
+	c.logger.Debug("DeleteObject successful", "key", key)
+	return nil
+}
+
+// GetObjectList retrieves a list of object keys matching a given prefix, with optional offset and limit.
+func (c *Client) GetObjectList(prefix string, offset, limit int) ([]string, error) {
+	params := map[string]string{
+		"prefix": prefix,
+		"offset": strconv.Itoa(offset),
+		"limit":  strconv.Itoa(limit),
+	}
+	var response struct {
+		Data []string `json:"data"`
+	}
+	// Assuming the endpoint is "db/api/v1/objects/list"
+	err := c.doRequest(http.MethodGet, "db/api/v1/objects/list", params, nil, &response)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") { // Or a more specific error check if server provides one
+			return nil, ErrKeyNotFound // Consider if ErrKeyNotFound is appropriate or a new error type
+		}
+		return nil, err
+	}
+	return response.Data, nil
 }
 
 // SubscribeToEvents connects to the event subscription WebSocket endpoint and prints incoming events.
@@ -495,7 +667,7 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 			// }
 			// resp.Body.Close()
 			c.logger.Error("WebSocket dial error with response", "url", wsURL.String(), "status", resp.Status, "error", err)
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s: %w", errMsg, err)
 
 		}
 		c.logger.Error("WebSocket dial error", "url", wsURL.String(), "error", err)
@@ -585,4 +757,39 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 			}
 		}
 	}
+}
+
+// --- Batch Value Operations ---
+
+// BatchSet sends a batch of key-value pairs to be set.
+func (c *Client) BatchSet(items []models.KVPayload) error {
+	if len(items) == 0 {
+		return fmt.Errorf("items slice cannot be empty for BatchSet")
+	}
+	// The server endpoint for batch set is "/db/api/v1/batchset"
+	// The payload should be `BatchSetRequest struct { Items []models.KVPayload }`
+	// However, the FSM's BatchSet expects []models.KVPayload directly.
+	// The routes_w.go batchSetHandler now expects a JSON body like:
+	// `type BatchSetRequest struct { Items []models.KVPayload `json:"items"` }`
+
+	requestPayload := struct {
+		Items []models.KVPayload `json:"items"`
+	}{Items: items}
+
+	return c.doRequest(http.MethodPost, "db/api/v1/batchset", nil, requestPayload, nil)
+}
+
+// BatchDelete sends a batch of keys to be deleted.
+func (c *Client) BatchDelete(keys []string) error {
+	if len(keys) == 0 {
+		return fmt.Errorf("keys slice cannot be empty for BatchDelete")
+	}
+	// The server endpoint for batch delete is "/db/api/v1/batchdelete"
+	// The routes_w.go batchDeleteHandler expects a JSON body like:
+	// `type BatchDeleteRequest struct { Keys []string `json:"keys"`	}`
+
+	requestPayload := struct {
+		Keys []string `json:"keys"`
+	}{Keys: keys}
+	return c.doRequest(http.MethodPost, "db/api/v1/batchdelete", nil, requestPayload, nil)
 }

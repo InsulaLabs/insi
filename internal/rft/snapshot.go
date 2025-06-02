@@ -11,14 +11,14 @@ import (
 )
 
 const (
-	dbTypeValues = "values"
-	dbTypeTags   = "tags"
-	cacheType    = "cache"
+	dbTypeValues  = "values"
+	dbTypeObjects = "objects"
+	cacheType     = "cache"
 )
 
 // snapshotEntry is used to store entries in the snapshot with a DB type.
 type snapshotEntry struct {
-	DBType string // "values" or "tags"
+	DBType string // "values", "cache" "objects"
 	Key    string
 	Value  string
 
@@ -27,10 +27,9 @@ type snapshotEntry struct {
 }
 
 type badgerFSMSnapshot struct {
-	valuesDb *badger.DB
-	tagsDb   *badger.DB
-
-	stdCache *ttlcache.Cache[string, string]
+	valuesDb  *badger.DB
+	objectsDb *badger.DB
+	stdCache  *ttlcache.Cache[string, string]
 }
 
 func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
@@ -85,10 +84,10 @@ func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
 		return fmt.Errorf("failed to persist snapshot for valuesDb: %w", err)
 	}
 
-	// Persist tagsDb
-	if err := persistDb(b.tagsDb, dbTypeTags); err != nil {
+	// Persist objectsDb
+	if err := persistDb(b.objectsDb, dbTypeObjects); err != nil {
 		sink.Cancel()
-		return fmt.Errorf("failed to persist snapshot for tagsDb: %w", err)
+		return fmt.Errorf("failed to persist snapshot for objectsDb: %w", err)
 	}
 
 	persistStdCache := func(cache *ttlcache.Cache[string, string], cacheType string) error {

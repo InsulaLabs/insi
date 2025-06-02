@@ -1,0 +1,397 @@
+package runtime
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"path"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+
+	"crypto/sha256"
+	"encoding/hex"
+
+	"github.com/InsulaLabs/insi/client"
+	"github.com/InsulaLabs/insi/config"
+	"github.com/InsulaLabs/insi/internal/service"
+	"github.com/InsulaLabs/insi/internal/tkv"
+	"github.com/InsulaLabs/insula/security/badge"
+	"gopkg.in/yaml.v3"
+)
+
+// Runtime manages the execution of insid, handling configuration,
+// signal processing, and the lifecycle of node instances.
+type Runtime struct {
+	appCtx     context.Context
+	appCancel  context.CancelFunc
+	logger     *slog.Logger
+	clusterCfg *config.Cluster
+	configFile string
+	asNodeId   string
+	hostMode   bool
+	rawArgs    []string // To allow flag parsing within New
+	service    *service.Service
+
+	rootApiKey string // Root API key generated from instance secret
+
+	rtClients map[string]*client.Client
+
+	plugins map[string]Plugin
+}
+
+var _ PluginRuntimeIF = &Runtime{}
+
+// New creates a new Runtime instance.
+// It initializes the application context, sets up signal handling,
+// parses command-line flags, and loads the cluster configuration.
+func New(args []string, defaultConfigFile string) (*Runtime, error) {
+
+	r := &Runtime{
+		rawArgs:   args,
+		plugins:   make(map[string]Plugin),
+		rtClients: make(map[string]*client.Client),
+	}
+
+	r.appCtx, r.appCancel = context.WithCancel(context.Background())
+	r.logger = slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("service", "insidRuntime")
+
+	// Setup signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		r.logger.Info("Received signal, initiating shutdown...", "signal", sig)
+		r.appCancel()
+	}()
+
+	var genConfigFile string
+	// Parse flags
+	fs := flag.NewFlagSet("runtime", flag.ContinueOnError)
+	fs.StringVar(&r.configFile, "config", defaultConfigFile, "Path to the cluster configuration file.")
+	fs.StringVar(&r.asNodeId, "as", "", "Node ID to run as (e.g., node0). Mutually exclusive with --host.")
+	fs.BoolVar(&r.hostMode, "host", false, "Run instances for all nodes in the config. Mutually exclusive with --as.")
+	fs.StringVar(&genConfigFile, "new-cfg", "", "Generate a new cluster configuration file to a given path.")
+
+	if err := fs.Parse(r.rawArgs); err != nil {
+		return nil, fmt.Errorf("failed to parse flags: %w", err)
+	}
+
+	if genConfigFile != "" {
+		cfg, err := config.GenerateConfig(genConfigFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate configuration: %w", err)
+		}
+
+		yamlData, err := yaml.Marshal(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal generated config to YAML: %w", err)
+		}
+
+		dir := filepath.Dir(genConfigFile)
+		if dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return nil, fmt.Errorf("failed to create directory for config file %s: %w", genConfigFile, err)
+			}
+		}
+
+		if err := os.WriteFile(genConfigFile, yamlData, 0644); err != nil {
+			return nil, fmt.Errorf("failed to write generated configuration to %s: %w", genConfigFile, err)
+		}
+
+		r.logger.Info("Successfully generated new configuration file", "path", genConfigFile)
+		os.Exit(0)
+	}
+
+	if (r.asNodeId == "" && !r.hostMode) || (r.asNodeId != "" && r.hostMode) {
+		fs.Usage()
+		return nil, fmt.Errorf("either --as <nodeId> or --host must be specified, but not both")
+	}
+
+	var err error
+	r.clusterCfg, err = config.LoadConfig(r.configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load configuration from %s: %w", r.configFile, err)
+	}
+
+	// Generate the root API key from the instance secret
+	// This key is used by runtime's internal clients and passed to services.
+	if r.clusterCfg.InstanceSecret == "" {
+		return nil, fmt.Errorf("InstanceSecret is not defined in the cluster configuration, cannot generate root API key")
+	}
+	h := sha256.New()
+	h.Write([]byte(r.clusterCfg.InstanceSecret))
+	r.rootApiKey = hex.EncodeToString(h.Sum(nil))
+
+	// Convert the cluster config into a list of endpoints
+	// for the client to use when utilizing a client for the backend
+	// of a runtime request
+	getEndpoints := func() []client.Endpoint {
+		eps := make([]client.Endpoint, 0, len(r.clusterCfg.Nodes))
+		for nodeId, node := range r.clusterCfg.Nodes {
+			ep := client.Endpoint{
+				HostPort:     node.HttpBinding,
+				ClientDomain: node.ClientDomain,
+				Logger:       r.logger.With("service", "insiClient").With("node", nodeId),
+			}
+			eps = append(eps, ep)
+		}
+		return eps
+	}
+
+	/*
+		Create a series of clients for the runtime to isolate operations
+		to single-use clients.
+	*/
+	for _, useCase := range []string{
+		"set", "get", "delete", "iterate",
+		"setObject", "getObject", "deleteObject", "iterateObject", "getObjectList",
+		"setCache", "getCache", "deleteCache",
+		"publishEvent",
+	} {
+		rtClient, err := client.NewClient(&client.Config{
+			ConnectionType: client.ConnectionTypeRandom,
+			Logger:         r.logger.With("service", "insiClient").With("useCase", useCase),
+			ApiKey:         r.rootApiKey, // Use the runtime's generated root API key
+			Endpoints:      getEndpoints(),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create insi client: %w", err)
+		}
+		r.rtClients[useCase] = rtClient
+	}
+
+	return r, nil
+}
+
+func (r *Runtime) WithPlugin(plugin Plugin) *Runtime {
+	r.plugins[plugin.GetName()] = plugin
+	return r
+}
+
+// Run executes the runtime based on the parsed flags,
+// either running as a single node or as a host managing multiple nodes.
+func (r *Runtime) Run() error {
+	if r.clusterCfg == nil {
+		// This situation can occur if New() was called with the --new-cfg flag,
+		// which completes its task by generating the configuration file. In that path,
+		// r.clusterCfg is not loaded. Calling Run() subsequently is likely an unintentional
+		// continuation by the caller.
+		r.logger.Info("Runtime.Run called when clusterCfg is not loaded (e.g., after --new-cfg). No nodes to run. Aborting Run operation.")
+		return nil // Indicate that Run completed as a no-op due to this condition.
+	}
+
+	if r.hostMode {
+		return r.runAsHost()
+	}
+	return r.runAsNode(r.asNodeId)
+}
+
+// runAsNode runs the runtime as a specific node in the cluster.
+func (r *Runtime) runAsNode(nodeId string) error {
+	nodeSpecificCfg, ok := r.clusterCfg.Nodes[nodeId]
+	if !ok {
+		r.logger.Error("Node ID not found in configuration file", "node", nodeId, "available_nodes", getMapKeys(r.clusterCfg.Nodes))
+		return fmt.Errorf("node ID %s not found in configuration", nodeId)
+	}
+
+	r.logger.Info("Starting in single node mode", "node", nodeId)
+	r.startNodeInstance(nodeId, nodeSpecificCfg)
+
+	<-r.appCtx.Done()
+	r.logger.Info("Node service shutting down or completed for single node mode.", "node", nodeId)
+	return nil
+}
+
+// runAsHost runs the runtime as a host, managing all nodes in the cluster.
+func (r *Runtime) runAsHost() error {
+	if len(r.clusterCfg.Nodes) == 0 {
+		r.logger.Error("No nodes defined in the configuration file for host mode.")
+		return fmt.Errorf("no nodes defined for host mode")
+	}
+	r.logger.Info("Running in --host mode. Starting instances for all configured nodes.", "count", len(r.clusterCfg.Nodes))
+
+	var wg sync.WaitGroup
+	for nodeId, nodeCfg := range r.clusterCfg.Nodes {
+		wg.Add(1)
+		go func(id string, cfg config.Node) {
+			defer wg.Done()
+			r.startNodeInstance(id, cfg)
+		}(nodeId, nodeCfg)
+	}
+
+	go func() {
+		wg.Wait()
+		r.logger.Info("All node instances have completed.")
+	}()
+
+	<-r.appCtx.Done()
+	r.logger.Info("Shutdown signal received or all services completed. Exiting host mode.")
+	return nil
+}
+
+// startNodeInstance sets up and runs a single node instance.
+func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
+	nodeLogger := r.logger.With("node", nodeId)
+	nodeLogger.Info("Starting node instance")
+
+	if err := os.MkdirAll(r.clusterCfg.InsudbDir, os.ModePerm); err != nil {
+		nodeLogger.Error("Failed to create insudbDir", "path", r.clusterCfg.InsudbDir, "error", err)
+		os.Exit(1)
+	}
+
+	nodeDataRootPath := filepath.Join(r.clusterCfg.InsudbDir, nodeId)
+	if err := os.MkdirAll(nodeDataRootPath, os.ModePerm); err != nil {
+		nodeLogger.Error("Could not create node data root directory", "path", nodeDataRootPath, "error", err)
+		os.Exit(1)
+	}
+
+	b, err := loadOrCreateBadge(nodeId, nodeDataRootPath, nodeCfg.NodeSecret)
+	if err != nil {
+		nodeLogger.Error("Failed to load or create badge", "error", err)
+		os.Exit(1)
+	}
+
+	nodeDir := filepath.Join(nodeDataRootPath, nodeId)
+	if err := os.MkdirAll(nodeDir, os.ModePerm); err != nil {
+		nodeLogger.Error("Failed to create node specific data directory", "path", nodeDir, "error", err)
+		os.Exit(1)
+	}
+
+	kvm, err := tkv.New(tkv.Config{
+		Identity:  b,
+		Logger:    nodeLogger.WithGroup("tkv"),
+		Directory: nodeDir,
+		AppCtx:    r.appCtx,
+		CacheTTL:  r.clusterCfg.Cache.StandardTTL,
+	})
+	if err != nil {
+		nodeLogger.Error("Failed to create KV manager", "error", err)
+		os.Exit(1)
+	}
+	defer kvm.Close()
+
+	r.service, err = service.NewService(
+		r.appCtx, // Use the runtime's app context
+		nodeLogger.WithGroup("service"),
+		&nodeCfg,
+		b,
+		kvm,
+		r.clusterCfg,
+		nodeId,
+		r.rootApiKey, // Pass the runtime's root API key to the service
+	)
+	if err != nil {
+		nodeLogger.Error("Failed to create service", "error", err)
+		os.Exit(1)
+	}
+
+	// Mount the plugins
+	nodeLogger.Info("Mounting plugins", "count", len(r.plugins))
+
+	createRoute := func(plugin Plugin, route PluginRoute) string {
+		nodeLogger.Info("Mounting plugin route", "plugin", plugin.GetName(), "path", route.Path)
+		pName := strings.Trim(plugin.GetName(), "/")
+		rPath := strings.Trim(route.Path, "/")
+		mountPath := "/" // Always start with a slash for the root
+		if pName != "" {
+			mountPath = path.Join(mountPath, pName)
+		}
+		if rPath != "" {
+			mountPath = path.Join(mountPath, rPath)
+		}
+		return mountPath
+	}
+
+	/*
+		Setup the routes for the plugin and init it so it has
+		a means to access the runtime.
+	*/
+	for _, plugin := range r.plugins {
+
+		r.logger.Info(
+			"Mounting routes for plugin",
+			"plugin", plugin.GetName(),
+			"count", len(plugin.GetRoutes()),
+		)
+
+		for _, route := range plugin.GetRoutes() {
+			r.service.WithRoute(
+				createRoute(plugin, route),
+				route.Handler,
+				route.Limit,
+				route.Burst,
+			)
+		}
+
+		plugin.Init(r)
+	}
+
+	// Run the service. This should block until the service is done or context is cancelled.
+	// We need to handle the completion of this service within the broader context
+	// of the runtime (e.g., if one node fails, does it affect others in host mode?).
+	// For now, each node runs somewhat independently until the main appCtx is cancelled.
+	r.service.Run()
+
+	nodeLogger.Info("Node instance shut down gracefully.")
+}
+
+func getMapKeys(m map[string]config.Node) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func loadOrCreateBadge(nodeId string, installDir string, secret string) (badge.Badge, error) {
+	fileName := filepath.Join(installDir, fmt.Sprintf("%s.identity.encrypted", nodeId))
+
+	if _, err := os.Stat(fileName); os.IsNotExist(err) {
+		badge, err := badge.BuildBadge(
+			badge.WithID(nodeId),
+			badge.WithCurveSelector(badge.BadgeCurveSelectorP256),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build badge: %w", err)
+		}
+
+		encryptedBadge, err := badge.EncryptBadge([]byte(secret))
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt badge: %w", err)
+		}
+
+		if err := os.WriteFile(fileName, encryptedBadge, 0600); err != nil {
+			return nil, fmt.Errorf("failed to write encrypted badge: %w", err)
+		}
+		return badge, nil
+	}
+
+	rawBadge, err := os.ReadFile(fileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read badge file %s: %w", fileName, err)
+	}
+
+	badge, err := badge.FromEncryptedBadge([]byte(secret), rawBadge)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt badge from %s: %w", fileName, err)
+	}
+	return badge, nil
+}
+
+// Wait for the runtime to complete its operations.
+// This is typically when the application context is canceled.
+func (r *Runtime) Wait() {
+	<-r.appCtx.Done()
+	r.logger.Info("Runtime has been shut down.")
+}
+
+// Stop gracefully shuts down the runtime by canceling its context.
+func (r *Runtime) Stop() {
+	r.logger.Info("Runtime stop requested.")
+	r.appCancel()
+}

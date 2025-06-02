@@ -31,7 +31,7 @@ clean:
 server: ${BUILD_DIR}
 	@echo "$(BLUE)🚀 Building server $(BINARY_SERVER)...$(RESET)"
 	@echo "$(PURPLE)   Compiling Go code for $(BINARY_SERVER)...$(RESET)"
-	@$(GOPRIVATE_SETTING) go build -o ${BUILD_DIR}/${BINARY_SERVER} cmd/insid/*.go
+	@$(GOPRIVATE_SETTING) GOGC=20 go build -o ${BUILD_DIR}/${BINARY_SERVER} cmd/insid/*.go
 	@echo "$(PURPLE)   Copying configuration for $(BINARY_SERVER)...$(RESET)"
 	@cp ${CONFIG} ${BUILD_DIR}/
 	@echo "$(GREEN)✅ Server $(BINARY_SERVER) build complete! Available at ${BUILD_DIR}/${BINARY_SERVER}$(RESET)"
@@ -56,7 +56,7 @@ prod: server-prod client-prod
 server-prod: ${BUILD_DIR}
 	@echo "$(BLUE)🚀 Building PRODUCTION server $(BINARY_SERVER)...$(RESET)"
 	@echo "$(PURPLE)   Compiling Go code for $(BINARY_SERVER) (production)...$(RESET)"
-	@$(GOPRIVATE_SETTING) go build $(LDFLAGS_PROD) -o ${BUILD_DIR}/${BINARY_SERVER} cmd/insid/*.go
+	@$(GOPRIVATE_SETTING) GOGC=20 go build $(LDFLAGS_PROD) -o ${BUILD_DIR}/${BINARY_SERVER} cmd/insid/*.go
 	@echo "$(PURPLE)   Copying configuration for $(BINARY_SERVER)...$(RESET)"
 	@cp ${CONFIG} ${BUILD_DIR}/
 	@echo "$(GREEN)✅ PRODUCTION Server $(BINARY_SERVER) build complete! Available at ${BUILD_DIR}/${BINARY_SERVER}$(RESET)"
@@ -66,3 +66,4 @@ client-prod: ${BUILD_DIR}
 	@echo "$(PURPLE)   Compiling Go code for $(BINARY_CLIENT) (production)...$(RESET)"
 	@$(GOPRIVATE_SETTING) go build $(LDFLAGS_PROD) -o ${BUILD_DIR}/${BINARY_CLIENT} cmd/insic/*.go
 	@echo "$(GREEN)✅ PRODUCTION Client $(BINARY_CLIENT) build complete! Available at ${BUILD_DIR}/${BINARY_CLIENT}$(RESET)"
+

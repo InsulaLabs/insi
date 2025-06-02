@@ -2,21 +2,19 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
-	"github.com/InsulaLabs/insi/internal/config"
+	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/internal/rft"
+	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
-	"github.com/InsulaLabs/insula/tkv"
 	"github.com/gorilla/websocket"
-	"github.com/jellydator/ttlcache/v3"
 	"golang.org/x/time/rate"
 )
 
@@ -31,10 +29,6 @@ const (
 	we actually hit the db.
 */
 
-type localCaches struct {
-	apiKeys *ttlcache.Cache[string, string]
-}
-
 type Service struct {
 	appCtx    context.Context
 	cfg       *config.Cluster
@@ -48,7 +42,6 @@ type Service struct {
 
 	startedAt time.Time
 
-	lcs          *localCaches
 	rateLimiters map[string]*rate.Limiter
 
 	// WebSocket event handling
@@ -60,6 +53,18 @@ type Service struct {
 	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
 }
 
+func (s *Service) GetRootClientKey() string {
+	return s.authToken
+}
+
+func (s *Service) AddHandler(path string, handler http.Handler) error {
+	if !s.startedAt.IsZero() {
+		return fmt.Errorf("service already started, cannot add handler after startup")
+	}
+	s.mux.Handle(path, handler)
+	return nil
+}
+
 func NewService(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -68,6 +73,7 @@ func NewService(
 	tkv tkv.TKV,
 	clusterCfg *config.Cluster,
 	asNodeId string,
+	rootApiKey string,
 ) (*Service, error) {
 
 	// This eventCh is for the FSM to signal the service.
@@ -95,14 +101,7 @@ func NewService(
 		return nil, err
 	}
 
-	caches, err := initLocalCaches(&clusterCfg.Cache)
-	if err != nil {
-		return nil, err
-	}
-
-	secHash := sha256.New()
-	secHash.Write([]byte(clusterCfg.InstanceSecret))
-	authToken := hex.EncodeToString(secHash.Sum(nil))
+	authToken := rootApiKey
 
 	// Initialize rate limiters
 	rateLimiters := make(map[string]*rate.Limiter)
@@ -111,10 +110,6 @@ func NewService(
 	if rlConfig := clusterCfg.RateLimiters.Values; rlConfig.Limit > 0 {
 		rateLimiters["values"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'values'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
-	}
-	if rlConfig := clusterCfg.RateLimiters.Tags; rlConfig.Limit > 0 {
-		rateLimiters["tags"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
-		rlLogger.Info("Initialized rate limiter for 'tags'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 	if rlConfig := clusterCfg.RateLimiters.Cache; rlConfig.Limit > 0 {
 		rateLimiters["cacheEndpoints"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
@@ -133,19 +128,23 @@ func NewService(
 		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 
-	service := &Service{
-		appCtx:       ctx,
-		cfg:          clusterCfg,
-		nodeCfg:      nodeSpecificCfg,
-		logger:       logger,
-		identity:     identity,
-		tkv:          tkv,
-		fsm:          fsm,
-		authToken:    authToken,
-		lcs:          caches,
-		rateLimiters: rateLimiters,
-		mux:          http.NewServeMux(),
+	// Add limiter for objects if configured
+	if rlConfig := clusterCfg.RateLimiters.Objects; rlConfig.Limit > 0 {
+		rateLimiters["objects"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'objects'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
 
+	service := &Service{
+		appCtx:           ctx,
+		cfg:              clusterCfg,
+		nodeCfg:          nodeSpecificCfg,
+		logger:           logger,
+		identity:         identity,
+		tkv:              tkv,
+		fsm:              fsm,
+		authToken:        authToken,
+		rateLimiters:     rateLimiters,
+		mux:              http.NewServeMux(),
 		eventSubscribers: make(map[string]map[*eventSession]bool),
 		wsUpgrader: websocket.Upgrader{
 			ReadBufferSize:  clusterCfg.Sessions.WebSocketReadBufferSize,
@@ -187,6 +186,17 @@ func (s *Service) rateLimitMiddleware(next http.Handler, category string) http.H
 	})
 }
 
+func (s *Service) WithRoute(path string, handler http.Handler, limit int, burst int) {
+	limiter := rate.NewLimiter(rate.Limit(limit), burst)
+	s.mux.Handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+}
+
 // Run forever until the context is cancelled
 func (s *Service) Run() {
 
@@ -196,24 +206,28 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteHandler), "values"))
 	s.mux.Handle("/db/api/v1/iterate/prefix", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByPrefixHandler), "values"))
 
-	// Tagging handlers
-	s.mux.Handle("/db/api/v1/tag", s.rateLimitMiddleware(http.HandlerFunc(s.tagHandler), "tags"))
-	s.mux.Handle("/db/api/v1/untag", s.rateLimitMiddleware(http.HandlerFunc(s.untagHandler), "tags"))
-	s.mux.Handle("/db/api/v1/iterate/tags", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByTagsHandler), "tags"))
+	// Batch Value handlers
+	s.mux.Handle("/db/api/v1/batchset", s.rateLimitMiddleware(http.HandlerFunc(s.batchSetHandler), "values"))
+	s.mux.Handle("/db/api/v1/batchdelete", s.rateLimitMiddleware(http.HandlerFunc(s.batchDeleteHandler), "values"))
 
 	// Cache handlers
-	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cacheEndpoints"))
-	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cacheEndpoints"))
-	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cacheEndpoints"))
+	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cache"))
+	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cache"))
+	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cache"))
+
+	// Events handlers
+	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
+	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
 
 	// System handlers
 	s.mux.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
-	s.mux.Handle("/db/api/v1/new-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.newApiKeyHandler), "system"))
-	s.mux.Handle("/db/api/v1/delete-api-key", s.rateLimitMiddleware(http.HandlerFunc(s.deleteApiKeyHandler), "system"))
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
-	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
-	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
+	// Object store handlers
+	s.mux.Handle("/db/api/v1/object", s.rateLimitMiddleware(http.HandlerFunc(s.getObjectHandler), "objects"))
+	s.mux.Handle("/db/api/v1/object/set", s.rateLimitMiddleware(http.HandlerFunc(s.setObjectHandler), "objects"))
+	s.mux.Handle("/db/api/v1/object/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteObjectHandler), "objects"))
+	s.mux.Handle("/db/api/v1/objects/list", s.rateLimitMiddleware(http.HandlerFunc(s.getObjectListHandler), "objects"))
 
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
