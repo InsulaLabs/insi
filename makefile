@@ -11,6 +11,7 @@ BUILD_DIR := build
 BINARY_SERVER := insid
 BINARY_CLIENT := insic
 CONFIG := cluster.yaml
+CONFIG_MAC := cluster_mac.yaml
 
 # Go private repository settings
 GOPRIVATE_SETTING := GOPRIVATE=github.com/InsulaLabs
@@ -34,6 +35,7 @@ server: ${BUILD_DIR}
 	@$(GOPRIVATE_SETTING) GOGC=20 go build -o ${BUILD_DIR}/${BINARY_SERVER} cmd/insid/*.go
 	@echo "$(PURPLE)   Copying configuration for $(BINARY_SERVER)...$(RESET)"
 	@cp ${CONFIG} ${BUILD_DIR}/
+	@cp ${CONFIG_MAC} ${BUILD_DIR}/
 	@echo "$(GREEN)✅ Server $(BINARY_SERVER) build complete! Available at ${BUILD_DIR}/${BINARY_SERVER}$(RESET)"
 
 client: ${BUILD_DIR}
