@@ -49,3 +49,9 @@ node offered, meaning one could "load-balance" the subscribers across the node-s
 
 The _insic_ is a client to interact with an `insid`. Giving it the configuration and `--root` will enable interacting with the server using the shared secret
 as the authentication mechanism (only way currently supported at time of writing.)
+
+Insic is equiped to display and interact with all standard core endpoints offered by the server
+
+# Plugins
+
+"Plugins" Are compiled-in runtime-inteacting plugins that can have http endpoints mouint
