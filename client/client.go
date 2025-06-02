@@ -254,6 +254,10 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 		// Not a redirect, or unhandled status by the loop; this is the final response to process.
 		defer resp.Body.Close() // Ensure this final response body is closed when function returns
 
+		if resp.StatusCode == http.StatusNotFound {
+			return ErrKeyNotFound
+		}
+
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			c.logger.Warn("Received non-2xx status code", "method", originalMethod, "url", currentReqURL.String(), "status_code", resp.StatusCode)
 
