@@ -629,3 +629,137 @@ func TestTKV_AtomicOperations(t *testing.T) {
 		}
 	})
 }
+
+func TestTKV_QueueOperations(t *testing.T) {
+	ctx := context.Background()
+	tkvTest, err := createTestTKV(ctx)
+	if err != nil {
+		t.Fatalf("Failed to create test TKV: %v", err)
+	}
+	defer tkvTest.Cleanup()
+
+	tkvQueueHandler, ok := tkvTest.tkv.(TKVQueueHandler)
+	if !ok {
+		t.Fatalf("TKV instance does not implement TKVQueueHandler")
+	}
+
+	queueKey := "myTestQueue"
+
+	t.Run("QueueNew_CreateNew", func(t *testing.T) {
+		err := tkvQueueHandler.QueueNew(queueKey)
+		if err != nil {
+			t.Errorf("QueueNew() error = %v, wantErr nil", err)
+		}
+	})
+
+	t.Run("QueueNew_ExistingQueue", func(t *testing.T) {
+		// First ensure it exists
+		if err := tkvQueueHandler.QueueNew(queueKey); err != nil {
+			t.Fatalf("Setup: QueueNew() error = %v", err)
+		}
+		// Attempt to create again
+		err := tkvQueueHandler.QueueNew(queueKey)
+		if err != nil {
+			t.Errorf("QueueNew() on existing queue error = %v, wantErr nil", err)
+		}
+	})
+
+	t.Run("QueuePush_ToExistingQueue", func(t *testing.T) {
+		if err := tkvQueueHandler.QueueNew(queueKey); err != nil { // Ensure queue exists
+			t.Fatalf("Setup: QueueNew() error = %v", err)
+		}
+		val1 := "item1"
+		len1, err := tkvQueueHandler.QueuePush(queueKey, val1)
+		if err != nil {
+			t.Errorf("QueuePush() item1 error = %v, wantErr nil", err)
+		}
+		if len1 != 1 {
+			t.Errorf("QueuePush() item1 length got = %d, want 1", len1)
+		}
+
+		val2 := "item2"
+		len2, err := tkvQueueHandler.QueuePush(queueKey, val2)
+		if err != nil {
+			t.Errorf("QueuePush() item2 error = %v, wantErr nil", err)
+		}
+		if len2 != 2 {
+			t.Errorf("QueuePush() item2 length got = %d, want 2", len2)
+		}
+	})
+
+	t.Run("QueuePush_ToNonExistentQueue", func(t *testing.T) {
+		nonExistentQueueKey := "ghostQueue"
+		_, err := tkvQueueHandler.QueuePush(nonExistentQueueKey, "ghostItem")
+		if !errors.As(err, new(*ErrQueueNotFound)) {
+			t.Errorf("QueuePush() to non-existent queue, error = %T, want *ErrQueueNotFound", err)
+		}
+	})
+
+	t.Run("QueuePop_FromExistingQueue_FIFO", func(t *testing.T) {
+		// Setup queue with items from previous push test if it runs in sequence and modifies state
+		// For safety, re-initialize specific state for this test or use a new key
+		popQueueKey := "popTestQueue"
+		tkvQueueHandler.QueueNew(popQueueKey)
+		tkvQueueHandler.QueuePush(popQueueKey, "popItem1")
+		tkvQueueHandler.QueuePush(popQueueKey, "popItem2")
+
+		popVal1, err := tkvQueueHandler.QueuePop(popQueueKey)
+		if err != nil {
+			t.Errorf("QueuePop() item1 error = %v, wantErr nil", err)
+		}
+		if popVal1 != "popItem1" {
+			t.Errorf("QueuePop() item1 got = %s, want \"popItem1\"", popVal1)
+		}
+
+		popVal2, err := tkvQueueHandler.QueuePop(popQueueKey)
+		if err != nil {
+			t.Errorf("QueuePop() item2 error = %v, wantErr nil", err)
+		}
+		if popVal2 != "popItem2" {
+			t.Errorf("QueuePop() item2 got = %s, want \"popItem2\"", popVal2)
+		}
+	})
+
+	t.Run("QueuePop_FromEmptyQueue", func(t *testing.T) {
+		emptyQueueKey := "emptyTestQueue"
+		tkvQueueHandler.QueueNew(emptyQueueKey)
+
+		_, err := tkvQueueHandler.QueuePop(emptyQueueKey)
+		if !errors.As(err, new(*ErrQueueEmpty)) {
+			t.Errorf("QueuePop() from empty queue, error = %T, want *ErrQueueEmpty", err)
+		}
+	})
+
+	t.Run("QueuePop_FromNonExistentQueue", func(t *testing.T) {
+		nonExistentPopKey := "ghostPopQueue"
+		_, err := tkvQueueHandler.QueuePop(nonExistentPopKey)
+		if !errors.As(err, new(*ErrQueueNotFound)) {
+			t.Errorf("QueuePop() from non-existent queue, error = %T, want *ErrQueueNotFound", err)
+		}
+	})
+
+	t.Run("QueueDelete_ExistingQueue", func(t *testing.T) {
+		deleteQueueKey := "deleteTestQueue"
+		tkvQueueHandler.QueueNew(deleteQueueKey)
+		tkvQueueHandler.QueuePush(deleteQueueKey, "itemToDelete")
+
+		err := tkvQueueHandler.QueueDelete(deleteQueueKey)
+		if err != nil {
+			t.Errorf("QueueDelete() error = %v, wantErr nil", err)
+		}
+
+		// Try to pop, should fail with ErrQueueNotFound
+		_, errPop := tkvQueueHandler.QueuePop(deleteQueueKey)
+		if !errors.As(errPop, new(*ErrQueueNotFound)) {
+			t.Errorf("QueuePop() after Delete expected *ErrQueueNotFound, got %T", errPop)
+		}
+	})
+
+	t.Run("QueueDelete_NonExistentQueue", func(t *testing.T) {
+		nonExistentDeleteKey := "ghostDeleteQueue"
+		err := tkvQueueHandler.QueueDelete(nonExistentDeleteKey)
+		if err != nil {
+			t.Errorf("QueueDelete() of non-existent queue error = %v, wantErr nil", err)
+		}
+	})
+}

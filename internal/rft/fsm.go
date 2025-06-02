@@ -72,6 +72,11 @@ type ValueStoreIF interface {
 	Iterate(prefix string, offset int, limit int) ([]string, error)
 }
 
+type BatchIF interface {
+	BatchSet(items []models.KVPayload) error
+	BatchDelete(keys []models.KeyPayload) error
+}
+
 type CacheStoreIF interface {
 	SetCache(kvp models.CachePayload) error
 	GetCache(key string) (string, error)
@@ -82,24 +87,29 @@ type EventIF interface {
 	Publish(topic string, data any) error
 }
 
+type AtomicIF interface {
+	AtomicNew(key string, overwrite bool) error
+	AtomicAdd(key string, delta int64) (int64, error) // Returns new value
+	AtomicDelete(key string) error
+	AtomicGet(key string) (int64, error)
+}
+
+type QueueIF interface {
+	QueueNew(key string) error
+	QueuePush(key string, value string) (int, error) // Returns new length
+	QueuePop(key string) (string, error)             // Returns popped value
+	QueueDelete(key string) error
+}
+
 // FSMInstance defines the interface for FSM operations.
 type FSMInstance interface {
 	RaftIF
 	ValueStoreIF
 	CacheStoreIF
 	EventIF
-
-	// Raft-specific batch operations, renamed to satisfy FSMInstance requirements
-	BatchSet(items []models.KVPayload) error    // Renamed from BatchSetValuesRaft
-	BatchDelete(keys []models.KeyPayload) error // Renamed from BatchDeleteValuesRaft
-
-	// Atomic Operations that go through Raft
-	AtomicNewRaft(key string, overwrite bool) error
-	AtomicAddRaft(key string, delta int64) (int64, error) // Returns new value
-	AtomicDeleteRaft(key string) error
-
-	// Atomic Get is a direct read, does not go through Raft apply but uses FSM for consistency
-	AtomicGet(key string) (int64, error)
+	AtomicIF
+	QueueIF
+	BatchIF
 
 	Close() error
 }
@@ -122,13 +132,19 @@ const (
 	cmdSetCache          = "set_cache"
 	cmdDeleteCache       = "delete_cache"
 	cmdPublishEvent      = "publish_event"
-	cmdBatchSetValues    = "batch_set_values"    // New command for batch setting values
-	cmdBatchDeleteValues = "batch_delete_values" // New command for batch deleting values
+	cmdBatchSetValues    = "batch_set_values"
+	cmdBatchDeleteValues = "batch_delete_values"
 
 	// Atomic operation commands
 	cmdAtomicNew    = "atomic_new"
 	cmdAtomicAdd    = "atomic_add"
 	cmdAtomicDelete = "atomic_delete"
+
+	// Queue operation commands
+	cmdQueueNew    = "queue_new"
+	cmdQueuePush   = "queue_push"
+	cmdQueuePop    = "queue_pop"
+	cmdQueueDelete = "queue_delete"
 )
 
 // kvFsm holds references to both BadgerDB instances.
@@ -446,6 +462,58 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				return fmt.Errorf("tkv AtomicDelete failed (key %s): %w", p.Key, err)
 			}
 			kf.logger.Info("FSM applied atomic_delete", "key", p.Key)
+			return nil
+		case cmdQueueNew:
+			var p models.QueueNewRequest // Using models.QueueNewRequest
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal queue_new payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal queue_new payload: %w", err)
+			}
+			err := kf.tkv.QueueNew(p.Key)
+			if err != nil {
+				kf.logger.Error("TKV QueueNew failed", "key", p.Key, "error", err)
+				return fmt.Errorf("tkv QueueNew failed (key %s): %w", p.Key, err)
+			}
+			kf.logger.Info("FSM applied queue_new", "key", p.Key)
+			return nil
+		case cmdQueuePush:
+			var p models.QueuePushRequest
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal queue_push payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal queue_push payload: %w", err)
+			}
+			length, err := kf.tkv.QueuePush(p.Key, p.Value)
+			if err != nil {
+				kf.logger.Error("TKV QueuePush failed", "key", p.Key, "value", p.Value, "error", err)
+				return err // Return the error itself (e.g., ErrQueueNotFound)
+			}
+			kf.logger.Info("FSM applied queue_push", "key", p.Key, "value", p.Value, "new_length", length)
+			return length // Return the new length on success
+		case cmdQueuePop:
+			var p models.QueueKeyPayload // Pop only needs the key in payload
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal queue_pop payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal queue_pop payload: %w", err)
+			}
+			value, err := kf.tkv.QueuePop(p.Key)
+			if err != nil {
+				kf.logger.Error("TKV QueuePop failed", "key", p.Key, "error", err)
+				return err // Return the error itself (e.g., ErrQueueNotFound, ErrQueueEmpty)
+			}
+			kf.logger.Info("FSM applied queue_pop", "key", p.Key, "popped_value_len", len(value))
+			return value // Return the popped value on success
+		case cmdQueueDelete:
+			var p models.QueueDeleteRequest // Using models.QueueDeleteRequest
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal queue_delete payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal queue_delete payload: %w", err)
+			}
+			err := kf.tkv.QueueDelete(p.Key)
+			if err != nil {
+				kf.logger.Error("TKV QueueDelete failed", "key", p.Key, "error", err)
+				return fmt.Errorf("tkv QueueDelete failed (key %s): %w", p.Key, err)
+			}
+			kf.logger.Info("FSM applied queue_delete", "key", p.Key)
 			return nil
 		default:
 			kf.logger.Error("Unknown raft command type in Apply", "command_type", cmd.Type)
@@ -979,7 +1047,7 @@ func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {
 
 // [atomics]
 
-func (kf *kvFsm) AtomicNewRaft(key string, overwrite bool) error {
+func (kf *kvFsm) AtomicNew(key string, overwrite bool) error {
 	kf.logger.Debug("AtomicNewRaft called", "key", key, "overwrite", overwrite)
 	payload := models.AtomicNewRequest{Key: key, Overwrite: overwrite}
 	payloadBytes, err := json.Marshal(payload)
@@ -1014,7 +1082,7 @@ func (kf *kvFsm) AtomicNewRaft(key string, overwrite bool) error {
 	return nil
 }
 
-func (kf *kvFsm) AtomicAddRaft(key string, delta int64) (int64, error) {
+func (kf *kvFsm) AtomicAdd(key string, delta int64) (int64, error) {
 	kf.logger.Debug("AtomicAddRaft called", "key", key, "delta", delta)
 	payload := models.AtomicAddRequest{Key: key, Delta: delta}
 	payloadBytes, err := json.Marshal(payload)
@@ -1056,7 +1124,7 @@ func (kf *kvFsm) AtomicAddRaft(key string, delta int64) (int64, error) {
 	return newValue, nil
 }
 
-func (kf *kvFsm) AtomicDeleteRaft(key string) error {
+func (kf *kvFsm) AtomicDelete(key string) error {
 	kf.logger.Debug("AtomicDeleteRaft called", "key", key)
 	payload := models.AtomicKeyPayload{Key: key}
 	payloadBytes, err := json.Marshal(payload)
@@ -1094,6 +1162,160 @@ func (kf *kvFsm) AtomicDeleteRaft(key string) error {
 func (kf *kvFsm) AtomicGet(key string) (int64, error) {
 	kf.logger.Debug("FSM AtomicGet (direct read) called", "key", key)
 	return kf.tkv.AtomicGet(key)
+}
+
+// ------------
+
+// [queues]
+
+func (kf *kvFsm) QueueNew(key string) error {
+	kf.logger.Debug("QueueNewRaft called", "key", key)
+	payload := models.QueueNewRequest{Key: key}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for queue_new", "key", key, "error", err)
+		return fmt.Errorf("could not marshal payload for queue_new: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdQueueNew,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for queue_new", "key", key, "error", err)
+		return fmt.Errorf("could not marshal raft command for queue_new: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for QueueNewRaft", "key", key, "error", err)
+		return fmt.Errorf("raft Apply for QueueNewRaft failed (key %s): %w", key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for QueueNewRaft", "key", key, "error", responseErr)
+		return responseErr
+	}
+	kf.logger.Info("QueueNewRaft Raft Apply successful", "key", key)
+	return nil
+}
+
+func (kf *kvFsm) QueuePush(key string, value string) (int, error) {
+	kf.logger.Debug("QueuePushRaft called", "key", key, "value_len", len(value))
+	payload := models.QueuePushRequest{Key: key, Value: value}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for queue_push", "key", key, "error", err)
+		return 0, fmt.Errorf("could not marshal payload for queue_push: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdQueuePush,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for queue_push", "key", key, "error", err)
+		return 0, fmt.Errorf("could not marshal raft command for queue_push: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for QueuePushRaft", "key", key, "error", err)
+		return 0, fmt.Errorf("raft Apply for QueuePushRaft failed (key %s): %w", key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for QueuePushRaft", "key", key, "error", responseErr)
+		return 0, responseErr // Error from Apply (e.g., tkv.ErrQueueNotFound)
+	}
+
+	newLength, ok := response.(int)
+	if !ok {
+		kf.logger.Error("FSM response for QueuePushRaft was not an int", "key", key, "response_type", fmt.Sprintf("%T", response))
+		return 0, fmt.Errorf("unexpected response type from FSM for QueuePushRaft: got %T, expected int or error", response)
+	}
+
+	kf.logger.Info("QueuePushRaft Raft Apply successful", "key", key, "new_length", newLength)
+	return newLength, nil
+}
+
+func (kf *kvFsm) QueuePop(key string) (string, error) {
+	kf.logger.Debug("QueuePopRaft called", "key", key)
+	payload := models.QueueKeyPayload{Key: key} // Pop only needs key
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for queue_pop", "key", key, "error", err)
+		return "", fmt.Errorf("could not marshal payload for queue_pop: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdQueuePop,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for queue_pop", "key", key, "error", err)
+		return "", fmt.Errorf("could not marshal raft command for queue_pop: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for QueuePopRaft", "key", key, "error", err)
+		return "", fmt.Errorf("raft Apply for QueuePopRaft failed (key %s): %w", key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for QueuePopRaft", "key", key, "error", responseErr)
+		return "", responseErr // Error from Apply (e.g., tkv.ErrQueueNotFound, tkv.ErrQueueEmpty)
+	}
+
+	poppedValue, ok := response.(string)
+	if !ok {
+		kf.logger.Error("FSM response for QueuePopRaft was not a string", "key", key, "response_type", fmt.Sprintf("%T", response))
+		return "", fmt.Errorf("unexpected response type from FSM for QueuePopRaft: got %T, expected string or error", response)
+	}
+
+	kf.logger.Info("QueuePopRaft Raft Apply successful", "key", key, "popped_value_len", len(poppedValue))
+	return poppedValue, nil
+}
+
+func (kf *kvFsm) QueueDelete(key string) error {
+	kf.logger.Debug("QueueDeleteRaft called", "key", key)
+	payload := models.QueueDeleteRequest{Key: key}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for queue_delete", "key", key, "error", err)
+		return fmt.Errorf("could not marshal payload for queue_delete: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdQueueDelete,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for queue_delete", "key", key, "error", err)
+		return fmt.Errorf("could not marshal raft command for queue_delete: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for QueueDeleteRaft", "key", key, "error", err)
+		return fmt.Errorf("raft Apply for QueueDeleteRaft failed (key %s): %w", key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for QueueDeleteRaft", "key", key, "error", responseErr)
+		return responseErr
+	}
+	kf.logger.Info("QueueDeleteRaft Raft Apply successful", "key", key)
+	return nil
 }
 
 // ------------

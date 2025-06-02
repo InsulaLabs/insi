@@ -3,6 +3,7 @@ package tkv
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/InsulaLabs/insula/security/badge"
@@ -19,9 +20,10 @@ type Config struct {
 }
 
 type data struct {
-	store   *badger.DB
-	cache   *ttlcache.Cache[string, string]
-	objects *badger.DB
+	store  *badger.DB
+	cache  *ttlcache.Cache[string, string]
+	queues map[string][]string
+	qLock  sync.RWMutex
 }
 
 type TKVBatchEntry struct {
@@ -54,15 +56,22 @@ type TKVCacheHandler interface {
 	CacheDelete(key string) error
 }
 
+type TKVQueueHandler interface {
+	QueueNew(key string) error                       // create a new queue, no error if it already exists
+	QueuePush(key string, value string) (int, error) // push the value to the queue, return the new length of the queue, error if the queue is full
+	QueuePop(key string) (string, error)             // pop the first item from the queue, return the value, error if the queue is empty
+	QueueDelete(key string) error                    // delete the queue if it exists, no error if it doesn't
+}
+
 type TKV interface {
 	TKVDataHandler
 	TKVCacheHandler
 	TKVBatchHandler
 	TKVAtomicHandler
+	TKVQueueHandler
 
 	Close() error
 
 	GetDataDB() *badger.DB
 	GetCache() *ttlcache.Cache[string, string]
-	GetObjectsDB() *badger.DB
 }

@@ -708,3 +708,66 @@ func (c *Client) AtomicDelete(key string) error {
 	}
 	return nil
 }
+
+// --- Queue Operations ---
+
+// QueueNew creates a new in-memory queue on the server.
+func (c *Client) QueueNew(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty for QueueNew")
+	}
+	payload := models.QueueNewRequest{Key: key}
+	// Server endpoint: /db/api/v1/queue/new
+	return c.doRequest(http.MethodPost, "db/api/v1/queue/new", nil, payload, nil)
+}
+
+// QueuePush pushes a value onto an in-memory queue and returns the new length of the queue.
+func (c *Client) QueuePush(key string, value string) (int, error) {
+	if key == "" {
+		return 0, fmt.Errorf("key cannot be empty for QueuePush")
+	}
+	payload := models.QueuePushRequest{Key: key, Value: value}
+	var response models.QueuePushResponse
+	// Server endpoint: /db/api/v1/queue/push
+	err := c.doRequest(http.MethodPost, "db/api/v1/queue/push", nil, payload, &response)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") { // Assuming 404 for ErrQueueNotFound from server
+			return 0, fmt.Errorf("queue '%s' not found: %w", key, ErrKeyNotFound) // Wrap with more specific error if desired
+		}
+		return 0, err
+	}
+	return response.NewLength, nil
+}
+
+// QueuePop removes and returns the first value from an in-memory queue.
+func (c *Client) QueuePop(key string) (string, error) {
+	if key == "" {
+		return "", fmt.Errorf("key cannot be empty for QueuePop")
+	}
+	payload := models.QueueKeyPayload{Key: key} // Pop request uses QueueKeyPayload
+	var response models.QueuePopResponse
+	// Server endpoint: /db/api/v1/queue/pop
+	err := c.doRequest(http.MethodPost, "db/api/v1/queue/pop", nil, payload, &response)
+	if err != nil {
+		// Server might return 404 for both ErrQueueNotFound and ErrQueueEmpty
+		// The error message from the server (e.g., "queue 'X' not found" or "queue 'X' is empty")
+		// will be part of the error returned by doRequest if it parses the server error correctly.
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "is empty") {
+			// We can make this more specific if server guarantees distinct error messages or codes
+			// For now, returning a generic error that includes the server message seems reasonable.
+			return "", fmt.Errorf("failed to pop from queue '%s': %w", key, err)
+		}
+		return "", err
+	}
+	return response.Value, nil
+}
+
+// QueueDelete deletes an in-memory queue from the server.
+func (c *Client) QueueDelete(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty for QueueDelete")
+	}
+	payload := models.QueueDeleteRequest{Key: key}
+	// Server endpoint: /db/api/v1/queue/delete
+	return c.doRequest(http.MethodPost, "db/api/v1/queue/delete", nil, payload, nil)
+}
