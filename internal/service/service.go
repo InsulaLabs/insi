@@ -128,12 +128,6 @@ func NewService(
 		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 
-	// Add limiter for objects if configured
-	if rlConfig := clusterCfg.RateLimiters.Objects; rlConfig.Limit > 0 {
-		rateLimiters["objects"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
-		rlLogger.Info("Initialized rate limiter for 'objects'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
-	}
-
 	service := &Service{
 		appCtx:           ctx,
 		cfg:              clusterCfg,
@@ -210,16 +204,16 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/batchset", s.rateLimitMiddleware(http.HandlerFunc(s.batchSetHandler), "values"))
 	s.mux.Handle("/db/api/v1/batchdelete", s.rateLimitMiddleware(http.HandlerFunc(s.batchDeleteHandler), "values"))
 
-	// Cache handlers
-	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cache"))
-	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cache"))
-	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cache"))
-
 	// Atomic Operation handlers (using "values" rate limiting category for now)
 	s.mux.Handle("/db/api/v1/atomic/new", s.rateLimitMiddleware(http.HandlerFunc(s.atomicNewHandler), "values"))
 	s.mux.Handle("/db/api/v1/atomic/get", s.rateLimitMiddleware(http.HandlerFunc(s.atomicGetHandler), "values"))
 	s.mux.Handle("/db/api/v1/atomic/add", s.rateLimitMiddleware(http.HandlerFunc(s.atomicAddHandler), "values"))
 	s.mux.Handle("/db/api/v1/atomic/delete", s.rateLimitMiddleware(http.HandlerFunc(s.atomicDeleteHandler), "values"))
+
+	// Cache handlers
+	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cache"))
+	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cache"))
+	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cache"))
 
 	// Events handlers
 	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))

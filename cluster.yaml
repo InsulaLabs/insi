@@ -36,9 +36,6 @@ rateLimiters:
   events:
     limit: 500
     burst: 750
-  objects:
-    limit: 1000
-    burst: 1000
 
 sessions:
   eventChannelSize: 256

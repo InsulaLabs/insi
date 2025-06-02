@@ -641,11 +641,7 @@ func (c *Client) AtomicNew(key string, overwrite bool) error {
 	}
 	err := c.doRequest(http.MethodPost, "db/api/v1/atomic/new", nil, payload, nil)
 	if err != nil {
-		// The server's atomicNewHandler returns http.StatusConflict (409) for tkv.ErrKeyExists
 		if strings.Contains(err.Error(), "409") {
-			// We can't easily get the original error type here without more complex error handling
-			// in doRequest or specific error types returned by it. For now, a generic error.
-			// Or, we could define a new client-side error like ErrAtomicKeyExists
 			return fmt.Errorf("atomic key '%s' likely already exists and overwrite was false: %w", key, err)
 		}
 		return err
@@ -667,9 +663,7 @@ func (c *Client) AtomicGet(key string) (int64, error) {
 		// Server returns 409 for tkv.ErrInvalidState.
 		if strings.Contains(err.Error(), "404") { // Should not happen if server adheres to AtomicGet spec (0 for not found)
 			c.logger.Warn("AtomicGet received 404, expecting server to handle non-existent key by returning 0 value", "key", key)
-			// Consider if this should be ErrKeyNotFound or if server behavior is trusted to return 0 value.
-			// For now, assume server might return 404 if it can't even parse the key or has other issues.
-			return 0, ErrKeyNotFound // Or rely on server to return value:0 and not error for non-existent
+			return 0, ErrKeyNotFound
 		}
 		if strings.Contains(err.Error(), "409") {
 			return 0, fmt.Errorf("atomic key '%s' has invalid state (not an int64): %w", key, err)
