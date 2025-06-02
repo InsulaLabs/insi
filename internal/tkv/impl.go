@@ -1,9 +1,7 @@
 package tkv
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,13 +14,6 @@ import (
 	"github.com/dgraph-io/badger/v3"
 	"github.com/jellydator/ttlcache/v3"
 )
-
-type objectManifest struct {
-	SizeBytes int       `json:"size_bytes"`
-	Chunks    int       `json:"chunks"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Indicies  []string  `json:"indicies"`
-}
 
 var DefaultCacheTTL = 1 * time.Minute
 var DefaultSecureCacheTTL = 1 * time.Minute
@@ -57,6 +48,24 @@ func (e *ErrInvalidState) Error() string {
 	return fmt.Sprintf("invalid state for key '%s': %s", e.Key, e.Reason)
 }
 
+// ErrQueueNotFound is returned when a queue operation is attempted on a non-existent queue.
+type ErrQueueNotFound struct {
+	Key string
+}
+
+func (e *ErrQueueNotFound) Error() string {
+	return fmt.Sprintf("queue '%s' not found", e.Key)
+}
+
+// ErrQueueEmpty is returned when trying to pop from an empty queue.
+type ErrQueueEmpty struct {
+	Key string
+}
+
+func (e *ErrQueueEmpty) Error() string {
+	return fmt.Sprintf("queue '%s' is empty", e.Key)
+}
+
 func New(config Config) (TKV, error) {
 
 	valuesDir := filepath.Join(config.Directory, "values")
@@ -75,15 +84,6 @@ func New(config Config) (TKV, error) {
 		WithMemTableSize(16 << 20) // 16MB MemTableSize
 
 	db, err := badger.Open(dbOpts)
-	if err != nil {
-		return nil, &ErrInternal{Err: err}
-	}
-
-	objOpts := badger.DefaultOptions(objectsDir).
-		WithLogger(newLogger(config.Logger.WithGroup("objects"))).
-		WithMemTableSize(16 << 20) // 16MB MemTableSize
-
-	objects, err := badger.Open(objOpts)
 	if err != nil {
 		return nil, &ErrInternal{Err: err}
 	}
@@ -111,9 +111,9 @@ func New(config Config) (TKV, error) {
 		logger: config.Logger.WithGroup("tkv"),
 		appCtx: config.AppCtx,
 		db: &data{
-			store:   db,
-			cache:   cache,
-			objects: objects,
+			store:  db,
+			cache:  cache,
+			queues: make(map[string][]string), // Initialize queues map
 		},
 		defaultCacheTTL: config.CacheTTL,
 		identity:        config.Identity,
@@ -129,14 +129,6 @@ func (t *tkv) Close() error {
 	if t.db.cache != nil {
 		t.db.cache.Stop()
 		t.logger.Info("ttl cache stopped")
-	}
-
-	if t.db.objects != nil {
-		t.logger.Info("objects db stopped")
-		if err := t.db.objects.Close(); err != nil {
-			t.logger.Error("error closing objects db", "error", err)
-			firstErr = &ErrInternal{Err: err}
-		}
 	}
 
 	if err := t.db.store.Close(); err != nil {
@@ -261,119 +253,6 @@ func (t *tkv) GetDataDB() *badger.DB {
 
 func (t *tkv) GetCache() *ttlcache.Cache[string, string] {
 	return t.db.cache
-}
-
-func (t *tkv) GetObjectsDB() *badger.DB {
-	return t.db.objects
-}
-
-func (t *tkv) SetObject(key string, data []byte) error {
-	manifest := objectManifest{
-		SizeBytes: len(data),
-		UpdatedAt: time.Now(),
-	}
-
-	chunkSize := 1024 * 1024 // 1MB
-	numChunks := (len(data) + chunkSize - 1) / chunkSize
-	manifest.Chunks = numChunks
-	manifest.Indicies = make([]string, numChunks)
-
-	err := t.db.objects.Update(func(txn *badger.Txn) error {
-		for i := 0; i < numChunks; i++ {
-			start := i * chunkSize
-			end := (i + 1) * chunkSize
-			if end > len(data) {
-				end = len(data)
-			}
-			chunk := data[start:end]
-			chunkKey := fmt.Sprintf("%s:chunk:%d", key, i)
-			manifest.Indicies[i] = chunkKey
-
-			if err := txn.Set([]byte(chunkKey), chunk); err != nil {
-				return fmt.Errorf("failed to set chunk %s: %w", chunkKey, err)
-			}
-		}
-
-		manifestBytes, err := json.Marshal(manifest)
-		if err != nil {
-			return fmt.Errorf("failed to marshal object manifest for key %s: %w", key, err)
-		}
-
-		if err := txn.Set([]byte(key), manifestBytes); err != nil {
-			return fmt.Errorf("failed to set object manifest for key %s: %w", key, err)
-		}
-
-		// Add the object index key
-		indexKey := fmt.Sprintf("objidx::%s", key)
-		if err := txn.Set([]byte(indexKey), []byte{}); err != nil { // Store empty value for the index
-			return fmt.Errorf("failed to set object index key %s: %w", indexKey, err)
-		}
-		return nil
-	})
-
-	if err != nil {
-		return &ErrInternal{Err: err}
-	}
-	return nil
-}
-
-func (t *tkv) GetObject(key string) ([]byte, error) {
-	var assembledData []byte
-	err := t.db.objects.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
-		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				return &ErrKeyNotFound{Key: key}
-			}
-			return fmt.Errorf("failed to get object manifest for key %s: %w", key, err)
-		}
-
-		manifestBytes, err := item.ValueCopy(nil)
-		if err != nil {
-			return fmt.Errorf("failed to copy object manifest value for key %s: %w", key, err)
-		}
-
-		var manifest objectManifest
-		if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-			return fmt.Errorf("failed to unmarshal object manifest for key %s: %w", key, err)
-		}
-
-		var buffer bytes.Buffer
-		buffer.Grow(manifest.SizeBytes)
-
-		for _, chunkKey := range manifest.Indicies {
-			chunkItem, err := txn.Get([]byte(chunkKey))
-			if err != nil {
-				// If a chunk is not found, it indicates data corruption or an incomplete write.
-				if errors.Is(err, badger.ErrKeyNotFound) {
-					return &ErrDataCorruption{Key: key, Reason: fmt.Sprintf("chunk %s not found", chunkKey)}
-				}
-				return fmt.Errorf("failed to get chunk %s for object %s: %w", chunkKey, key, err)
-			}
-			chunkData, err := chunkItem.ValueCopy(nil)
-			if err != nil {
-				return fmt.Errorf("failed to copy chunk %s value for object %s: %w", chunkKey, key, err)
-			}
-			buffer.Write(chunkData)
-		}
-
-		if buffer.Len() != manifest.SizeBytes {
-			return &ErrDataCorruption{Key: key, Reason: fmt.Sprintf("reconstructed size %d does not match manifest size %d", buffer.Len(), manifest.SizeBytes)}
-		}
-		assembledData = buffer.Bytes()
-		return nil
-	})
-
-	if err != nil {
-		// Wrap specific errors if they are not already wrapped, otherwise return as is or wrap with ErrInternal
-		switch err.(type) {
-		case *ErrKeyNotFound, *ErrDataCorruption:
-			return nil, err
-		default:
-			return nil, &ErrInternal{Err: err}
-		}
-	}
-	return assembledData, nil
 }
 
 func (t *tkv) BatchSet(entries []TKVBatchEntry) error {
@@ -542,4 +421,75 @@ func (t *tkv) AtomicDelete(key string) error {
 		}
 		return nil // Badger's Delete is idempotent; no error if key doesn't exist.
 	})
+}
+
+// -------------------------- QUEUE OPERATIONS (In-Memory)
+
+// QueueNew creates a new in-memory queue.
+// If the queue already exists, no error is returned and the existing queue is unchanged.
+func (t *tkv) QueueNew(key string) error {
+	t.db.qLock.Lock()
+	defer t.db.qLock.Unlock()
+
+	if _, exists := t.db.queues[key]; !exists {
+		t.db.queues[key] = make([]string, 0)
+		t.logger.Debug("QueueNew: created new queue", "key", key)
+	} else {
+		t.logger.Debug("QueueNew: queue already exists", "key", key)
+	}
+	return nil
+}
+
+// QueuePush pushes a value onto the end of an in-memory queue.
+// Returns the new length of the queue.
+// If the queue does not exist, it returns ErrQueueNotFound.
+func (t *tkv) QueuePush(key string, value string) (int, error) {
+	t.db.qLock.Lock()
+	defer t.db.qLock.Unlock()
+
+	if queue, exists := t.db.queues[key]; exists {
+		t.db.queues[key] = append(queue, value)
+		newLength := len(t.db.queues[key])
+		t.logger.Debug("QueuePush: pushed value to queue", "key", key, "value", value, "new_length", newLength)
+		return newLength, nil
+	}
+	t.logger.Warn("QueuePush: queue not found", "key", key)
+	return 0, &ErrQueueNotFound{Key: key}
+}
+
+// QueuePop removes and returns the first value from an in-memory queue (FIFO).
+// Returns the value.
+// If the queue does not exist, it returns ErrQueueNotFound.
+// If the queue is empty, it returns ErrQueueEmpty.
+func (t *tkv) QueuePop(key string) (string, error) {
+	t.db.qLock.Lock()
+	defer t.db.qLock.Unlock()
+
+	if queue, exists := t.db.queues[key]; exists {
+		if len(queue) == 0 {
+			t.logger.Warn("QueuePop: queue is empty", "key", key)
+			return "", &ErrQueueEmpty{Key: key}
+		}
+		value := queue[0]
+		t.db.queues[key] = queue[1:]
+		t.logger.Debug("QueuePop: popped value from queue", "key", key, "value", value, "new_length", len(t.db.queues[key]))
+		return value, nil
+	}
+	t.logger.Warn("QueuePop: queue not found", "key", key)
+	return "", &ErrQueueNotFound{Key: key}
+}
+
+// QueueDelete deletes an in-memory queue.
+// If the queue does not exist, no error is returned.
+func (t *tkv) QueueDelete(key string) error {
+	t.db.qLock.Lock()
+	defer t.db.qLock.Unlock()
+
+	if _, exists := t.db.queues[key]; exists {
+		delete(t.db.queues, key)
+		t.logger.Debug("QueueDelete: deleted queue", "key", key)
+	} else {
+		t.logger.Debug("QueueDelete: queue not found, no action needed", "key", key)
+	}
+	return nil
 }

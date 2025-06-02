@@ -127,6 +127,10 @@ func NewService(
 		rateLimiters["events"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
+	if rlConfig := clusterCfg.RateLimiters.Queues; rlConfig.Limit > 0 {
+		rateLimiters["queues"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rlLogger.Info("Initialized rate limiter for 'queues'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
+	}
 
 	service := &Service{
 		appCtx:           ctx,
@@ -209,6 +213,12 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/atomic/get", s.rateLimitMiddleware(http.HandlerFunc(s.atomicGetHandler), "values"))
 	s.mux.Handle("/db/api/v1/atomic/add", s.rateLimitMiddleware(http.HandlerFunc(s.atomicAddHandler), "values"))
 	s.mux.Handle("/db/api/v1/atomic/delete", s.rateLimitMiddleware(http.HandlerFunc(s.atomicDeleteHandler), "values"))
+
+	// Queue handlers (using "queues" rate limiting category)
+	s.mux.Handle("/db/api/v1/queue/new", s.rateLimitMiddleware(http.HandlerFunc(s.queueNewHandler), "queues"))
+	s.mux.Handle("/db/api/v1/queue/push", s.rateLimitMiddleware(http.HandlerFunc(s.queuePushHandler), "queues"))
+	s.mux.Handle("/db/api/v1/queue/pop", s.rateLimitMiddleware(http.HandlerFunc(s.queuePopHandler), "queues"))
+	s.mux.Handle("/db/api/v1/queue/delete", s.rateLimitMiddleware(http.HandlerFunc(s.queueDeleteHandler), "queues"))
 
 	// Cache handlers
 	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cache"))

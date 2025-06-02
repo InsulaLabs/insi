@@ -166,6 +166,8 @@ func main() {
 		handleBatchDelete(cli, cmdArgs)
 	case "atomic":
 		handleAtomic(cli, cmdArgs)
+	case "queue":
+		handleQueue(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -200,6 +202,11 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("atomic"), color.CyanString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("atomic"), color.CyanString("add"), color.CyanString("<key>"), color.CyanString("<delta>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("atomic"), color.CyanString("delete"), color.CyanString("<key>"))
+	// Queue Commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("new"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("queue"), color.CyanString("push"), color.CyanString("<key>"), color.CyanString("<value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("pop"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("delete"), color.CyanString("<key>"))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -693,6 +700,99 @@ func handleAtomicDelete(c *client.Client, args []string) {
 	err := c.AtomicDelete(key)
 	if err != nil {
 		logger.Error("AtomicDelete failed", "key", key, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+// --- Queue Command Handlers ---
+
+func handleQueue(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("queue: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "new":
+		handleQueueNew(c, subArgs)
+	case "push":
+		handleQueuePush(c, subArgs)
+	case "pop":
+		handleQueuePop(c, subArgs)
+	case "delete":
+		handleQueueDelete(c, subArgs)
+	default:
+		logger.Error("queue: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleQueueNew(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("queue new: requires <key>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	err := c.QueueNew(key)
+	if err != nil {
+		logger.Error("QueueNew failed", "key", key, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleQueuePush(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("queue push: requires <key> <value>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	value := args[1]
+	newLength, err := c.QueuePush(key, value)
+	if err != nil {
+		logger.Error("QueuePush failed", "key", key, "value", value, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("New length: %d\n", newLength)
+	color.HiGreen("OK")
+}
+
+func handleQueuePop(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("queue pop: requires <key>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	value, err := c.QueuePop(key)
+	if err != nil {
+		logger.Error("QueuePop failed", "key", key, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Println(value)
+}
+
+func handleQueueDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("queue delete: requires <key>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	err := c.QueueDelete(key)
+	if err != nil {
+		logger.Error("QueueDelete failed", "key", key, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
