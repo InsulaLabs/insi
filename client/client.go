@@ -305,7 +305,8 @@ func (c *Client) Get(key string) (string, error) {
 	}
 	err := c.doRequest(http.MethodGet, "db/api/v1/get", params, nil, &response)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if strings.Contains(err.Error(), "404") ||
+			strings.Contains(err.Error(), "key not found") {
 			return "", ErrKeyNotFound
 		}
 		return "", err
@@ -330,7 +331,8 @@ func (c *Client) Delete(key string) error {
 	payload := map[string]string{"key": key}
 	err := c.doRequest(http.MethodPost, "db/api/v1/delete", nil, payload, nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if strings.Contains(err.Error(), "404") ||
+			strings.Contains(err.Error(), "key not found") {
 			// If the key is not found, we return nil
 			return nil
 		}
@@ -354,7 +356,8 @@ func (c *Client) IterateByPrefix(prefix string, offset, limit int) ([]string, er
 	}
 	err := c.doRequest(http.MethodGet, "db/api/v1/iterate/prefix", params, nil, &response)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if strings.Contains(err.Error(), "404") ||
+			strings.Contains(err.Error(), "key not found") {
 			return nil, ErrKeyNotFound
 		}
 		return nil, err
