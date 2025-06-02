@@ -20,7 +20,7 @@ type objectManifest struct {
 	SizeBytes int       `json:"size_bytes"`
 	Chunks    int       `json:"chunks"`
 	UpdatedAt time.Time `json:"updated_at"`
-	Indicies  []string  `json:"indicies"` // the indicies of the chunks in the db (keys)
+	Indicies  []string  `json:"indicies"`
 }
 
 var DefaultCacheTTL = 1 * time.Minute
@@ -28,7 +28,7 @@ var DefaultSecureCacheTTL = 1 * time.Minute
 
 type tkv struct {
 	logger          *slog.Logger
-	appCtx          context.Context // if this is cancelled we need to prepare to receive Close() [but WE dont call Close() - Owner does]
+	appCtx          context.Context
 	db              *data
 	defaultCacheTTL time.Duration
 	identity        badge.Badge
@@ -49,12 +49,20 @@ func New(config Config) (TKV, error) {
 		return nil, &ErrInternal{Err: err}
 	}
 
-	db, err := badger.Open(badger.DefaultOptions(valuesDir).WithLogger(newLogger(config.Logger.WithGroup("store"))))
+	dbOpts := badger.DefaultOptions(valuesDir).
+		WithLogger(newLogger(config.Logger.WithGroup("store"))).
+		WithMemTableSize(16 << 20) // 16MB MemTableSize
+
+	db, err := badger.Open(dbOpts)
 	if err != nil {
 		return nil, &ErrInternal{Err: err}
 	}
 
-	objects, err := badger.Open(badger.DefaultOptions(objectsDir).WithLogger(newLogger(config.Logger.WithGroup("objects"))))
+	objOpts := badger.DefaultOptions(objectsDir).
+		WithLogger(newLogger(config.Logger.WithGroup("objects"))).
+		WithMemTableSize(16 << 20) // 16MB MemTableSize
+
+	objects, err := badger.Open(objOpts)
 	if err != nil {
 		return nil, &ErrInternal{Err: err}
 	}

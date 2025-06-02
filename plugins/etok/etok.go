@@ -10,10 +10,8 @@ package etok
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/InsulaLabs/insi/runtime"
@@ -42,7 +40,6 @@ type VerifyResponse struct {
 type EtokPlugin struct {
 	logger    *slog.Logger
 	prif      runtime.PluginRuntimeIF
-	staticDir string
 	startedAt time.Time
 
 	cache *ttlcache.Cache[string, string]
@@ -50,7 +47,7 @@ type EtokPlugin struct {
 
 var _ runtime.Plugin = &EtokPlugin{}
 
-func New(logger *slog.Logger, staticDir string) *EtokPlugin {
+func New(logger *slog.Logger) *EtokPlugin {
 
 	cache := ttlcache.New[string, string](
 		ttlcache.WithTTL[string, string](1*time.Hour),
@@ -59,9 +56,8 @@ func New(logger *slog.Logger, staticDir string) *EtokPlugin {
 	go cache.Start()
 
 	return &EtokPlugin{
-		logger:    logger,
-		staticDir: staticDir,
-		cache:     cache,
+		logger: logger,
+		cache:  cache,
 	}
 }
 
@@ -71,16 +67,6 @@ func (p *EtokPlugin) GetName() string {
 
 func (p *EtokPlugin) Init(prif runtime.PluginRuntimeIF) *runtime.PluginImplError {
 	p.prif = prif
-	if _, err := os.Stat(p.staticDir); os.IsNotExist(err) {
-		return &runtime.PluginImplError{Err: fmt.Errorf("static directory does not exist, so plugin cannot be initialized: %s", p.staticDir)}
-	}
-	p.startedAt = time.Now()
-
-	fs := http.FileServer(http.Dir(p.staticDir))
-	err := p.prif.RT_MountStatic(p, fs)
-	if err != nil {
-		return &runtime.PluginImplError{Err: fmt.Errorf("failed to mount static files: %w", err)}
-	}
 	return nil
 }
 

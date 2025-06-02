@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/InsulaLabs/insi/plugins/etok"
 	"github.com/InsulaLabs/insi/plugins/static"
 	"github.com/InsulaLabs/insi/plugins/status"
 	"github.com/InsulaLabs/insi/runtime"
@@ -39,7 +40,9 @@ func main() {
 
 	// ------------------- Add Plugins -------------------
 
-	rt.WithPlugin(status.New(slog.Default()))
+	rt.WithPlugin(status.New(slog.Default().WithGroup("status-plugin")))
+
+	rt.WithPlugin(etok.New(slog.Default().WithGroup("etok-plugin")))
 
 	if staticPath != "" {
 		staticPlugin := static.New(slog.Default().WithGroup("static-plugin"), staticPath)

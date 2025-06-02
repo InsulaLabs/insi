@@ -229,14 +229,14 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 			loc := resp.Header.Get("Location")
 			if loc == "" {
-				resp.Body.Close()
+				resp.Body.Close() // Close current redirect response body
 				c.logger.Error("Redirect response missing Location header", "status_code", resp.StatusCode, "url", currentReqURL.String())
 				return fmt.Errorf("redirect (status %d) missing Location header from %s", resp.StatusCode, currentReqURL.String())
 			}
 
 			redirectURL, err := currentReqURL.Parse(loc) // Resolve Location relative to currentReqURL
 			if err != nil {
-				resp.Body.Close()
+				resp.Body.Close() // Close current redirect response body
 				c.logger.Error("Failed to parse redirect Location header", "location", loc, "error", err)
 				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
 			}
@@ -248,13 +248,8 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 				"method", originalMethod)
 
 			currentReqURL = redirectURL // Update URL for the next iteration
-
-			// Note: We are preserving originalMethod for all these redirect codes.
-			// For 303 See Other, the spec suggests changing to GET. If strict 303 behavior is needed,
-			// this would require adjustment. For the current use case (e.g. "set" command), preserving
-			// the method seems to be the desired outcome.
-
-			continue // Continue to the next iteration of the loop for the redirect
+			resp.Body.Close()           // Close current redirect response body before continuing
+			continue                    // Continue to the next iteration of the loop for the redirect
 		}
 
 		// Not a redirect, or unhandled status by the loop; this is the final response to process.
