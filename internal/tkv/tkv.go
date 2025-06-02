@@ -24,12 +24,16 @@ type data struct {
 	objects *badger.DB
 }
 
-/*
-// TODO:
-*/
 type TKVBatchEntry struct {
 	Key   string
 	Value string
+}
+
+type TKVAtomicHandler interface {
+	AtomicNew(key string, overwrite bool) error       // if overwrite is true, the key will be deleted if it exists, else an error if it exists already
+	AtomicGet(key string) (int64, error)              // get the value of the key, 0 if it doesn't exist
+	AtomicAdd(key string, delta int64) (int64, error) // sub by adding negative delta. Atomics floor at 0
+	AtomicDelete(key string) error                    // delete the key if it exists, no error if it doesn't
 }
 
 type TKVBatchHandler interface {
@@ -50,44 +54,11 @@ type TKVCacheHandler interface {
 	CacheDelete(key string) error
 }
 
-/*
-
-// TODO: OPTIMIZATION:
-
-	If we hash the object data and store it into the objectManifest
-	then we optimize the loading of a stored object by
-	dedicating a "cache" size for disk - then dump uploads
-	to the cache under the name of the key its stored as.
-	We keep a ttl map with a file handle to it and as long
-	as the hash doesn't change we can use the cached object
-	rather than loading all of the chunks from the db.
-
-	The ttl handle is just for os reading. when a read comes in
-	and a cache hit happens (Request comes in and the hash  in
-	the manifest is the same as the hash of the cached object)
-	we can load that ttl map and grab a file handle to return to
-	the user. This means we can avoid having large objects in memory
-	for prolonged periods of time [crucial for this type of caching]
-
-	If we have a cache miss and an object that is mapped to that key,
-	then we can delete the cache file from disk.
-*/
-
-// Objects are meant to store "larger" values by splitting them
-// up into smaller (<1mb) chunks and storing them in multiple keys,
-// with the mapped value being a structure to reconstruct the object.
-type TKVObjectHandler interface {
-	SetObject(key string, object []byte) error
-	GetObject(key string) ([]byte, error)
-	DeleteObject(key string) error
-	GetObjectList(prefix string, offset int, limit int) ([]string, error)
-}
-
 type TKV interface {
 	TKVDataHandler
 	TKVCacheHandler
-	TKVObjectHandler
 	TKVBatchHandler
+	TKVAtomicHandler
 
 	Close() error
 

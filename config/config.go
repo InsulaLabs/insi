@@ -63,7 +63,6 @@ type RateLimiters struct {
 	System  RateLimiterConfig `yaml:"system"`
 	Default RateLimiterConfig `yaml:"default"`
 	Events  RateLimiterConfig `yaml:"events"`
-	Objects RateLimiterConfig `yaml:"objects"`
 }
 
 var (
@@ -204,7 +203,6 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 			System:  RateLimiterConfig{Limit: 50.0, Burst: 100},
 			Default: RateLimiterConfig{Limit: 100.0, Burst: 200},
 			Events:  RateLimiterConfig{Limit: 200.0, Burst: 400},
-			Objects: RateLimiterConfig{Limit: 100.0, Burst: 200},
 		},
 		Sessions: SessionsConfig{
 			EventChannelSize:         1000,

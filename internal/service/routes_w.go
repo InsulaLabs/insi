@@ -9,6 +9,7 @@ import (
 	// "net" // No longer needed here if LeaderHTTPAddress provides the correct host:port
 	"net/http"
 
+	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/InsulaLabs/insi/models"
 )
 
@@ -319,124 +320,6 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 /*
-	Handlers for OBJECTS
-*/
-
-const maxObjectSize = 5 * 1024 * 1024 // 16 MB
-
-// root only
-func (s *Service) setObjectHandler(w http.ResponseWriter, r *http.Request) {
-
-	/*
-
-		NOTE:
-		    Larger objects sent over raft will have a higher impact
-			than regular key-value updates.
-
-			For this reason, only root key can set objects.
-
-
-
-	*/
-	td, ok := s.ValidateToken(r)
-	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	s.logger.Debug("SetObjectHandler", "entity", td.Entity)
-
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
-		return
-	}
-
-	// Limit the size of the request body to prevent excessively large uploads
-	r.Body = http.MaxBytesReader(w, r.Body, maxObjectSize)
-	defer r.Body.Close()
-
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		s.logger.Error("Could not read body for set object request", "error", err)
-		// Check if the error is due to the body being too large
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			http.Error(w, "Request entity too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
-
-	// We expect the client to send a models.ObjectPayload with the key in the JSON body
-	// and the raw object data as the value. However, for HTTP, it's more common to get the raw bytes
-	// directly from the body if it's purely binary, or use multipart/form-data for metadata + binary.
-	// For simplicity here, we'll assume a JSON payload that contains the key, and the value is the raw object data.
-	// This means the client needs to base64 encode the object if sending as part of JSON string, or we adjust the model.
-
-	// Let's assume the request body *is* the object, and key is a query param for simplicity with large objects.
-	// This deviates from other set handlers but is more practical for binary blobs.
-	key := r.URL.Query().Get("key")
-	if key == "" {
-		http.Error(w, "Missing key parameter for set object request", http.StatusBadRequest)
-		return
-	}
-
-	// prefix to lock to the api key holding entity
-	pKey := fmt.Sprintf("%s:%s", td.UUID, key)
-
-	// Note: Size check for objects might be complex as they are chunked.
-	// The underlying TKV SetObject will handle chunking. We might want a total size limit here.
-	// For now, we rely on TKV's internal handling.
-
-	/*
-		NOTE: This root-only operation is not size-limited and will NOT be
-
-	*/
-	err = s.fsm.SetObject(pKey, bodyBytes)
-	if err != nil {
-		s.logger.Error("Could not write object via FSM", "key", pKey, "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-// root only
-func (s *Service) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r)
-	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	s.logger.Debug("DeleteObjectHandler", "entity", td.Entity)
-
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
-		return
-	}
-
-	// Expect key in query parameters for DELETE operations on objects
-	key := r.URL.Query().Get("key")
-	if key == "" {
-		http.Error(w, "Missing key parameter for delete object request", http.StatusBadRequest)
-		return
-	}
-
-	// prefix to lock to the api key holding entity
-	pKey := fmt.Sprintf("%s:%s", td.UUID, key)
-
-	err := s.fsm.DeleteObject(pKey)
-	if err != nil {
-		s.logger.Error("Could not delete object via FSM", "key", pKey, "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-/*
 	Handlers for BATCH VALUE operations
 */
 
@@ -573,6 +456,184 @@ func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.fsm.BatchDelete(keysToDeleteFSM); err != nil {
 		s.logger.Error("Could not batch delete values via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+/*
+	Handlers for ATOMIC operations
+*/
+
+func (s *Service) atomicNewHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := s.ValidateToken(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	s.logger.Debug("AtomicNewHandler", "entity", td.Entity)
+
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for atomic new request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var req models.AtomicNewRequest
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		s.logger.Error("Invalid JSON payload for atomic new request", "error", err)
+		http.Error(w, "Invalid JSON payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Key == "" {
+		http.Error(w, "Missing key in atomic new request payload", http.StatusBadRequest)
+		return
+	}
+
+	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	if sizeTooLargeForStorage(prefixedKey) {
+		http.Error(w, "Prefixed key is too large", http.StatusBadRequest)
+		return
+	}
+
+	internalAtomicKey := fmt.Sprintf("__atomic__:%s", prefixedKey)
+
+	err = s.fsm.AtomicNewRaft(internalAtomicKey, req.Overwrite)
+	if err != nil {
+		// Check for specific TKV errors that might be returned from FSM/TKV
+		var keyExistsErr *tkv.ErrKeyExists
+		if errors.As(err, &keyExistsErr) {
+			s.logger.Warn("AtomicNew failed because key already exists", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
+			http.Error(w, err.Error(), http.StatusConflict) // 409 Conflict
+			return
+		}
+		s.logger.Error("Could not perform AtomicNewRaft via FSM", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Service) atomicAddHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := s.ValidateToken(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	s.logger.Debug("AtomicAddHandler", "entity", td.Entity)
+
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for atomic add request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var req models.AtomicAddRequest
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		s.logger.Error("Invalid JSON payload for atomic add request", "error", err)
+		http.Error(w, "Invalid JSON payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Key == "" {
+		http.Error(w, "Missing key in atomic add request payload", http.StatusBadRequest)
+		return
+	}
+
+	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	if sizeTooLargeForStorage(prefixedKey) {
+		http.Error(w, "Prefixed key is too large", http.StatusBadRequest)
+		return
+	}
+
+	internalAtomicKey := fmt.Sprintf("__atomic__:%s", prefixedKey)
+
+	newValue, err := s.fsm.AtomicAddRaft(internalAtomicKey, req.Delta)
+	if err != nil {
+		var invalidStateErr *tkv.ErrInvalidState
+		if errors.As(err, &invalidStateErr) {
+			s.logger.Warn("AtomicAdd failed due to invalid state", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
+			http.Error(w, err.Error(), http.StatusConflict) // 409 Conflict or 422 Unprocessable Entity
+			return
+		}
+		s.logger.Error("Could not perform AtomicAddRaft via FSM", "key", prefixedKey, "internal_key", internalAtomicKey, "delta", req.Delta, "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	resp := models.AtomicAddResponse{
+		Key:      req.Key, // Return original non-prefixed key
+		NewValue: newValue,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.logger.Error("Failed to encode AtomicAddResponse", "error", err)
+	}
+}
+
+func (s *Service) atomicDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := s.ValidateToken(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	s.logger.Debug("AtomicDeleteHandler", "entity", td.Entity)
+
+	if !s.fsm.IsLeader() {
+		s.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("Could not read body for atomic delete request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var req models.AtomicKeyPayload // Using AtomicKeyPayload as we only need the key
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		s.logger.Error("Invalid JSON payload for atomic delete request", "error", err)
+		http.Error(w, "Invalid JSON payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Key == "" {
+		http.Error(w, "Missing key in atomic delete request payload", http.StatusBadRequest)
+		return
+	}
+
+	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	if sizeTooLargeForStorage(prefixedKey) {
+		http.Error(w, "Prefixed key is too large", http.StatusBadRequest)
+		return
+	}
+
+	internalAtomicKey := fmt.Sprintf("__atomic__:%s", prefixedKey)
+
+	err = s.fsm.AtomicDeleteRaft(internalAtomicKey)
+	if err != nil {
+		// AtomicDelete in TKV is idempotent and doesn't return ErrKeyNotFound.
+		// Any error here would likely be an internal FSM or TKV error.
+		s.logger.Error("Could not perform AtomicDeleteRaft via FSM", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

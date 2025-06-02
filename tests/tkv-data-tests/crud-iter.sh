@@ -167,11 +167,11 @@ test_iterate_prefix() {
     print_header "Test: Iterate by Prefix"
     local prefix="iter_prefix_$(date +%s)_"
     local key1="${prefix}key1"
-    local value1="value1_iter"
+    local value1="value1_iter" # Still needed for set
     local key2="${prefix}key2"
-    local value2="value2_iter"
+    local value2="value2_iter" # Still needed for set
     local key3="${prefix}key3"
-    local value3="value3_iter"
+    local value3="value3_iter" # Still needed for set
     local output_iterate
     local exit_code_iterate
     local exit_code_set # for set operations
@@ -188,39 +188,39 @@ test_iterate_prefix() {
     expect_success "Set key '$key3' for iteration" "$exit_code_set"
 
     # Iterate
-    # Note: Iterate command in insic outputs values.
-    # For this test, we check if the values are returned.
+    # Note: Iterate command in insic now outputs KEYS.
+    # For this test, we check if the keys are returned.
     output_iterate=$(run_insic "iterate" "prefix" "$prefix")
     exit_code_iterate=$?
-    expect_success "Iterate by prefix '$prefix'" "$exit_code_iterate" "$output_iterate"
+    expect_success "Iterate by prefix '$prefix' (expecting keys)" "$exit_code_iterate" "$output_iterate"
 
-    local found_value1=false
-    local found_value2=false
-    local found_value3=false
+    local found_key1=false
+    local found_key2=false
+    local found_key3=false
     local extra_items=false
     local count=0
 
     while IFS= read -r line; do
         count=$((count + 1))
-        if [[ "$line" == "$value1" ]]; then
-            found_value1=true
-        elif [[ "$line" == "$value2" ]]; then
-            found_value2=true
-        elif [[ "$line" == "$value3" ]]; then
-            found_value3=true
+        if [[ "$line" == "$key1" ]]; then
+            found_key1=true
+        elif [[ "$line" == "$key2" ]]; then
+            found_key2=true
+        elif [[ "$line" == "$key3" ]]; then
+            found_key3=true
         else
             echo -e "${WARNING_EMOJI} ${YELLOW}Iterate by prefix '$prefix' returned unexpected item: $line${NC}"
             extra_items=true
         fi
     done <<< "$output_iterate"
 
-    if [[ "$found_value1" == true && "$found_value2" == true && "$found_value3" == true && "$extra_items" == false && $count -eq 3 ]]; then
-        echo -e "${SUCCESS_EMOJI} ${GREEN}Iterate by prefix '$prefix' successfully retrieved all expected values and no extras.${NC}"
+    if [[ "$found_key1" == true && "$found_key2" == true && "$found_key3" == true && "$extra_items" == false && $count -eq 3 ]]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}Iterate by prefix '$prefix' successfully retrieved all expected keys and no extras.${NC}"
     else
-        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Iterate by prefix '$prefix' did not retrieve the expected set of values.${NC}"
-        echo -e "  Found value1 ($value1): $found_value1"
-        echo -e "  Found value2 ($value2): $found_value2"
-        echo -e "  Found value3 ($value3): $found_value3"
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Iterate by prefix '$prefix' did not retrieve the expected set of keys.${NC}"
+        echo -e "  Found key1 ($key1): $found_key1"
+        echo -e "  Found key2 ($key2): $found_key2"
+        echo -e "  Found key3 ($key3): $found_key3"
         echo -e "  Extra items found: $extra_items"
         echo -e "  Total items found: $count (Expected 3)"
     fi
