@@ -457,3 +457,175 @@ func TestTKV_BatchOperations(t *testing.T) {
 		// Verify non-existent keys don't cause issues (implicitly tested by no error from BatchDelete)
 	})
 }
+
+func TestTKV_AtomicOperations(t *testing.T) {
+	ctx := context.Background()
+	tkvTest, err := createTestTKV(ctx)
+	if err != nil {
+		t.Fatalf("Failed to create test TKV: %v", err)
+	}
+	defer tkvTest.Cleanup()
+
+	tkvAtomicHandler, ok := tkvTest.tkv.(TKVAtomicHandler)
+	if !ok {
+		t.Fatalf("TKV instance does not implement TKVAtomicHandler")
+	}
+
+	// Test AtomicNew
+	t.Run("AtomicNew_NewKey", func(t *testing.T) {
+		key := "atomicNew1"
+		err := tkvAtomicHandler.AtomicNew(key, false)
+		if err != nil {
+			t.Errorf("AtomicNew() error = %v, wantErr nil", err)
+		}
+		val, _ := tkvTest.tkv.Get(key) // Use base Get to check raw value
+		if val != "0" {
+			t.Errorf("AtomicNew() value = %s, want \"0\"", val)
+		}
+	})
+
+	t.Run("AtomicNew_ExistingKey_NoOverwrite_ShouldFail", func(t *testing.T) {
+		key := "atomicNew2"
+		tkvAtomicHandler.AtomicNew(key, false) // Create it first
+		err := tkvAtomicHandler.AtomicNew(key, false)
+		if !errors.As(err, new(*ErrKeyExists)) {
+			t.Errorf("AtomicNew() with existing key and no overwrite, error = %T, want *ErrKeyExists", err)
+		}
+	})
+
+	t.Run("AtomicNew_ExistingKey_Overwrite_ShouldSucceed", func(t *testing.T) {
+		key := "atomicNew3"
+		tkvTest.tkv.Set(key, "123") // Set to something other than "0"
+		err := tkvAtomicHandler.AtomicNew(key, true)
+		if err != nil {
+			t.Errorf("AtomicNew() with existing key and overwrite, error = %v, wantErr nil", err)
+		}
+		val, _ := tkvTest.tkv.Get(key)
+		if val != "0" {
+			t.Errorf("AtomicNew() with overwrite, value = %s, want \"0\"", val)
+		}
+	})
+
+	// Test AtomicGet
+	t.Run("AtomicGet_NonExistentKey", func(t *testing.T) {
+		key := "atomicGetNonExistent"
+		val, err := tkvAtomicHandler.AtomicGet(key)
+		if err != nil {
+			t.Errorf("AtomicGet() for non-existent key, error = %v, wantErr nil", err)
+		}
+		if val != 0 {
+			t.Errorf("AtomicGet() for non-existent key, value = %d, want 0", val)
+		}
+	})
+
+	t.Run("AtomicGet_ExistingKey", func(t *testing.T) {
+		key := "atomicGetExisting"
+		tkvAtomicHandler.AtomicNew(key, false)
+		tkvAtomicHandler.AtomicAdd(key, 5) // Add something to it
+		val, err := tkvAtomicHandler.AtomicGet(key)
+		if err != nil {
+			t.Errorf("AtomicGet() for existing key, error = %v, wantErr nil", err)
+		}
+		if val != 5 {
+			t.Errorf("AtomicGet() for existing key, value = %d, want 5", val)
+		}
+	})
+
+	t.Run("AtomicGet_InvalidStateNotInt", func(t *testing.T) {
+		key := "atomicGetInvalid"
+		tkvTest.tkv.Set(key, "not-a-number")
+		val, err := tkvAtomicHandler.AtomicGet(key)
+		if !errors.As(err, new(*ErrInvalidState)) {
+			t.Errorf("AtomicGet() for invalid state key, error = %T, want *ErrInvalidState", err)
+		}
+		if val != 0 { // Should be 0 as per impl if parsing fails
+			t.Errorf("AtomicGet() for invalid state key, value = %d, want 0", val)
+		}
+	})
+
+	// Test AtomicAdd
+	t.Run("AtomicAdd_NonExistentKey", func(t *testing.T) {
+		key := "atomicAddNonExistent"
+		newVal, err := tkvAtomicHandler.AtomicAdd(key, 10)
+		if err != nil {
+			t.Errorf("AtomicAdd() to non-existent key, error = %v, wantErr nil", err)
+		}
+		if newVal != 10 {
+			t.Errorf("AtomicAdd() to non-existent key, new value = %d, want 10", newVal)
+		}
+		storedVal, _ := tkvAtomicHandler.AtomicGet(key)
+		if storedVal != 10 {
+			t.Errorf("AtomicAdd() to non-existent key, stored value = %d, want 10", storedVal)
+		}
+	})
+
+	t.Run("AtomicAdd_ExistingKey_PositiveDelta", func(t *testing.T) {
+		key := "atomicAddExistingPos"
+		tkvAtomicHandler.AtomicNew(key, false)
+		tkvAtomicHandler.AtomicAdd(key, 5)
+		newVal, err := tkvAtomicHandler.AtomicAdd(key, 3)
+		if err != nil {
+			t.Errorf("AtomicAdd() positive delta, error = %v, wantErr nil", err)
+		}
+		if newVal != 8 {
+			t.Errorf("AtomicAdd() positive delta, new value = %d, want 8", newVal)
+		}
+	})
+
+	t.Run("AtomicAdd_ExistingKey_NegativeDelta_AboveZero", func(t *testing.T) {
+		key := "atomicAddExistingNegAboveZero"
+		tkvAtomicHandler.AtomicNew(key, false)
+		tkvAtomicHandler.AtomicAdd(key, 10)
+		newVal, err := tkvAtomicHandler.AtomicAdd(key, -3)
+		if err != nil {
+			t.Errorf("AtomicAdd() negative delta above zero, error = %v, wantErr nil", err)
+		}
+		if newVal != 7 {
+			t.Errorf("AtomicAdd() negative delta above zero, new value = %d, want 7", newVal)
+		}
+	})
+
+	t.Run("AtomicAdd_ExistingKey_NegativeDelta_ToZeroFloor", func(t *testing.T) {
+		key := "atomicAddExistingNegToZero"
+		tkvAtomicHandler.AtomicNew(key, false)
+		tkvAtomicHandler.AtomicAdd(key, 5)
+		newVal, err := tkvAtomicHandler.AtomicAdd(key, -10)
+		if err != nil {
+			t.Errorf("AtomicAdd() negative delta to zero floor, error = %v, wantErr nil", err)
+		}
+		if newVal != 0 {
+			t.Errorf("AtomicAdd() negative delta to zero floor, new value = %d, want 0", newVal)
+		}
+	})
+
+	t.Run("AtomicAdd_InvalidStateNotInt", func(t *testing.T) {
+		key := "atomicAddInvalid"
+		tkvTest.tkv.Set(key, "not-a-number")
+		_, err := tkvAtomicHandler.AtomicAdd(key, 5)
+		if !errors.As(err, new(*ErrInvalidState)) {
+			t.Errorf("AtomicAdd() to invalid state key, error = %T, want *ErrInvalidState", err)
+		}
+	})
+
+	// Test AtomicDelete
+	t.Run("AtomicDelete_ExistingKey", func(t *testing.T) {
+		key := "atomicDeleteExisting"
+		tkvAtomicHandler.AtomicNew(key, false)
+		err := tkvAtomicHandler.AtomicDelete(key)
+		if err != nil {
+			t.Errorf("AtomicDelete() for existing key, error = %v, wantErr nil", err)
+		}
+		_, errGet := tkvTest.tkv.Get(key)
+		if !errors.As(errGet, new(*ErrKeyNotFound)) {
+			t.Errorf("Get() after AtomicDelete expected ErrKeyNotFound, got %v", errGet)
+		}
+	})
+
+	t.Run("AtomicDelete_NonExistentKey", func(t *testing.T) {
+		key := "atomicDeleteNonExistent"
+		err := tkvAtomicHandler.AtomicDelete(key)
+		if err != nil {
+			t.Errorf("AtomicDelete() for non-existent key, error = %v, wantErr nil", err)
+		}
+	})
+}

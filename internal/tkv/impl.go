@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/InsulaLabs/insula/security/badge"
@@ -35,6 +36,26 @@ type tkv struct {
 }
 
 var _ TKV = &tkv{}
+
+// ErrKeyExists is returned when trying to create a key that already exists
+// and overwrite is false.
+type ErrKeyExists struct {
+	Key string
+}
+
+func (e *ErrKeyExists) Error() string {
+	return fmt.Sprintf("key '%s' already exists", e.Key)
+}
+
+// ErrInvalidState is returned when an operation encounters data in an unexpected format.
+type ErrInvalidState struct {
+	Key    string
+	Reason string
+}
+
+func (e *ErrInvalidState) Error() string {
+	return fmt.Sprintf("invalid state for key '%s': %s", e.Key, e.Reason)
+}
 
 func New(config Config) (TKV, error) {
 
@@ -405,4 +426,120 @@ func (t *tkv) BatchDelete(keys []string) error {
 		return &ErrInternal{Err: fmt.Errorf("failed to flush batch delete: %w", err)}
 	}
 	return nil
+}
+
+// -------------------------- ATOMIC OPERATIONS
+
+// AtomicNew creates a new key for atomic operations, initializing its value to "0".
+// If overwrite is true and the key exists, it will be reset to "0".
+// If overwrite is false and the key exists, ErrKeyExists is returned.
+func (t *tkv) AtomicNew(key string, overwrite bool) error {
+	return t.db.store.Update(func(txn *badger.Txn) error {
+		_, err := txn.Get([]byte(key))
+		keyExists := err == nil
+
+		if err != nil && !errors.Is(err, badger.ErrKeyNotFound) {
+			return &ErrInternal{Err: fmt.Errorf("failed to check existence for key %s: %w", key, err)}
+		}
+
+		if keyExists && !overwrite {
+			return &ErrKeyExists{Key: key}
+		}
+
+		// If key exists and overwrite is true, or if key doesn't exist, set to "0".
+		// Badger's Set will handle overwriting if the key exists.
+		return txn.Set([]byte(key), []byte("0"))
+	})
+}
+
+// AtomicGet retrieves the int64 value of an atomic key.
+// Returns 0 if the key does not exist (as per interface spec).
+// Returns ErrInvalidState if the key exists but its value is not a valid int64.
+func (t *tkv) AtomicGet(key string) (int64, error) {
+	var value int64
+	errView := t.db.store.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			value = 0 // Key doesn't exist, return 0 and no error for AtomicGet
+			return nil
+		}
+		if err != nil {
+			return &ErrInternal{Err: fmt.Errorf("failed to get key %s: %w", key, err)}
+		}
+
+		valBytes, err := item.ValueCopy(nil)
+		if err != nil {
+			return &ErrInternal{Err: fmt.Errorf("failed to copy value for key %s: %w", key, err)}
+		}
+
+		parsedValue, err := strconv.ParseInt(string(valBytes), 10, 64)
+		if err != nil {
+			value = 0 // Set to 0 on parse error as well
+			return &ErrInvalidState{Key: key, Reason: fmt.Sprintf("value not a valid int64: '%s'", string(valBytes))}
+		}
+		value = parsedValue
+		return nil
+	})
+
+	if errView != nil {
+		return value, errView // Return the value (which might be 0 if parsing failed) and the error
+	}
+	return value, nil
+}
+
+// AtomicAdd adds a delta to an atomic key's int64 value.
+// If the key does not exist, it's treated as starting from 0.
+// The value is floored at 0 (cannot go negative).
+// Returns the new value after the addition.
+func (t *tkv) AtomicAdd(key string, delta int64) (int64, error) {
+	var newValue int64
+	errUpdate := t.db.store.Update(func(txn *badger.Txn) error {
+		item, errGet := txn.Get([]byte(key))
+		var currentValue int64
+
+		if errors.Is(errGet, badger.ErrKeyNotFound) {
+			currentValue = 0 // Key doesn't exist, start from 0
+		} else if errGet != nil {
+			return &ErrInternal{Err: fmt.Errorf("failed to get key %s for add: %w", key, errGet)}
+		} else {
+			valBytes, errCopy := item.ValueCopy(nil)
+			if errCopy != nil {
+				return &ErrInternal{Err: fmt.Errorf("failed to copy value for key %s for add: %w", key, errCopy)}
+			}
+			parsedVal, errParse := strconv.ParseInt(string(valBytes), 10, 64)
+			if errParse != nil {
+				// If current value is not a number, it's an invalid state.
+				// Consider if this should default to 0 and add, or error out.
+				// Erroring out seems safer for "atomic" operations.
+				return &ErrInvalidState{Key: key, Reason: fmt.Sprintf("existing value not a valid int64: '%s'", string(valBytes))}
+			}
+			currentValue = parsedVal
+		}
+
+		newValue = currentValue + delta
+		if newValue < 0 {
+			newValue = 0 // Floor at 0
+		}
+
+		return txn.Set([]byte(key), []byte(strconv.FormatInt(newValue, 10)))
+	})
+
+	if errUpdate != nil {
+		return 0, errUpdate // Return 0 for value if the update failed
+	}
+	return newValue, nil
+}
+
+// AtomicDelete deletes an atomic key.
+// No error is returned if the key does not exist.
+func (t *tkv) AtomicDelete(key string) error {
+	return t.db.store.Update(func(txn *badger.Txn) error {
+		err := txn.Delete([]byte(key))
+		if err != nil {
+			// Badger's Delete can return an error for reasons other than not found (though typically not for a simple Delete)
+			// We wrap it to conform to our error handling.
+			return &ErrInternal{Err: fmt.Errorf("failed to delete key %s: %w", key, err)}
+		}
+		return nil // Badger's Delete is idempotent; no error if key doesn't exist.
+	})
 }

@@ -2,10 +2,13 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 
+	"github.com/InsulaLabs/insi/internal/tkv"
+	"github.com/InsulaLabs/insi/models"
 	"github.com/dgraph-io/badger/v3"
 )
 
@@ -137,5 +140,51 @@ func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 	if errEnc := json.NewEncoder(w).Encode(rsp); errEnc != nil {
 		s.logger.Error("Could not encode response for cache", "key", key, "error", errEnc)
 		return
+	}
+}
+
+func (s *Service) atomicGetHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := s.ValidateToken(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	s.logger.Debug("AtomicGetHandler", "entity", td.Entity)
+
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		http.Error(w, "Missing 'key' query parameter", http.StatusBadRequest)
+		return
+	}
+
+	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, key)
+	if sizeTooLargeForStorage(prefixedKey) {
+		http.Error(w, "Prefixed key is too large", http.StatusBadRequest)
+		return
+	}
+
+	internalAtomicKey := fmt.Sprintf("__atomic__:%s", prefixedKey)
+
+	value, err := s.fsm.AtomicGet(internalAtomicKey)
+	if err != nil {
+		var invalidStateErr *tkv.ErrInvalidState
+		if errors.As(err, &invalidStateErr) {
+			s.logger.Warn("AtomicGet failed due to invalid state", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		s.logger.Error("Could not perform AtomicGet via FSM/TKV", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	resp := models.AtomicGetResponse{
+		Key:   key, // Return original non-prefixed key to the client
+		Value: value,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.logger.Error("Failed to encode AtomicGetResponse", "error", err)
+		// Response already started, cannot send different HTTP error
 	}
 }

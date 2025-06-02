@@ -32,6 +32,15 @@ type TKVBatchEntry struct {
 	Value string
 }
 
+// These are meant to happen "atomically" so that when fsm applies we dont have to worry about
+// race conditions involving writes
+type TKVAtomicHandler interface {
+	AtomicNew(key string, overwrite bool) error       // if overwrite is true, the key will be deleted if it exists, else an error if it exists already
+	AtomicGet(key string) (int64, error)              // get the value of the key, 0 if it doesn't exist
+	AtomicAdd(key string, delta int64) (int64, error) // sub by adding negative delta. Atomics floor at 0
+	AtomicDelete(key string) error                    // delete the key if it exists, no error if it doesn't
+}
+
 type TKVBatchHandler interface {
 	BatchSet(entries []TKVBatchEntry) error
 	BatchDelete(keys []string) error
@@ -54,6 +63,7 @@ type TKV interface {
 	TKVDataHandler
 	TKVCacheHandler
 	TKVBatchHandler
+	TKVAtomicHandler
 
 	Close() error
 

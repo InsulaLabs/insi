@@ -627,3 +627,90 @@ func (c *Client) BatchDelete(keys []string) error {
 	}{Keys: keys}
 	return c.doRequest(http.MethodPost, "db/api/v1/batchdelete", nil, requestPayload, nil)
 }
+
+// --- Atomic Operations ---
+
+// AtomicNew creates a new atomic counter or resets an existing one if overwrite is true.
+func (c *Client) AtomicNew(key string, overwrite bool) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty for AtomicNew")
+	}
+	payload := models.AtomicNewRequest{
+		Key:       key,
+		Overwrite: overwrite,
+	}
+	err := c.doRequest(http.MethodPost, "db/api/v1/atomic/new", nil, payload, nil)
+	if err != nil {
+		// The server's atomicNewHandler returns http.StatusConflict (409) for tkv.ErrKeyExists
+		if strings.Contains(err.Error(), "409") {
+			// We can't easily get the original error type here without more complex error handling
+			// in doRequest or specific error types returned by it. For now, a generic error.
+			// Or, we could define a new client-side error like ErrAtomicKeyExists
+			return fmt.Errorf("atomic key '%s' likely already exists and overwrite was false: %w", key, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// AtomicGet retrieves the current value of an atomic counter.
+// Returns 0 if the key does not exist (server handles this by returning 0 value).
+func (c *Client) AtomicGet(key string) (int64, error) {
+	if key == "" {
+		return 0, fmt.Errorf("key cannot be empty for AtomicGet")
+	}
+	params := map[string]string{"key": key}
+	var response models.AtomicGetResponse
+	err := c.doRequest(http.MethodGet, "db/api/v1/atomic/get", params, nil, &response)
+	if err != nil {
+		// Server returns 404 for non-existent keys in GET, but AtomicGet on server should return 0 for non-existent.
+		// Server returns 409 for tkv.ErrInvalidState.
+		if strings.Contains(err.Error(), "404") { // Should not happen if server adheres to AtomicGet spec (0 for not found)
+			c.logger.Warn("AtomicGet received 404, expecting server to handle non-existent key by returning 0 value", "key", key)
+			// Consider if this should be ErrKeyNotFound or if server behavior is trusted to return 0 value.
+			// For now, assume server might return 404 if it can't even parse the key or has other issues.
+			return 0, ErrKeyNotFound // Or rely on server to return value:0 and not error for non-existent
+		}
+		if strings.Contains(err.Error(), "409") {
+			return 0, fmt.Errorf("atomic key '%s' has invalid state (not an int64): %w", key, err)
+		}
+		return 0, err
+	}
+	return response.Value, nil
+}
+
+// AtomicAdd adds a delta to an atomic counter and returns the new value.
+func (c *Client) AtomicAdd(key string, delta int64) (int64, error) {
+	if key == "" {
+		return 0, fmt.Errorf("key cannot be empty for AtomicAdd")
+	}
+	payload := models.AtomicAddRequest{
+		Key:   key,
+		Delta: delta,
+	}
+	var response models.AtomicAddResponse
+	err := c.doRequest(http.MethodPost, "db/api/v1/atomic/add", nil, payload, &response)
+	if err != nil {
+		// Server returns 409 for tkv.ErrInvalidState.
+		if strings.Contains(err.Error(), "409") {
+			return 0, fmt.Errorf("atomic key '%s' has invalid state (not an int64) for add: %w", key, err)
+		}
+		return 0, err
+	}
+	return response.NewValue, nil
+}
+
+// AtomicDelete deletes an atomic counter.
+func (c *Client) AtomicDelete(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty for AtomicDelete")
+	}
+	payload := models.AtomicKeyPayload{Key: key} // Server expects a body with the key
+	err := c.doRequest(http.MethodPost, "db/api/v1/atomic/delete", nil, payload, nil)
+	if err != nil {
+		// Server returns 200 OK even if key doesn't exist, so 404 shouldn't happen for "not found".
+		// Any error here is likely a server-side processing issue or network problem.
+		return err
+	}
+	return nil
+}

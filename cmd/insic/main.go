@@ -164,6 +164,8 @@ func main() {
 		handleBatchSet(cli, cmdArgs)
 	case "batchdelete":
 		handleBatchDelete(cli, cmdArgs)
+	case "atomic":
+		handleAtomic(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -193,6 +195,11 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("object"), color.CyanString("list"), color.CyanString("[prefix]"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchset"), color.CyanString("<filepath.json>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchdelete"), color.CyanString("<filepath.json>"))
+	// Atomic Commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("atomic"), color.CyanString("new"), color.CyanString("<key>"), color.CyanString("[overwrite (true|false)]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("atomic"), color.CyanString("get"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("atomic"), color.CyanString("add"), color.CyanString("<key>"), color.CyanString("<delta>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("atomic"), color.CyanString("delete"), color.CyanString("<key>"))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -572,4 +579,122 @@ func handleBatchDelete(c *client.Client, args []string) {
 	}
 
 	color.HiGreen("OK (%d keys processed)", len(keys))
+}
+
+// --- Atomic Command Handlers ---
+
+func handleAtomic(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("atomic: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "new":
+		handleAtomicNew(c, subArgs)
+	case "get":
+		handleAtomicGet(c, subArgs)
+	case "add":
+		handleAtomicAdd(c, subArgs)
+	case "delete":
+		handleAtomicDelete(c, subArgs)
+	default:
+		logger.Error("atomic: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleAtomicNew(c *client.Client, args []string) {
+	if len(args) < 1 || len(args) > 2 {
+		logger.Error("atomic new: requires <key> [overwrite (true|false)]")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	overwrite := false // Default to false
+	if len(args) == 2 {
+		var err error
+		overwrite, err = strconv.ParseBool(args[1])
+		if err != nil {
+			logger.Error("atomic new: invalid overwrite value. Must be true or false.", "value", args[1], "error", err)
+			fmt.Fprintf(os.Stderr, "%s Invalid overwrite value '%s'. Must be true or false.\n", color.RedString("Error:"), args[1])
+			os.Exit(1)
+		}
+	}
+
+	err := c.AtomicNew(key, overwrite)
+	if err != nil {
+		logger.Error("AtomicNew failed", "key", key, "overwrite", overwrite, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleAtomicGet(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("atomic get: requires <key>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	value, err := c.AtomicGet(key)
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) {
+			// Server should ideally return 0 value, 0 error for not found based on tkv.AtomicGet spec.
+			// However, client.AtomicGet might translate certain HTTP errors (like 404 if server doesn't adhere) to ErrKeyNotFound.
+			logger.Info("AtomicGet: Key not found, or value is 0 by definition of non-existence.", "key", key)
+			fmt.Println(0) // As per TKV spec, non-existent atomic is 0.
+		} else {
+			logger.Error("AtomicGet failed", "key", key, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			os.Exit(1)
+		}
+		return // Exit after handling error or printing 0 for not found
+	}
+	fmt.Println(value)
+}
+
+func handleAtomicAdd(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("atomic add: requires <key> <delta>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	deltaStr := args[1]
+	delta, err := strconv.ParseInt(deltaStr, 10, 64)
+	if err != nil {
+		logger.Error("atomic add: invalid delta value. Must be an integer.", "value", deltaStr, "error", err)
+		fmt.Fprintf(os.Stderr, "%s Invalid delta value '%s'. Must be an integer.\n", color.RedString("Error:"), deltaStr)
+		os.Exit(1)
+	}
+
+	newValue, err := c.AtomicAdd(key, delta)
+	if err != nil {
+		logger.Error("AtomicAdd failed", "key", key, "delta", delta, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Println(newValue) // Print the new value as per requirement
+}
+
+func handleAtomicDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("atomic delete: requires <key>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	err := c.AtomicDelete(key)
+	if err != nil {
+		logger.Error("AtomicDelete failed", "key", key, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
 }

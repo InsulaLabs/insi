@@ -93,6 +93,14 @@ type FSMInstance interface {
 	BatchSet(items []models.KVPayload) error    // Renamed from BatchSetValuesRaft
 	BatchDelete(keys []models.KeyPayload) error // Renamed from BatchDeleteValuesRaft
 
+	// Atomic Operations that go through Raft
+	AtomicNewRaft(key string, overwrite bool) error
+	AtomicAddRaft(key string, delta int64) (int64, error) // Returns new value
+	AtomicDeleteRaft(key string) error
+
+	// Atomic Get is a direct read, does not go through Raft apply but uses FSM for consistency
+	AtomicGet(key string) (int64, error)
+
 	Close() error
 }
 
@@ -116,6 +124,11 @@ const (
 	cmdPublishEvent      = "publish_event"
 	cmdBatchSetValues    = "batch_set_values"    // New command for batch setting values
 	cmdBatchDeleteValues = "batch_delete_values" // New command for batch deleting values
+
+	// Atomic operation commands
+	cmdAtomicNew    = "atomic_new"
+	cmdAtomicAdd    = "atomic_add"
+	cmdAtomicDelete = "atomic_delete"
 )
 
 // kvFsm holds references to both BadgerDB instances.
@@ -389,6 +402,50 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				return fmt.Errorf("tkv BatchDelete failed (key_count %d): %w", len(keys), err)
 			}
 			kf.logger.Info("FSM applied batch_delete_values", "key_count", len(keys))
+			return nil
+		case cmdAtomicNew:
+			var p models.AtomicNewRequest
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal atomic_new payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal atomic_new payload: %w", err)
+			}
+			err := kf.tkv.AtomicNew(p.Key, p.Overwrite)
+			if err != nil {
+				// Handle specific tkv errors like ErrKeyExists if needed for logging or metrics
+				kf.logger.Error("TKV AtomicNew failed", "key", p.Key, "overwrite", p.Overwrite, "error", err)
+				return fmt.Errorf("tkv AtomicNew failed (key %s): %w", p.Key, err)
+			}
+			kf.logger.Info("FSM applied atomic_new", "key", p.Key, "overwrite", p.Overwrite)
+			return nil // Return the error itself from tkv.AtomicNew if it occurred
+		case cmdAtomicAdd:
+			var p models.AtomicAddRequest
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal atomic_add payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal atomic_add payload: %w", err)
+			}
+			newValue, err := kf.tkv.AtomicAdd(p.Key, p.Delta)
+			if err != nil {
+				// Handle specific tkv errors like ErrInvalidState
+				kf.logger.Error("TKV AtomicAdd failed", "key", p.Key, "delta", p.Delta, "error", err)
+				// Return the error to Apply. The caller of Raft Apply will see this error.
+				// We also need to return *something* for newValue in the error case for the Apply signature.
+				// Returning the error itself is idiomatic for Apply's response when an error occurs.
+				return err
+			}
+			kf.logger.Info("FSM applied atomic_add", "key", p.Key, "delta", p.Delta, "new_value", newValue)
+			return newValue // Return the new value on success
+		case cmdAtomicDelete:
+			var p models.AtomicKeyPayload
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal atomic_delete payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal atomic_delete payload: %w", err)
+			}
+			err := kf.tkv.AtomicDelete(p.Key)
+			if err != nil {
+				kf.logger.Error("TKV AtomicDelete failed", "key", p.Key, "error", err)
+				return fmt.Errorf("tkv AtomicDelete failed (key %s): %w", p.Key, err)
+			}
+			kf.logger.Info("FSM applied atomic_delete", "key", p.Key)
 			return nil
 		default:
 			kf.logger.Error("Unknown raft command type in Apply", "command_type", cmd.Type)
@@ -919,3 +976,124 @@ func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {
 	}
 	return addressToReturn, nil
 }
+
+// [atomics]
+
+func (kf *kvFsm) AtomicNewRaft(key string, overwrite bool) error {
+	kf.logger.Debug("AtomicNewRaft called", "key", key, "overwrite", overwrite)
+	payload := models.AtomicNewRequest{Key: key, Overwrite: overwrite}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for atomic_new", "key", key, "error", err)
+		return fmt.Errorf("could not marshal payload for atomic_new: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdAtomicNew,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for atomic_new", "key", key, "error", err)
+		return fmt.Errorf("could not marshal raft command for atomic_new: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for AtomicNewRaft", "key", key, "error", err)
+		return fmt.Errorf("raft Apply for AtomicNewRaft failed (key %s): %w", key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for AtomicNewRaft", "key", key, "error", responseErr)
+		// This error comes from the Apply method (e.g., tkv.AtomicNew returning ErrKeyExists)
+		return responseErr
+	}
+	kf.logger.Info("AtomicNewRaft Raft Apply successful", "key", key)
+	return nil
+}
+
+func (kf *kvFsm) AtomicAddRaft(key string, delta int64) (int64, error) {
+	kf.logger.Debug("AtomicAddRaft called", "key", key, "delta", delta)
+	payload := models.AtomicAddRequest{Key: key, Delta: delta}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for atomic_add", "key", key, "error", err)
+		return 0, fmt.Errorf("could not marshal payload for atomic_add: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdAtomicAdd,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for atomic_add", "key", key, "error", err)
+		return 0, fmt.Errorf("could not marshal raft command for atomic_add: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for AtomicAddRaft", "key", key, "error", err)
+		return 0, fmt.Errorf("raft Apply for AtomicAddRaft failed (key %s): %w", key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for AtomicAddRaft", "key", key, "error", responseErr)
+		return 0, responseErr // Error from Apply (e.g., tkv.AtomicAdd returning ErrInvalidState)
+	}
+
+	newValue, ok := response.(int64)
+	if !ok {
+		// This case should ideally not happen if Apply for cmdAtomicAdd always returns int64 or error
+		kf.logger.Error("FSM response for AtomicAddRaft was not an int64", "key", key, "response_type", fmt.Sprintf("%T", response))
+		return 0, fmt.Errorf("unexpected response type from FSM for AtomicAddRaft: got %T, expected int64 or error", response)
+	}
+
+	kf.logger.Info("AtomicAddRaft Raft Apply successful", "key", key, "new_value", newValue)
+	return newValue, nil
+}
+
+func (kf *kvFsm) AtomicDeleteRaft(key string) error {
+	kf.logger.Debug("AtomicDeleteRaft called", "key", key)
+	payload := models.AtomicKeyPayload{Key: key}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for atomic_delete", "key", key, "error", err)
+		return fmt.Errorf("could not marshal payload for atomic_delete: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdAtomicDelete,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for atomic_delete", "key", key, "error", err)
+		return fmt.Errorf("could not marshal raft command for atomic_delete: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for AtomicDeleteRaft", "key", key, "error", err)
+		return fmt.Errorf("raft Apply for AtomicDeleteRaft failed (key %s): %w", key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for AtomicDeleteRaft", "key", key, "error", responseErr)
+		return responseErr // Error from Apply
+	}
+	kf.logger.Info("AtomicDeleteRaft Raft Apply successful", "key", key)
+	return nil
+}
+
+// AtomicGet is a direct read from TKV, does not go through Raft Apply
+func (kf *kvFsm) AtomicGet(key string) (int64, error) {
+	kf.logger.Debug("FSM AtomicGet (direct read) called", "key", key)
+	return kf.tkv.AtomicGet(key)
+}
+
+// ------------

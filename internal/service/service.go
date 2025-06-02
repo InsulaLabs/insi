@@ -215,6 +215,12 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cache"))
 	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cache"))
 
+	// Atomic Operation handlers (using "values" rate limiting category for now)
+	s.mux.Handle("/db/api/v1/atomic/new", s.rateLimitMiddleware(http.HandlerFunc(s.atomicNewHandler), "values"))
+	s.mux.Handle("/db/api/v1/atomic/get", s.rateLimitMiddleware(http.HandlerFunc(s.atomicGetHandler), "values"))
+	s.mux.Handle("/db/api/v1/atomic/add", s.rateLimitMiddleware(http.HandlerFunc(s.atomicAddHandler), "values"))
+	s.mux.Handle("/db/api/v1/atomic/delete", s.rateLimitMiddleware(http.HandlerFunc(s.atomicDeleteHandler), "values"))
+
 	// Events handlers
 	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
 	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
