@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/InsulaLabs/insi/models"
@@ -97,6 +98,11 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 		s.logger.Error("Could not iterate keys by prefix via FSM", "prefix", prefix, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
+	}
+
+	// All keys come back with the api key unique prefix so we need to remove it
+	for i, key := range value {
+		value[i] = strings.TrimPrefix(key, fmt.Sprintf("%s:", td.UUID))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
