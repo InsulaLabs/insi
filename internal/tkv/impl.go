@@ -171,7 +171,7 @@ func (t *tkv) Delete(key string) error {
 }
 
 func (t *tkv) Iterate(prefix string, offset int, limit int) ([]string, error) {
-	var values []string
+	var keys []string
 	err := t.db.store.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
@@ -189,11 +189,7 @@ func (t *tkv) Iterate(prefix string, offset int, limit int) ([]string, error) {
 				break
 			}
 			item := it.Item()
-			val, err := item.ValueCopy(nil)
-			if err != nil {
-				return &ErrInternal{Err: err}
-			}
-			values = append(values, string(val))
+			keys = append(keys, string(item.Key()))
 			collected++
 		}
 		return nil
@@ -201,7 +197,7 @@ func (t *tkv) Iterate(prefix string, offset int, limit int) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return values, nil
+	return keys, nil
 }
 
 // -------------------------- CACHE
@@ -357,93 +353,6 @@ func (t *tkv) GetObject(key string) ([]byte, error) {
 		}
 	}
 	return assembledData, nil
-}
-
-func (t *tkv) DeleteObject(key string) error {
-	err := t.db.objects.Update(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
-		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				// Object doesn't exist, consider deletion successful (idempotent)
-				return nil
-			}
-			return fmt.Errorf("failed to get object manifest for key %s during deletion: %w", key, err)
-		}
-
-		manifestBytes, err := item.ValueCopy(nil)
-		if err != nil {
-			// If we can't copy the manifest, we can't find the chunks to delete.
-			return fmt.Errorf("failed to copy object manifest value for key %s during deletion: %w", key, err)
-		}
-
-		var manifest objectManifest
-		if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-			// If manifest is corrupt, we can still delete the main key, but chunks might be orphaned.
-			// Log this, then proceed to delete the main key.
-			t.logger.Error("failed to unmarshal object manifest during deletion, chunks may be orphaned", "key", key, "error", err)
-		} else {
-			for _, chunkKey := range manifest.Indicies {
-				if err := txn.Delete([]byte(chunkKey)); err != nil {
-					// Log error but continue trying to delete other chunks and the manifest.
-					t.logger.Error("failed to delete chunk during object deletion", "chunkKey", chunkKey, "objectKey", key, "error", err)
-				}
-			}
-		}
-
-		// Delete the object index key
-		indexKey := fmt.Sprintf("objidx::%s", key)
-		if err := txn.Delete([]byte(indexKey)); err != nil {
-			// Log error but continue, as the primary goal is to delete the object data
-			t.logger.Error("failed to delete object index key during object deletion", "indexKey", indexKey, "objectKey", key, "error", err)
-		}
-
-		if err := txn.Delete([]byte(key)); err != nil {
-			return fmt.Errorf("failed to delete object manifest key %s: %w", key, err)
-		}
-		return nil
-	})
-
-	if err != nil {
-		return &ErrInternal{Err: err}
-	}
-	return nil
-}
-
-const objectIndexPrefix = "objidx::"
-
-func (t *tkv) GetObjectList(prefix string, offset int, limit int) ([]string, error) {
-
-	var keys []string
-	err := t.db.objects.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-
-		searchPrefix := []byte(objectIndexPrefix + prefix)
-		skipped := 0
-		collected := 0
-
-		for it.Seek(searchPrefix); it.ValidForPrefix(searchPrefix); it.Next() {
-			if skipped < offset {
-				skipped++
-				continue
-			}
-			if limit > 0 && collected >= limit {
-				break
-			}
-			item := it.Item()
-			keyBytes := item.Key()
-			// Remove the "objidx::" prefix to get the actual object key
-			actualKey := string(bytes.TrimPrefix(keyBytes, []byte(objectIndexPrefix)))
-			keys = append(keys, actualKey)
-			collected++
-		}
-		return nil
-	})
-
-	if err != nil {
-		return nil, &ErrInternal{Err: err}
-	}
-	return keys, nil
 }
 
 func (t *tkv) BatchSet(entries []TKVBatchEntry) error {

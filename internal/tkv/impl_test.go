@@ -134,46 +134,45 @@ func TestTKV_Iterate(t *testing.T) {
 
 	t.Run("Iterate with prefix", func(t *testing.T) {
 		prefix := "prefix_"
-		expectedValues := []string{"value1", "value2", "value3"}
-		retrievedValues, err := tkvTest.tkv.Iterate(prefix, 0, 0) // No offset, no limit
+		expectedKeys := []string{"prefix_key1", "prefix_key2", "prefix_key3"}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, 0, 0)
 		if err != nil {
 			t.Errorf("Iterate() error = %v, wantErr nil", err)
 		}
-		// Sort slices because iteration order is not guaranteed for all values with the same prefix but different full keys
-		sort.Strings(retrievedValues)
-		sort.Strings(expectedValues)
-		if !reflect.DeepEqual(retrievedValues, expectedValues) {
-			t.Errorf("Iterate() got = %v, want %v", retrievedValues, expectedValues)
+		sort.Strings(retrievedKeys)
+		sort.Strings(expectedKeys)
+		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
+			t.Errorf("Iterate() got = %v, want %v", retrievedKeys, expectedKeys)
 		}
 	})
 
 	t.Run("Iterate with prefix and offset", func(t *testing.T) {
 		prefix := "prefix_"
 		offset := 1
-		expectedValues := []string{"value2", "value3"} // key1 is skipped
-		retrievedValues, err := tkvTest.tkv.Iterate(prefix, offset, 0)
+		expectedKeys := []string{"prefix_key2", "prefix_key3"}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, offset, 0)
 		if err != nil {
 			t.Errorf("Iterate() error = %v, wantErr nil", err)
 		}
-		sort.Strings(retrievedValues)
-		sort.Strings(expectedValues)
-		if !reflect.DeepEqual(retrievedValues, expectedValues) {
-			t.Errorf("Iterate() got = %v, want %v", retrievedValues, expectedValues)
+		sort.Strings(retrievedKeys)
+		sort.Strings(expectedKeys)
+		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
+			t.Errorf("Iterate() got = %v, want %v", retrievedKeys, expectedKeys)
 		}
 	})
 
 	t.Run("Iterate with prefix and limit", func(t *testing.T) {
 		prefix := "prefix_"
 		limit := 2
-		expectedValues := []string{"value1", "value2"} // only first two
-		retrievedValues, err := tkvTest.tkv.Iterate(prefix, 0, limit)
+		expectedKeys := []string{"prefix_key1", "prefix_key2"}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, 0, limit)
 		if err != nil {
 			t.Errorf("Iterate() error = %v, wantErr nil", err)
 		}
-		sort.Strings(retrievedValues)
-		sort.Strings(expectedValues)
-		if !reflect.DeepEqual(retrievedValues, expectedValues) {
-			t.Errorf("Iterate() got = %v, want %v", retrievedValues, expectedValues)
+		sort.Strings(retrievedKeys)
+		sort.Strings(expectedKeys)
+		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
+			t.Errorf("Iterate() got = %v, want %v", retrievedKeys, expectedKeys)
 		}
 	})
 
@@ -181,27 +180,27 @@ func TestTKV_Iterate(t *testing.T) {
 		prefix := "prefix_"
 		offset := 1
 		limit := 1
-		expectedValues := []string{"value2"} // skip 1, take 1
-		retrievedValues, err := tkvTest.tkv.Iterate(prefix, offset, limit)
+		expectedKeys := []string{"prefix_key2"}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, offset, limit)
 		if err != nil {
 			t.Errorf("Iterate() error = %v, wantErr nil", err)
 		}
-		sort.Strings(retrievedValues)
-		sort.Strings(expectedValues)
-		if !reflect.DeepEqual(retrievedValues, expectedValues) {
-			t.Errorf("Iterate() got = %v, want %v", retrievedValues, expectedValues)
+		sort.Strings(retrievedKeys)
+		sort.Strings(expectedKeys)
+		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
+			t.Errorf("Iterate() got = %v, want %v", retrievedKeys, expectedKeys)
 		}
 	})
 
 	t.Run("Iterate with non-matching prefix", func(t *testing.T) {
 		prefix := "non_matching_prefix_"
-		expectedValues := []string{}
-		retrievedValues, err := tkvTest.tkv.Iterate(prefix, 0, 0)
+		expectedKeys := []string{}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, 0, 0)
 		if err != nil {
 			t.Errorf("Iterate() error = %v, wantErr nil", err)
 		}
-		if len(retrievedValues) != 0 {
-			t.Errorf("Iterate() got = %v, want %v", retrievedValues, expectedValues)
+		if len(retrievedKeys) != 0 {
+			t.Errorf("Iterate() got = %v, want %v", retrievedKeys, expectedKeys)
 		}
 	})
 }
