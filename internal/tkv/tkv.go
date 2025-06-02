@@ -24,16 +24,11 @@ type data struct {
 	objects *badger.DB
 }
 
-/*
-// TODO:
-*/
 type TKVBatchEntry struct {
 	Key   string
 	Value string
 }
 
-// These are meant to happen "atomically" so that when fsm applies we dont have to worry about
-// race conditions involving writes
 type TKVAtomicHandler interface {
 	AtomicNew(key string, overwrite bool) error       // if overwrite is true, the key will be deleted if it exists, else an error if it exists already
 	AtomicGet(key string) (int64, error)              // get the value of the key, 0 if it doesn't exist
