@@ -15,14 +15,6 @@ type ValueStoreIF interface {
 	RT_Iterate(prefix string, offset int, limit int) ([]string, error)
 }
 
-type ObjectStoreIF interface {
-	RT_SetObject(key string, object []byte) error
-	RT_GetObject(key string) ([]byte, error)
-	RT_DeleteObject(key string) error
-	RT_IterateObject(prefix string, offset int, limit int) ([]string, error)
-	RT_GetObjectList(prefix string, offset int, limit int) ([]string, error)
-}
-
 type CacheStoreIF interface {
 	RT_SetCache(key string, value string, ttl time.Duration) error
 	RT_GetCache(key string) (string, error)
@@ -45,7 +37,6 @@ type PluginRuntimeIF interface {
 	RT_GetClusterConfig() *config.Cluster
 
 	ValueStoreIF
-	ObjectStoreIF
 	CacheStoreIF
 	EventStoreIF
 	WebServerIF

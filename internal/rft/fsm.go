@@ -88,7 +88,6 @@ type FSMInstance interface {
 	ValueStoreIF
 	CacheStoreIF
 	EventIF
-	tkv.TKVObjectHandler
 
 	// Raft-specific batch operations, renamed to satisfy FSMInstance requirements
 	BatchSet(items []models.KVPayload) error    // Renamed from BatchSetValuesRaft
@@ -115,8 +114,6 @@ const (
 	cmdSetCache          = "set_cache"
 	cmdDeleteCache       = "delete_cache"
 	cmdPublishEvent      = "publish_event"
-	cmdSetObject         = "set_object"          // New command for setting an object
-	cmdDeleteObject      = "delete_object"       // New command for deleting an object
 	cmdBatchSetValues    = "batch_set_values"    // New command for batch setting values
 	cmdBatchDeleteValues = "batch_delete_values" // New command for batch deleting values
 )
@@ -367,32 +364,6 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 			*/
 			kf.eventRecvr.Receive(p.Topic, p.Data)
 			return nil
-		case cmdSetObject:
-			var p models.ObjectPayload // Assuming models.ObjectPayload exists or will be created
-			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-				kf.logger.Error("Could not unmarshal set_object payload", "error", err, "payload", string(cmd.Payload))
-				return fmt.Errorf("could not unmarshal set_object payload: %w", err)
-			}
-			err := kf.tkv.SetObject(p.Key, p.Value) // Assuming p.Value is []byte for object
-			if err != nil {
-				kf.logger.Error("TKV SetObject failed", "key", p.Key, "error", err)
-				return fmt.Errorf("tkv SetObject failed (key %s): %w", p.Key, err)
-			}
-			kf.logger.Info("FSM applied set_object", "key", p.Key)
-			return nil
-		case cmdDeleteObject:
-			var p models.KeyPayload
-			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-				kf.logger.Error("Could not unmarshal delete_object payload", "error", err, "payload", string(cmd.Payload))
-				return fmt.Errorf("could not unmarshal delete_object payload: %w", err)
-			}
-			err := kf.tkv.DeleteObject(p.Key)
-			if err != nil {
-				kf.logger.Error("TKV DeleteObject failed", "key", p.Key, "error", err)
-				return fmt.Errorf("tkv DeleteObject failed (key %s): %w", p.Key, err)
-			}
-			kf.logger.Info("FSM applied delete_object", "key", p.Key)
-			return nil
 		case cmdBatchSetValues:
 			var batchItems []tkv.TKVBatchEntry
 			if err := json.Unmarshal(cmd.Payload, &batchItems); err != nil {
@@ -435,9 +406,8 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 func (kf *kvFsm) Snapshot() (raft.FSMSnapshot, error) {
 	kf.logger.Info("Creating FSM snapshot")
 	return &badgerFSMSnapshot{
-		valuesDb:  kf.tkv.GetDataDB(),
-		objectsDb: kf.tkv.GetObjectsDB(), // Added objectsDb
-		stdCache:  kf.tkv.GetCache(),
+		valuesDb: kf.tkv.GetDataDB(),
+		stdCache: kf.tkv.GetCache(),
 	}, nil
 }
 
@@ -452,13 +422,10 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 	decoder := json.NewDecoder(rc)
 	valuesBatch := kf.tkv.GetDataDB().NewWriteBatch()
 	defer valuesBatch.Cancel()
-	objectsBatch := kf.tkv.GetObjectsDB().NewWriteBatch() // New batch for objects
-	defer objectsBatch.Cancel()
 
 	stdCache := kf.tkv.GetCache()
 
 	valuesCount := 0
-	objectsCount := 0 // New counter for objects
 	stdCacheCount := 0
 	for {
 		var entry snapshotEntry // Defined in snapshot.go
@@ -476,12 +443,7 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 				return fmt.Errorf("could not set value from snapshot in valuesDb batch (key: %s): %w", entry.Key, err)
 			}
 			valuesCount++
-		case dbTypeObjects: // Added case for objects
-			if err := objectsBatch.Set([]byte(entry.Key), []byte(entry.Value)); err != nil {
-				kf.logger.Error("Could not set value from snapshot in objectsDb batch", "key", entry.Key, "error", err)
-				return fmt.Errorf("could not set value from snapshot in objectsDb batch (key: %s): %w", entry.Key, err)
-			}
-			objectsCount++
+
 		case cacheType:
 			// Get the time of encoding, add the TTL. If we are past that time dont add
 			timeOfEncoding := time.Unix(entry.TimeEncoded, 0)
@@ -507,17 +469,11 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 		kf.logger.Error("Failed to flush valuesDb batch during restore", "error", err)
 		return fmt.Errorf("failed to flush valuesDb batch during restore: %w", err)
 	}
-	if err := objectsBatch.Flush(); err != nil {
-		kf.logger.Error("Failed to flush objectsDb batch during restore", "error", err)
-		return fmt.Errorf("failed to flush objectsDb batch during restore: %w", err)
-	}
 
 	kf.logger.Info(
 		"FSM restored successfully from snapshot",
 		"values_restored",
 		valuesCount,
-		"objects_restored", // Added objects count to log
-		objectsCount,
 		"std_cache_restored",
 		stdCacheCount,
 	)
@@ -754,89 +710,6 @@ func (kf *kvFsm) DeleteCache(key string) error {
 	}
 	kf.logger.Info("DeleteCache Raft Apply successful", "key", key)
 	return nil
-}
-
-// ------------
-
-// [objects]
-
-func (kf *kvFsm) SetObject(key string, object []byte) error {
-	kf.logger.Debug("SetObject called", "key", key)
-	// Assuming models.ObjectPayload exists for consistency, even if it's just Key/Value for now
-	payload := models.ObjectPayload{Key: key, Value: object}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		kf.logger.Error("Could not marshal payload for set_object", "key", key, "error", err)
-		return fmt.Errorf("could not marshal payload for set_object: %w", err)
-	}
-
-	cmd := RaftCommand{
-		Type:    cmdSetObject,
-		Payload: payloadBytes,
-	}
-	cmdBytesApply, err := json.Marshal(cmd)
-	if err != nil {
-		kf.logger.Error("Could not marshal raft command for set_object", "key", key, "error", err)
-		return fmt.Errorf("could not marshal raft command for set_object: %w", err)
-	}
-
-	future := kf.r.Apply(cmdBytesApply, 64*time.Second) // Increased timeout for potentially larger objects
-	if err := future.Error(); err != nil {
-		kf.logger.Error("Raft Apply failed for SetObject", "key", key, "error", err)
-		return fmt.Errorf("raft Apply for SetObject failed (key %s): %w", key, err)
-	}
-
-	response := future.Response()
-	if responseErr, ok := response.(error); ok && responseErr != nil {
-		kf.logger.Error("FSM application error for SetObject", "key", key, "error", responseErr)
-		return fmt.Errorf("fsm application error for SetObject (key %s): %w", key, responseErr)
-	}
-	kf.logger.Info("SetObject Raft Apply successful", "key", key)
-	return nil
-}
-
-func (kf *kvFsm) GetObject(key string) ([]byte, error) {
-	kf.logger.Debug("GetObject called", "key", key)
-	return kf.tkv.GetObject(key)
-}
-
-func (kf *kvFsm) DeleteObject(key string) error {
-	kf.logger.Debug("DeleteObject called", "key", key)
-	payload := models.KeyPayload{Key: key}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		kf.logger.Error("Could not marshal payload for delete_object", "key", key, "error", err)
-		return fmt.Errorf("could not marshal payload for delete_object: %w", err)
-	}
-
-	cmd := RaftCommand{
-		Type:    cmdDeleteObject,
-		Payload: payloadBytes,
-	}
-	cmdBytes, err := json.Marshal(cmd)
-	if err != nil {
-		kf.logger.Error("Could not marshal raft command for delete_object", "key", key, "error", err)
-		return fmt.Errorf("could not marshal raft command for delete_object: %w", err)
-	}
-
-	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
-	if err := future.Error(); err != nil {
-		kf.logger.Error("Raft Apply failed for DeleteObject", "key", key, "error", err)
-		return fmt.Errorf("raft Apply for DeleteObject failed (key %s): %w", key, err)
-	}
-
-	response := future.Response()
-	if responseErr, ok := response.(error); ok && responseErr != nil {
-		kf.logger.Error("FSM application error for DeleteObject", "key", key, "error", responseErr)
-		return fmt.Errorf("fsm application error for DeleteObject (key %s): %w", key, responseErr)
-	}
-	kf.logger.Info("DeleteObject Raft Apply successful", "key", key)
-	return nil
-}
-
-func (kf *kvFsm) GetObjectList(prefix string, offset int, limit int) ([]string, error) {
-	kf.logger.Debug("GetObjectList called", "prefix", prefix, "offset", offset, "limit", limit)
-	return kf.tkv.GetObjectList(prefix, offset, limit)
 }
 
 // ------------

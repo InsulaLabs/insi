@@ -223,12 +223,6 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
-	// Object store handlers
-	s.mux.Handle("/db/api/v1/object", s.rateLimitMiddleware(http.HandlerFunc(s.getObjectHandler), "objects"))
-	s.mux.Handle("/db/api/v1/object/set", s.rateLimitMiddleware(http.HandlerFunc(s.setObjectHandler), "objects"))
-	s.mux.Handle("/db/api/v1/object/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteObjectHandler), "objects"))
-	s.mux.Handle("/db/api/v1/objects/list", s.rateLimitMiddleware(http.HandlerFunc(s.getObjectListHandler), "objects"))
-
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
 
