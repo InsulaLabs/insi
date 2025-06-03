@@ -3,8 +3,10 @@ package main
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/InsulaLabs/insi/plugins/etok"
+	"github.com/InsulaLabs/insi/plugins/objects"
 	"github.com/InsulaLabs/insi/plugins/static"
 	"github.com/InsulaLabs/insi/plugins/status"
 	"github.com/InsulaLabs/insi/runtime"
@@ -43,6 +45,14 @@ func main() {
 	rt.WithPlugin(status.New(slog.Default().WithGroup("status-plugin")))
 
 	rt.WithPlugin(etok.New(slog.Default().WithGroup("etok-plugin")))
+
+	objectsDir := filepath.Join(os.Getenv("HOME"), ".config", "insidb", "objects")
+	if err := os.MkdirAll(objectsDir, 0755); err != nil {
+		slog.Error("Failed to create objects directory", "error", err)
+		os.Exit(1)
+	}
+
+	rt.WithPlugin(objects.New(slog.Default().WithGroup("objects-plugin"), objectsDir))
 
 	if staticPath != "" {
 		staticPlugin := static.New(slog.Default().WithGroup("static-plugin"), staticPath)

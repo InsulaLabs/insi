@@ -103,6 +103,7 @@ func (p *ObjectsPlugin) GetRoutes() []runtime.PluginRoute {
 		*/
 		{Path: "upload", Handler: http.HandlerFunc(p.uploadBinaryHandler), Limit: 10, Burst: 10},
 		{Path: "download", Handler: http.HandlerFunc(p.downloadBinaryHandler), Limit: 10, Burst: 10},
+		{Path: "hash", Handler: http.HandlerFunc(p.getObjectHashHandler), Limit: 10, Burst: 10},
 	}
 }
 
@@ -223,48 +224,39 @@ func (p *ObjectsPlugin) uploadBinaryHandler(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":   "OK",
-		"objectID": newObjectName,
+		"objectID": objectFileUUID, // Return only the file's UUID part
 	})
 }
 
 func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Request) {
-
-	// todo: ensure is get
-	// todo: use p.prif to validate the request token
-	// todo: get the uuid for the file
-	// todo: read the file from the disk
-	// todo: return the file
 
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Token validation: Ensure this logic is appropriate for your auth scheme.
-	// If the token is part of the query or headers, extract and validate it here.
-	// For this example, it's assumed RT_ValidateAuthToken handles extraction from the request.
-	td, isValid := p.prif.RT_ValidateAuthToken(r) // td might be nil if token is not required for download or handled differently
+	td, isValid := p.prif.RT_ValidateAuthToken(r)
 	if !isValid {
-		// Depending on policy, public downloads might be allowed, or this is a hard error.
-		// For now, assume valid token is required.
 		http.Error(w, "Unauthorized or Invalid Token", http.StatusUnauthorized)
 		return
 	}
-	_ = td // if td is not used further, to avoid unused variable error. Re-evaluate if user context from token is needed.
 
-	objectID := r.URL.Query().Get("id")
-	if objectID == "" {
-		http.Error(w, "Missing object ID", http.StatusBadRequest)
+	// Client provides objectFileUUID as "id"
+	objectFileUUID := r.URL.Query().Get("id")
+	if objectFileUUID == "" {
+		http.Error(w, "Missing object ID in query parameter 'id'", http.StatusBadRequest)
 		return
 	}
 
-	objectDir := filepath.Join(p.uploadDir, objectID)
+	// Reconstruct the full object name for path resolution using userUUID from token and objectFileUUID from client
+	fullObjectNameForPath := fmt.Sprintf("%s:%s", td.UUID, objectFileUUID)
+	objectDir := filepath.Join(p.uploadDir, fullObjectNameForPath)
 	dataFile := filepath.Join(objectDir, "file.data")
 	metaFile := filepath.Join(objectDir, "meta.json")
 
 	metaBytes, err := os.ReadFile(metaFile)
 	if err != nil {
-		p.logger.Error("failed to read meta file", "error", err, "objectID", objectID)
+		p.logger.Error("failed to read meta file", "error", err, "objectID", objectFileUUID, "resolvedPath", metaFile)
 		if os.IsNotExist(err) {
 			http.Error(w, "Object metadata not found", http.StatusNotFound)
 		} else {
@@ -275,24 +267,23 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 
 	var meta MetaData
 	if err := json.Unmarshal(metaBytes, &meta); err != nil {
-		p.logger.Error("failed to parse meta file", "error", err, "objectID", objectID)
+		p.logger.Error("failed to parse meta file", "error", err, "objectID", objectFileUUID)
 		http.Error(w, "Failed to parse object metadata", http.StatusInternalServerError)
 		return
 	}
 
-	// Security check: Optional, but good practice if td.UUID is available and should match meta.UserUUID
-	// if td != nil && td.UUID != meta.UserUUID {
-	// 	p.logger.Warn("User UUID mismatch for object access", "tokenUserUUID", td.UUID, "objectUserUUID", meta.UserUUID, "objectID", objectID)
-	// 	http.Error(w, "Forbidden", http.StatusForbidden)
-	// 	return
-	// }
+	if td.UUID != meta.UserUUID {
+		p.logger.Warn("User UUID mismatch for object access", "tokenUserUUID", td.UUID, "objectUserUUID", meta.UserUUID, "objectID", objectFileUUID)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 
 	file, err := os.Open(dataFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "Object data not found", http.StatusNotFound)
 		} else {
-			p.logger.Error("failed to open data file", "error", err, "objectID", objectID)
+			p.logger.Error("failed to open data file", "error", err, "objectID", objectFileUUID, "resolvedPath", dataFile)
 			http.Error(w, "Failed to read object", http.StatusInternalServerError)
 		}
 		return
@@ -304,17 +295,81 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 		originalFilename = "downloaded_object"
 	}
 
-	// Set Content-Type. Use meta.ContentType if available, otherwise default to application/octet-stream.
 	contentType := meta.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", originalFilename))
-
-	// Serve the file. http.ServeContent handles Range requests, ETag, If-Modified-Since, etc.
-	// We pass meta.UploadDate as the modtime.
-	// The name argument to ServeContent is used for MIME type detection if Content-Type is not set,
-	// but since we set it, it's mostly for logging/debugging by ServeContent.
 	http.ServeContent(w, r, originalFilename, meta.UploadDate, file)
+}
+
+func (p *ObjectsPlugin) getObjectHashHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	td, isValid := p.prif.RT_ValidateAuthToken(r)
+	if !isValid {
+		http.Error(w, "Unauthorized or Invalid Token", http.StatusUnauthorized)
+		return
+	}
+
+	objectFileUUID := r.URL.Query().Get("id")
+	if objectFileUUID == "" {
+		http.Error(w, "Missing object ID in query parameter 'id'", http.StatusBadRequest)
+		return
+	}
+
+	// Reconstruct the full object name for path resolution using userUUID from token and objectFileUUID from client
+	fullObjectNameForPath := fmt.Sprintf("%s:%s", td.UUID, objectFileUUID)
+	objectDir := filepath.Join(p.uploadDir, fullObjectNameForPath)
+	metaFile := filepath.Join(objectDir, "meta.json")
+	hashFilePath := filepath.Join(objectDir, "file.data.sha256")
+
+	// First, verify ownership by checking meta.json
+	metaBytes, err := os.ReadFile(metaFile)
+	if err != nil {
+		p.logger.Error("failed to read meta file for hash", "error", err, "objectID", objectFileUUID, "resolvedPath", metaFile)
+		if os.IsNotExist(err) {
+			http.Error(w, "Object metadata not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Failed to read object metadata", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	var meta MetaData
+	if err := json.Unmarshal(metaBytes, &meta); err != nil {
+		p.logger.Error("failed to parse meta file for hash", "error", err, "objectID", objectFileUUID)
+		http.Error(w, "Failed to parse object metadata", http.StatusInternalServerError)
+		return
+	}
+
+	if td.UUID != meta.UserUUID {
+		p.logger.Warn("User UUID mismatch for object hash access", "tokenUserUUID", td.UUID, "objectUserUUID", meta.UserUUID, "objectID", objectFileUUID)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// If ownership is verified, proceed to read the hash file
+	hashBytes, err := os.ReadFile(hashFilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			p.logger.Warn("hash file not found", "objectID", objectFileUUID, "resolvedPath", hashFilePath)
+			http.Error(w, "Object hash not found", http.StatusNotFound)
+		} else {
+			p.logger.Error("failed to read hash file", "error", err, "objectID", objectFileUUID, "resolvedPath", hashFilePath)
+			http.Error(w, "Failed to read object hash", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"objectID": objectFileUUID, // Return only the file's UUID part
+		"sha256":   string(hashBytes),
+	})
 }
