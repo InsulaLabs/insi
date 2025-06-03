@@ -136,7 +136,11 @@ func NewService(
 	}
 
 	apiCache := ttlcache.New[string, models.TokenData](
-		ttlcache.WithTTL[string, models.TokenData](time.Minute * 1),
+		ttlcache.WithTTL[string, models.TokenData](time.Minute*1),
+
+		// Disable touch on hit for for api keys so auto expire
+		// can be leveraged for syncronization
+		ttlcache.WithDisableTouchOnHit[string, models.TokenData](),
 	)
 	go apiCache.Start()
 

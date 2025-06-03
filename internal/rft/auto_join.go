@@ -3,6 +3,7 @@ package rft
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -122,8 +123,10 @@ func attemptAutoJoin(
 		if clusterCfg.InstanceSecret != "" {
 			hasher := sha256.New()
 			hasher.Write([]byte(clusterCfg.InstanceSecret))
-			authToken := hex.EncodeToString(hasher.Sum(nil))
-			req.Header.Set("Authorization", authToken)
+			hexEncodedSecret := hex.EncodeToString(hasher.Sum(nil))
+			// Base64 encode the hex-encoded secret, similar to runtime/runtime.go
+			b64AuthToken := base64.StdEncoding.EncodeToString([]byte(hexEncodedSecret))
+			req.Header.Set("Authorization", "Bearer "+b64AuthToken) // Added "Bearer " prefix
 			log.Printf("Node %s: Added Authorization header for auto-join.", currentNodeId)
 		} else {
 			log.Printf("Node %s: InstanceSecret is empty, cannot add Authorization header for auto-join. This might lead to join failures if the leader requires auth.", currentNodeId)

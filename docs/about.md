@@ -55,3 +55,27 @@ Insic is equiped to display and interact with all standard core endpoints offere
 # Plugins
 
 "Plugins" Are compiled-in runtime-inteacting plugins that can have http endpoints mouint
+
+
+# API Keys
+
+Api keysa re not meant to limit or impose access control that
+requires synchronization. Api keys are used to securely store
+and utilize different prefixes on all ingested commands to ensure
+they are scoped seperately from other operations in any given
+system submodule. Essentially, all "Set" "get" etc will have a prefix on each key hidden from usage and stored in a way that
+only the `root` key can manage it. This is basically:
+
+```
+
+API KEY 1:
+    some_id:x   = 3
+
+API KEY 2:
+    some_other_id:x = 44
+
+```
+
+Someone with key 2 can't see any other key's values. This sort
+of prefixing is leveraged on all subsystems (Events, queues, etc)
+to guarantee a means isolation of data/events on a system level
