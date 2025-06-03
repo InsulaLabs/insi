@@ -112,10 +112,17 @@ func (s *Service) apiKeyCreateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := models.ApiKeyCreateResponse{
+		KeyName: req.KeyName,
+		Key:     key,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"key": key,
-	})
+	w.WriteHeader(http.StatusOK) // Explicitly set 200 OK
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// Log error if encoding fails, though headers might have already been sent
+		s.logger.Error("Failed to encode API key create response", "error", err)
+	}
 }
 
 func (s *Service) apiKeyDeleteHandler(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/InsulaLabs/insi/models"
 	"github.com/google/uuid"
@@ -32,6 +33,18 @@ func (s *Service) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenD
 		}
 	}
 
+	if token == s.authToken {
+		return models.TokenData{
+			Entity: EntityRoot,
+			UUID:   s.cfg.RootPrefix,
+		}, true
+	}
+
+	apiCacheItem := s.apiCache.Get(token)
+	if apiCacheItem != nil {
+		return apiCacheItem.Value(), true
+	}
+
 	entity, uuid, err := s.decomposeKey(token)
 	if err != nil {
 		s.logger.Error("Could not decompose key", "error", err)
@@ -39,33 +52,33 @@ func (s *Service) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenD
 	}
 
 	// Get the key from the fsm
-	keyData, err := s.fsm.Get(fmt.Sprintf("%s:api:key:%s", s.cfg.RootPrefix, entity))
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", s.cfg.RootPrefix, entity)
+	keyDataFromFsm, err := s.fsm.Get(fsmStorageKey)
 	if err != nil {
-		s.logger.Error("Could not get key data", "error", err)
+		s.logger.Error("Could not get key data from FSM", "key", fsmStorageKey, "error", err)
 		return models.TokenData{}, false
 	}
 
-	decryptedKeyData, err := s.identity.DecryptData([]byte(keyData))
-	if err != nil {
-		s.logger.Error("Could not decrypt key data", "error", err)
+	// Data from FSM is plain JSON of models.TokenData, it should NOT be decrypted.
+	// It should be directly unmarshalled.
+	var tdFromFsm models.TokenData
+	if err := json.Unmarshal([]byte(keyDataFromFsm), &tdFromFsm); err != nil {
+		s.logger.Error("Could not unmarshal token data from FSM", "key", fsmStorageKey, "data", keyDataFromFsm, "error", err)
 		return models.TokenData{}, false
 	}
 
-	var td models.TokenData
-	if err := json.Unmarshal(decryptedKeyData, &td); err != nil {
-		s.logger.Error("Could not unmarshal token data", "error", err)
+	// Compare the UUID from the decomposed token with the UUID stored in FSM for that entity.
+	if tdFromFsm.UUID != uuid || tdFromFsm.Entity != entity {
+		s.logger.Error("UUID mismatch between token and FSM record",
+			"entity", entity,
+			"uuid_from_token", uuid,
+			"uuid_from_fsm", tdFromFsm.UUID)
 		return models.TokenData{}, false
 	}
 
-	if td.UUID != uuid {
-		s.logger.Error("UUID mismatch", "expected", uuid, "actual", td.UUID)
-		return models.TokenData{}, false
-	}
+	s.apiCache.Set(token, tdFromFsm, time.Minute*1)
 
-	return models.TokenData{
-		Entity: entity,
-		UUID:   uuid,
-	}, true
+	return tdFromFsm, true
 }
 
 func (s *Service) normalizeKeyName(keyName string) string {
@@ -110,52 +123,66 @@ func (s *Service) CreateApiKey(keyName string) (string, error) {
 	keyName = s.normalizeKeyName(keyName)
 	keyUUID := uuid.New().String()
 
-	keyTag := fmt.Sprintf("%s:%s", keyName, keyUUID)
-
-	apiKeyRootStorageKey := fmt.Sprintf("%s:api:key:%s", s.cfg.RootPrefix, keyTag)
+	// Use only the keyName (entity) for the FSM key, consistent with ValidateToken lookup
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", s.cfg.RootPrefix, keyName)
 
 	td := models.TokenData{
 		Entity: keyName,
 		UUID:   keyUUID,
 	}
 
-	encodedTd, err := json.Marshal(td)
+	// Data to be encrypted and base64 encoded for the actual API key string
+	tokenDataForApiKeyString, err := json.Marshal(td)
 	if err != nil {
-		return "", fmt.Errorf("could not marshal token data: %w", err)
+		return "", fmt.Errorf("could not marshal token data for api key string: %w", err)
 	}
 
-	encryptedKeyData, err := s.identity.EncryptData(encodedTd)
+	encryptedKeyDataForApiKey, err := s.identity.EncryptData(tokenDataForApiKeyString)
 	if err != nil {
-		return "", fmt.Errorf("could not encrypt uuid: %w", err)
+		return "", fmt.Errorf("could not encrypt token data for api key string: %w", err)
 	}
-
-	b64KeyData := base64.StdEncoding.EncodeToString(encryptedKeyData)
-
+	b64KeyData := base64.StdEncoding.EncodeToString(encryptedKeyDataForApiKey)
 	actualKey := fmt.Sprintf("insi_%s", b64KeyData)
 
-	keyDataEncoded, err := json.Marshal(td)
+	// Data to be stored in FSM (this is what ValidateToken retrieves and checks)
+	// This should be the same TokenData structure.
+	keyDataForFsm, err := json.Marshal(td)
 	if err != nil {
-		return "", fmt.Errorf("could not marshal token data: %w", err)
+		return "", fmt.Errorf("could not marshal token data for FSM storage: %w", err)
 	}
 
-	s.fsm.Set(models.KVPayload{
-		Key:   apiKeyRootStorageKey,
-		Value: string(keyDataEncoded),
-	})
+	// Apply to FSM
+	// The value stored in FSM is the JSON representation of TokenData (Entity and UUID)
+	if err := s.fsm.Set(models.KVPayload{
+		Key:   apiKeyFsmStorageKey,
+		Value: string(keyDataForFsm),
+	}); err != nil {
+		// Add FSM error handling if s.fsm.Set can return an error that should be propagated
+		s.logger.Error("Failed to set API key in FSM", "key", apiKeyFsmStorageKey, "error", err)
+		return "", fmt.Errorf("failed to set API key in FSM for %s: %w", keyName, err)
+	}
 
 	return actualKey, nil
 }
 
 func (s *Service) DeleteApiKey(key string) error {
 
-	entity, uuid, err := s.decomposeKey(key)
+	entity, _, err := s.decomposeKey(key) // We only need the entity to form the FSM key
 	if err != nil {
 		return fmt.Errorf("could not decompose key: %w", err)
 	}
 
-	apiKeyRootStorageKey := fmt.Sprintf("%s:api:key:%s:%s", s.cfg.RootPrefix, entity, uuid)
+	// The FSM key is based on the entity (key name)
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", s.cfg.RootPrefix, entity)
 
-	s.fsm.Delete(apiKeyRootStorageKey)
+	// Apply to FSM
+	if err := s.fsm.Delete(apiKeyFsmStorageKey); err != nil {
+		// Add FSM error handling if s.fsm.Delete can return an error
+		s.logger.Error("Failed to delete API key from FSM", "key", apiKeyFsmStorageKey, "error", err)
+		return fmt.Errorf("failed to delete API key from FSM for %s: %w", entity, err)
+	}
+
+	s.apiCache.Delete(key)
 
 	return nil
 }

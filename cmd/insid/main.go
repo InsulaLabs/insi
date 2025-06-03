@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/InsulaLabs/insi/plugins/etok"
 	"github.com/InsulaLabs/insi/plugins/objects"
 	"github.com/InsulaLabs/insi/plugins/static"
 	"github.com/InsulaLabs/insi/plugins/status"
@@ -43,8 +42,6 @@ func main() {
 	// ------------------- Add Plugins -------------------
 
 	rt.WithPlugin(status.New(slog.Default().WithGroup("status-plugin")))
-
-	rt.WithPlugin(etok.New(slog.Default().WithGroup("etok-plugin")))
 
 	objectsDir := filepath.Join(os.Getenv("HOME"), ".config", "insidb", "objects")
 	if err := os.MkdirAll(objectsDir, 0755); err != nil {
