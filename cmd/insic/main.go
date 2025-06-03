@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -81,9 +82,13 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 	var apiKey string
 
 	if useRootKey {
+		if cfg.InstanceSecret == "" {
+			return nil, fmt.Errorf("InstanceSecret is not defined in the cluster configuration, cannot generate root API key")
+		}
 		secretHash := sha256.New()
 		secretHash.Write([]byte(cfg.InstanceSecret))
 		apiKey = hex.EncodeToString(secretHash.Sum(nil))
+		apiKey = base64.StdEncoding.EncodeToString([]byte(apiKey))
 	} else {
 		apiKey = os.Getenv("INSI_API_KEY")
 	}
@@ -168,6 +173,8 @@ func main() {
 		handleAtomic(cli, cmdArgs)
 	case "queue":
 		handleQueue(cli, cmdArgs)
+	case "api":
+		handleApi(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -207,6 +214,10 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("queue"), color.CyanString("push"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("pop"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("delete"), color.CyanString("<key>"))
+	// API Key Commands (Note: These typically require the --root flag)
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<key_name>"), color.YellowString("--root flag usually required"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -797,4 +808,145 @@ func handleQueueDelete(c *client.Client, args []string) {
 		os.Exit(1)
 	}
 	color.HiGreen("OK")
+}
+
+// --- API Key Command Handlers ---
+
+func handleApi(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("api: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "add":
+		// Enforce --root for add
+		if !useRootKey {
+			logger.Error("api add requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s api add requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleApiAdd(c, subArgs)
+	case "delete":
+		// Enforce --root for delete
+		if !useRootKey {
+			logger.Error("api delete requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s api delete requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleApiDelete(c, subArgs)
+	case "verify":
+		// --root is not required for verify, as we are creating a new client with the provided key
+		handleApiVerify(subArgs)
+	default:
+		logger.Error("api: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleApiAdd(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("api add: requires <key_name>")
+		printUsage()
+		os.Exit(1)
+	}
+	keyName := args[0]
+
+	resp, err := c.CreateAPIKey(keyName)
+	if err != nil {
+		logger.Error("API key creation failed", "key_name", keyName, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	logger.Info("API key created successfully", "key_name", resp.KeyName, "key", resp.Key)
+	fmt.Printf("API Key Name: %s\n", color.CyanString(resp.KeyName))
+	fmt.Printf("API Key:      %s\n", color.GreenString(resp.Key))
+	color.HiGreen("OK")
+}
+
+func handleApiDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("api delete: requires <key_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	keyValue := args[0] // This is the actual "insi_..." key string
+
+	err := c.DeleteAPIKey(keyValue)
+	if err != nil {
+		logger.Error("API key deletion failed", "key_value", keyValue, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	logger.Info("API key deleted successfully", "key_value", keyValue)
+	color.HiGreen("OK")
+}
+
+func handleApiVerify(args []string) {
+	if len(args) != 1 {
+		logger.Error("api verify: requires <key_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	apiKeyToVerify := args[0]
+
+	// We need to create a new client instance with the provided API key.
+	// Re-use logic from getClient for node details but override API key.
+	nodeToConnect := targetNode // Use the global targetNode flag
+	if nodeToConnect == "" {
+		if clusterCfg.DefaultLeader == "" {
+			logger.Error("api verify: targetNode is empty and no DefaultLeader is set in config")
+			fmt.Fprintf(os.Stderr, "%s Target node must be specified via --target or DefaultLeader in config.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		nodeToConnect = clusterCfg.DefaultLeader
+		logger.Info("No target node specified for verify, using DefaultLeader", "node_id", color.CyanString(nodeToConnect))
+	}
+
+	nodeDetails, ok := clusterCfg.Nodes[nodeToConnect]
+	if !ok {
+		logger.Error("api verify: node ID not found in configuration", "node_id", nodeToConnect)
+		fmt.Fprintf(os.Stderr, "%s Node ID '%s' not found in configuration.\n", color.RedString("Error:"), color.CyanString(nodeToConnect))
+		os.Exit(1)
+	}
+
+	verifyClientLogger := logger.WithGroup("verify_client")
+
+	verifyCli, err := client.NewClient(&client.Config{
+		ConnectionType: client.ConnectionTypeDirect,
+		Endpoints: []client.Endpoint{
+			{
+				HostPort:     nodeDetails.HttpBinding,
+				ClientDomain: nodeDetails.ClientDomain,
+			},
+		},
+		ApiKey:     apiKeyToVerify, // Use the key passed as argument
+		SkipVerify: clusterCfg.ClientSkipVerify,
+		Logger:     verifyClientLogger,
+	})
+	if err != nil {
+		logger.Error("api verify: failed to create client for verification", "target_node", nodeToConnect, "error", err)
+		fmt.Fprintf(os.Stderr, "%s Failed to create client for verification: %v\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	logger.Info("Attempting to verify API key with a ping...", "target_node", nodeToConnect)
+	pingResp, err := verifyCli.Ping()
+	if err != nil {
+		logger.Error("API key verification failed: Ping request failed", "key_value", apiKeyToVerify, "error", err)
+		fmt.Fprintf(os.Stderr, "%s API key verification failed. Ping error: %v\n", color.RedString("Error:"), err)
+		color.HiRed("Verification FAILED")
+		os.Exit(1)
+	}
+
+	logger.Info("API key verification successful: Ping responded", "key_value", apiKeyToVerify, "response", pingResp)
+	color.HiGreen("API Key Verified Successfully!")
+	fmt.Println("Ping Response:")
+	for k, v := range pingResp {
+		fmt.Printf("  %s: %s\n", color.CyanString(k), v)
+	}
 }

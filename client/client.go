@@ -455,6 +455,42 @@ func (c *Client) Ping() (map[string]string, error) {
 	return response, nil
 }
 
+// --- Admin Operations ---
+
+// CreateAPIKey requests the server to create a new API key.
+// This operation typically requires root privileges.
+func (c *Client) CreateAPIKey(keyName string) (*models.ApiKeyCreateResponse, error) {
+	if keyName == "" {
+		return nil, fmt.Errorf("keyName cannot be empty for CreateAPIKey")
+	}
+	requestPayload := models.ApiKeyCreateRequest{KeyName: keyName}
+	var response models.ApiKeyCreateResponse
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/admin/api/create", nil, requestPayload, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// DeleteAPIKey requests the server to delete an existing API key.
+// This operation typically requires root privileges.
+func (c *Client) DeleteAPIKey(apiKey string) error {
+	if apiKey == "" {
+		return fmt.Errorf("apiKey cannot be empty for DeleteAPIKey")
+	}
+	requestPayload := models.ApiKeyDeleteRequest{Key: apiKey}
+
+	// Expects 200 OK on success, no specific response body to decode beyond error handling.
+	err := c.doRequest(http.MethodPost, "db/api/v1/admin/api/delete", nil, requestPayload, nil)
+	if err != nil {
+		// If server returns 404 specifically for API key not found during delete,
+		// we could translate it to ErrAPIKeyNotFound or similar, but generic error is also fine.
+		return err
+	}
+	return nil
+}
+
 // SubscribeToEvents connects to the event subscription WebSocket endpoint and prints incoming events.
 func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent func(data any)) error {
 	if topic == "" {

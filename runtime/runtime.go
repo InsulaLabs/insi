@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 
 	"github.com/InsulaLabs/insi/client"
@@ -126,6 +127,8 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 	h := sha256.New()
 	h.Write([]byte(r.clusterCfg.InstanceSecret))
 	r.rootApiKey = hex.EncodeToString(h.Sum(nil))
+
+	r.rootApiKey = base64.StdEncoding.EncodeToString([]byte(r.rootApiKey))
 
 	// Convert the cluster config into a list of endpoints
 	// for the client to use when utilizing a client for the backend

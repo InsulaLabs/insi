@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/InsulaLabs/insula/security/badge"
@@ -65,17 +66,31 @@ type ErrQueueEmpty struct {
 func (e *ErrQueueEmpty) Error() string {
 	return fmt.Sprintf("queue '%s' is empty", e.Key)
 }
+func normalizeDBName(dbName string) string {
+	// Replace any characters that are invalid in directory names across platforms
+	sanitized := strings.Map(func(r rune) rune {
+		switch {
+		case r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' ||
+			r == '"' || r == '<' || r == '>' || r == '|':
+			return '_'
+		default:
+			return r
+		}
+	}, dbName)
+
+	// Ensure name doesn't start with . or - which can cause issues
+	if len(sanitized) > 0 && (sanitized[0] == '.' || sanitized[0] == '-') {
+		sanitized = "_" + sanitized[1:]
+	}
+
+	return sanitized
+}
 
 func New(config Config) (TKV, error) {
 
 	valuesDir := filepath.Join(config.Directory, "values")
-	objectsDir := filepath.Join(config.Directory, "objects")
 
 	if err := os.MkdirAll(valuesDir, 0755); err != nil {
-		return nil, &ErrInternal{Err: err}
-	}
-
-	if err := os.MkdirAll(objectsDir, 0755); err != nil {
 		return nil, &ErrInternal{Err: err}
 	}
 

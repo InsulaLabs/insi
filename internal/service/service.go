@@ -15,6 +15,7 @@ import (
 	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/gorilla/websocket"
+	"github.com/jellydator/ttlcache/v3"
 	"golang.org/x/time/rate"
 )
 
@@ -51,6 +52,8 @@ type Service struct {
 	eventCh              chan models.Event // Central event channel for the service
 	activeWsConnections  int32             // Counter for active WebSocket connections
 	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
+
+	apiCache *ttlcache.Cache[string, models.TokenData]
 }
 
 func (s *Service) GetRootClientKey() string {
@@ -132,6 +135,15 @@ func NewService(
 		rlLogger.Info("Initialized rate limiter for 'queues'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 
+	apiCache := ttlcache.New[string, models.TokenData](
+		ttlcache.WithTTL[string, models.TokenData](time.Minute*1),
+
+		// Disable touch on hit for for api keys so auto expire
+		// can be leveraged for syncronization
+		ttlcache.WithDisableTouchOnHit[string, models.TokenData](),
+	)
+	go apiCache.Start()
+
 	service := &Service{
 		appCtx:           ctx,
 		cfg:              clusterCfg,
@@ -152,7 +164,8 @@ func NewService(
 				return true
 			},
 		},
-		eventCh: serviceEventCh,
+		eventCh:  serviceEventCh,
+		apiCache: apiCache,
 	}
 
 	// Set the event subsystem to the service for event logic
@@ -233,6 +246,10 @@ func (s *Service) Run() {
 	s.mux.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
 	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
 
+	// Admin API Key Management handlers (system category for rate limiting)
+	s.mux.Handle("/db/api/v1/admin/api/create", s.rateLimitMiddleware(http.HandlerFunc(s.apiKeyCreateHandler), "system"))
+	s.mux.Handle("/db/api/v1/admin/api/delete", s.rateLimitMiddleware(http.HandlerFunc(s.apiKeyDeleteHandler), "system"))
+
 	httpListenAddr := s.nodeCfg.HttpBinding
 	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
 
@@ -265,4 +282,6 @@ func (s *Service) Run() {
 			s.logger.Error("HTTP server error", "error", err)
 		}
 	}
+
+	s.apiCache.Stop()
 }

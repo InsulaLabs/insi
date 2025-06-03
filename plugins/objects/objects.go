@@ -114,7 +114,7 @@ func (p *ObjectsPlugin) uploadBinaryHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	td, isValid := p.prif.RT_ValidateAuthToken(r)
+	td, isValid := p.prif.RT_ValidateAuthToken(r, false)
 	if !isValid {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -235,7 +235,7 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	td, isValid := p.prif.RT_ValidateAuthToken(r)
+	td, isValid := p.prif.RT_ValidateAuthToken(r, false)
 	if !isValid {
 		http.Error(w, "Unauthorized or Invalid Token", http.StatusUnauthorized)
 		return
@@ -310,7 +310,7 @@ func (p *ObjectsPlugin) getObjectHashHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	td, isValid := p.prif.RT_ValidateAuthToken(r)
+	td, isValid := p.prif.RT_ValidateAuthToken(r, false)
 	if !isValid {
 		http.Error(w, "Unauthorized or Invalid Token", http.StatusUnauthorized)
 		return
