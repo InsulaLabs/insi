@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -81,9 +82,13 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 	var apiKey string
 
 	if useRootKey {
+		if cfg.InstanceSecret == "" {
+			return nil, fmt.Errorf("InstanceSecret is not defined in the cluster configuration, cannot generate root API key")
+		}
 		secretHash := sha256.New()
 		secretHash.Write([]byte(cfg.InstanceSecret))
 		apiKey = hex.EncodeToString(secretHash.Sum(nil))
+		apiKey = base64.StdEncoding.EncodeToString([]byte(apiKey))
 	} else {
 		apiKey = os.Getenv("INSI_API_KEY")
 	}
