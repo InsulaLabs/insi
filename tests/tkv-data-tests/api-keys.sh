@@ -158,6 +158,8 @@ test_api_key_lifecycle() {
         return # Cannot proceed
     fi
 
+    sleep 2
+
     # 2. API Verify (Newly Created Key)
     echo -e "${INFO_EMOJI} Attempting to verify newly created API key: $generated_key"
     output_verify_ok=$(run_insic "api" "verify" "$generated_key")
@@ -169,6 +171,8 @@ test_api_key_lifecycle() {
     output_delete=$(run_insic "api" "delete" "$generated_key")
     exit_code_delete=$?
     expect_success "API delete for key '$generated_key'" "$exit_code_delete" "$output_delete" "OK"
+
+    sleep 12 # Added sleep after key deletion
 
     # 4. API Verify (Deleted Key)
     echo -e "${INFO_EMOJI} Attempting to verify deleted API key: $generated_key"
