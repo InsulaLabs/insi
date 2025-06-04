@@ -13,8 +13,8 @@ else
     INSIC_EXE_CMD_ARG=""
 fi
 
-INSIC_EXE="${INSIC_EXE_CMD_ARG:-${INSIC_EXE:-../../bin/insic}}" # Path to insic executable
-CONFIG_FILE="${CONFIG_FILE:-../../cluster.yaml}" # Path to the cluster config
+INSIC_EXE="${INSIC_EXE_CMD_ARG:-${INSIC_EXE:-../../build/insic}}" # Path to insic executable
+CONFIG_FILE="${CONFIG_FILE:-/tmp/insi-test-cluster/cluster.yaml}" # Path to the cluster config
 TARGET_NODE="${TARGET_NODE:-node0}" # Target node for commands
 
 # Create a unique temporary directory for this test run
@@ -81,7 +81,7 @@ echo "$SUB_PID" > "$SUBSCRIBER_PID_FILE"
 echo "Subscriber started with PID: $SUB_PID. Outputting to: $OUTPUT_FILE"
 
 # Give the subscriber a moment to initialize
-sleep 3
+sleep 5
 
 # Check if subscriber is still running
 if ! ps -p "$SUB_PID" > /dev/null; then

@@ -1,12 +1,12 @@
 # A SHA256 hash of the instance secret is the "admin" api key
-instanceSecret: "secret-value-shared-by-all-nodes"
-rootPrefix: "some-secure-prefix"
+instanceSecret: "test-cluster-secret"
+rootPrefix: "test-cluster-prefix"
 
 # If first time launch, non-leaders will auto-follow this leader
 defaultLeader: "node0"
 
 # Directory for storing insi data
-insiHome: "/home/bosley/.config/insi"
+insiHome: "/tmp/insi-test-cluster/data"
 
 # TLS will be in same spot on all nodes
 tls:
@@ -17,8 +17,8 @@ clientSkipVerify: true
 serverMustUseTLS: true
 
 cache:
-  standard-ttl: 60m
-  keys: 1m # We dont bumb ttl here - its to avoid the db hit for 1 minute after an auth
+  standard-ttl: 1m  # 1 minute default ttl for cache
+  keys: 10s         # 10 seconds for api keys once they hit cache (for test wait period)
 
 rateLimiters:
   default:    # If an internal error occurs and we need to "default" to a limiter (cosmic edge case)
@@ -64,4 +64,4 @@ nodes:
     nodeSecret: "node2-secret"
 
 logging:
-  level: "info"
+  level: "debug"

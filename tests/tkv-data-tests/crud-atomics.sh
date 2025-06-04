@@ -4,7 +4,7 @@
 
 # --- Configuration ---
 INSIC_PATH=""
-DEFAULT_CONFIG_PATH="../../cluster.yaml" # Relative to this script's location
+DEFAULT_CONFIG_PATH="/tmp/insi-test-cluster/cluster.yaml" # Relative to this script's location
 
 # --- Colors and Emojis ---
 GREEN="\033[0;32m"

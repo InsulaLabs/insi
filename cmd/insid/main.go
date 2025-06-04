@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +14,11 @@ import (
 )
 
 func main() {
+	// misconfigured logger in raft bbolt backend
+	// we use slog so this only silences the bbolt backend
+	// to raft snapshot store that isn't directly used by us
+	log.SetOutput(io.Discard)
+
 	args := os.Args[1:]
 	var staticPath string
 	var remainingArgs []string
@@ -43,7 +50,7 @@ func main() {
 
 	rt.WithPlugin(status.New(slog.Default().WithGroup("status-plugin")))
 
-	objectsDir := filepath.Join(os.Getenv("HOME"), ".config", "insidb", "objects")
+	objectsDir := filepath.Join(rt.GetHomeDir(), "plugins", "objects")
 	if err := os.MkdirAll(objectsDir, 0755); err != nil {
 		slog.Error("Failed to create objects directory", "error", err)
 		os.Exit(1)

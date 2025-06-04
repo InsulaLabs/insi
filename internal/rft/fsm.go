@@ -173,7 +173,7 @@ func New(settings Settings) (FSMInstance, error) {
 	logger := settings.Logger.WithGroup("fsm_init")
 
 	lockFileName := settings.NodeId + ".lock"
-	lockFilePath := filepath.Join(settings.Config.InsudbDir, lockFileName)
+	lockFilePath := filepath.Join(settings.Config.InsidHome, lockFileName)
 	_, errLockFile := os.Stat(lockFilePath)
 	isFirstLaunch := os.IsNotExist(errLockFile)
 
@@ -185,13 +185,13 @@ func New(settings Settings) (FSMInstance, error) {
 		logger.Info("Lock file found: not a first-time launch", "path", lockFilePath)
 	}
 
-	nodeDataRootPath := filepath.Join(settings.Config.InsudbDir, settings.NodeId)
+	nodeDataRootPath := filepath.Join(settings.Config.InsidHome, settings.NodeId)
 	if err := os.MkdirAll(nodeDataRootPath, os.ModePerm); err != nil {
 		return nil, fmt.Errorf("could not create node data root %s: %v", nodeDataRootPath, err)
 	}
 
 	kf := &kvFsm{
-		logger:     settings.Logger,
+		logger:     settings.Logger.WithGroup(fmt.Sprintf("fsm_%s", settings.NodeId)),
 		tkv:        settings.TkvDb,
 		cfg:        settings.Config,
 		thisNode:   settings.NodeId,
@@ -201,14 +201,15 @@ func New(settings Settings) (FSMInstance, error) {
 	currentRaftAdvertiseAddr := settings.NodeCfg.RaftBinding
 	isDefaultLeader := settings.NodeId == settings.Config.DefaultLeader
 
-	raftInstance, err := setupRaft(
-		nodeDataRootPath,
-		settings.NodeId,
-		currentRaftAdvertiseAddr,
-		kf,
-		settings.Config,
-		isDefaultLeader,
-	)
+	raftInstance, err := setupRaft(&SetupConfig{
+		Logger:               settings.Logger.WithGroup("raft_setup"),
+		NodeDir:              nodeDataRootPath,
+		NodeId:               settings.NodeId,
+		RaftAdvertiseAddress: currentRaftAdvertiseAddr,
+		KvFsm:                kf,
+		ClusterConfig:        settings.Config,
+		IsDefaultLeader:      isDefaultLeader,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup Raft for %s: %v", settings.NodeId, err)
 	}
@@ -216,7 +217,14 @@ func New(settings Settings) (FSMInstance, error) {
 
 	if isFirstLaunch && !isDefaultLeader {
 		logger.Info("First launch, non-leader: attempting auto-join")
-		err = attemptAutoJoin(settings.Ctx, settings.NodeId, settings.Config, raftInstance, currentRaftAdvertiseAddr)
+		err = attemptAutoJoin(&AutoJoinConfig{
+			Logger:     settings.Logger.WithGroup("auto_join"),
+			Ctx:        settings.Ctx,
+			NodeId:     settings.NodeId,
+			ClusterCfg: settings.Config,
+			Raft:       raftInstance,
+			MyRaftAddr: currentRaftAdvertiseAddr,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("auto-join failed for %s: %v", settings.NodeId, err)
 		}
@@ -229,7 +237,7 @@ func New(settings Settings) (FSMInstance, error) {
 			return nil, fmt.Errorf("failed to create lock file %s: %v", lockFilePath, err)
 		}
 		file.Close()
-		logger.Info("Lock file created", "path", lockFilePath)
+		logger.Debug("Lock file created", "path", lockFilePath)
 	}
 
 	logger.Info("kvFsm and Raft initialized successfully")
@@ -262,6 +270,8 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 
 		switch cmd.Type {
 		case cmdSetValue:
+			kf.logger.Debug("Applying CmdSetValue", "payload", string(cmd.Payload))
+
 			var p models.KVPayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 				kf.logger.Error("Could not unmarshal set_value payload", "error", err, "payload", string(cmd.Payload))
@@ -272,9 +282,10 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV Set failed for valuesDb", "key", p.Key, "error", err)
 				return fmt.Errorf("tkv Set failed for valuesDb (key %s): %w", p.Key, err)
 			}
-			kf.logger.Info("FSM applied set_value", "key", p.Key)
+			kf.logger.Debug("FSM applied set_value", "key", p.Key)
 			return nil
 		case cmdDeleteValue:
+			kf.logger.Debug("Applying CmdDeleteValue", "payload", string(cmd.Payload))
 			var p models.KeyPayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 				kf.logger.Error("Could not unmarshal delete_value payload", "error", err, "payload", string(cmd.Payload))
@@ -285,7 +296,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV Delete failed for valuesDb", "key", p.Key, "error", err)
 				return fmt.Errorf("tkv Delete failed for valuesDb (key %s): %w", p.Key, err)
 			}
-			kf.logger.Info("FSM applied delete_value", "key", p.Key)
+			kf.logger.Debug("FSM applied delete_value", "key", p.Key)
 			return nil
 		case cmdSetCache:
 			var p models.CachePayload
@@ -313,7 +324,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 					kf.logger.Error("TKV CacheSet failed when SetAt was zero", "key", p.Key, "error", err)
 					return fmt.Errorf("tkv CacheSet failed for stdCache (key %s, SetAt was zero): %w", p.Key, err)
 				}
-				kf.logger.Info("FSM applied set_std_cache (SetAt was zero, used full original TTL)", "key", p.Key, "applied_ttl", actualTTLForCacheSet.String())
+				kf.logger.Debug("FSM applied set_std_cache (SetAt was zero, used full original TTL)", "key", p.Key, "applied_ttl", actualTTLForCacheSet.String())
 			} else {
 				// SetAt is valid, proceed with precise expiry calculation.
 				intendedDuration := time.Duration(p.TTL) * time.Second // Correctly convert int64 seconds to time.Duration
@@ -321,7 +332,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				currentTime := time.Now()
 
 				if expiryTime.Before(currentTime) {
-					kf.logger.Info("Skipping std cache entry because its calculated absolute expiry time is in the past",
+					kf.logger.Debug("Skipping std cache entry because its calculated absolute expiry time is in the past",
 						"key", p.Key,
 						"original_ttl_seconds", p.TTL, // p.TTL is int64 seconds
 						"intended_duration_str", intendedDuration.String(),
@@ -333,7 +344,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 
 				remainingTTL := time.Until(expiryTime)
 				if remainingTTL <= 0 {
-					kf.logger.Info("Skipping std cache entry as calculated remaining TTL is zero or negative",
+					kf.logger.Debug("Skipping std cache entry as calculated remaining TTL is zero or negative",
 						"key", p.Key,
 						"original_ttl_seconds", p.TTL, // p.TTL is int64 seconds
 						"intended_duration_str", intendedDuration.String(),
@@ -349,7 +360,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 					kf.logger.Error("TKV CacheSet failed", "key", p.Key, "remaining_ttl", remainingTTL.String(), "error", err)
 					return fmt.Errorf("tkv CacheSet failed for stdCache (key %s): %w", p.Key, err)
 				}
-				kf.logger.Info("FSM applied set_std_cache with remaining TTL", "key", p.Key, "remaining_ttl", remainingTTL.String())
+				kf.logger.Debug("FSM applied set_std_cache with remaining TTL", "key", p.Key, "remaining_ttl", remainingTTL.String())
 			}
 			return nil
 		case cmdDeleteCache:
@@ -363,7 +374,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV CacheDelete failed for stdCache", "key", p.Key, "error", err)
 				return fmt.Errorf("tkv CacheDelete failed for stdCache (key %s): %w", p.Key, err)
 			}
-			kf.logger.Info("FSM applied delete_cache", "key", p.Key)
+			kf.logger.Debug("FSM applied delete_cache", "key", p.Key)
 			return nil
 		case cmdPublishEvent:
 			if kf.eventRecvr == nil {
@@ -404,7 +415,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV BatchSet failed", "item_count", len(batchItems), "error", err)
 				return fmt.Errorf("tkv BatchSet failed (item_count %d): %w", len(batchItems), err)
 			}
-			kf.logger.Info("FSM applied batch_set_values", "item_count", len(batchItems))
+			kf.logger.Debug("FSM applied batch_set_values", "item_count", len(batchItems))
 			return nil
 		case cmdBatchDeleteValues:
 			var keys []string
@@ -417,7 +428,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV BatchDelete failed", "key_count", len(keys), "error", err)
 				return fmt.Errorf("tkv BatchDelete failed (key_count %d): %w", len(keys), err)
 			}
-			kf.logger.Info("FSM applied batch_delete_values", "key_count", len(keys))
+			kf.logger.Debug("FSM applied batch_delete_values", "key_count", len(keys))
 			return nil
 		case cmdAtomicNew:
 			var p models.AtomicNewRequest
@@ -431,7 +442,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV AtomicNew failed", "key", p.Key, "overwrite", p.Overwrite, "error", err)
 				return fmt.Errorf("tkv AtomicNew failed (key %s): %w", p.Key, err)
 			}
-			kf.logger.Info("FSM applied atomic_new", "key", p.Key, "overwrite", p.Overwrite)
+			kf.logger.Debug("FSM applied atomic_new", "key", p.Key, "overwrite", p.Overwrite)
 			return nil // Return the error itself from tkv.AtomicNew if it occurred
 		case cmdAtomicAdd:
 			var p models.AtomicAddRequest
@@ -448,7 +459,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				// Returning the error itself is idiomatic for Apply's response when an error occurs.
 				return err
 			}
-			kf.logger.Info("FSM applied atomic_add", "key", p.Key, "delta", p.Delta, "new_value", newValue)
+			kf.logger.Debug("FSM applied atomic_add", "key", p.Key, "delta", p.Delta, "new_value", newValue)
 			return newValue // Return the new value on success
 		case cmdAtomicDelete:
 			var p models.AtomicKeyPayload
@@ -461,7 +472,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV AtomicDelete failed", "key", p.Key, "error", err)
 				return fmt.Errorf("tkv AtomicDelete failed (key %s): %w", p.Key, err)
 			}
-			kf.logger.Info("FSM applied atomic_delete", "key", p.Key)
+			kf.logger.Debug("FSM applied atomic_delete", "key", p.Key)
 			return nil
 		case cmdQueueNew:
 			var p models.QueueNewRequest // Using models.QueueNewRequest
@@ -474,7 +485,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV QueueNew failed", "key", p.Key, "error", err)
 				return fmt.Errorf("tkv QueueNew failed (key %s): %w", p.Key, err)
 			}
-			kf.logger.Info("FSM applied queue_new", "key", p.Key)
+			kf.logger.Debug("FSM applied queue_new", "key", p.Key)
 			return nil
 		case cmdQueuePush:
 			var p models.QueuePushRequest
@@ -487,7 +498,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV QueuePush failed", "key", p.Key, "value", p.Value, "error", err)
 				return err // Return the error itself (e.g., ErrQueueNotFound)
 			}
-			kf.logger.Info("FSM applied queue_push", "key", p.Key, "value", p.Value, "new_length", length)
+			kf.logger.Debug("FSM applied queue_push", "key", p.Key, "value", p.Value, "new_length", length)
 			return length // Return the new length on success
 		case cmdQueuePop:
 			var p models.QueueKeyPayload // Pop only needs the key in payload
@@ -500,7 +511,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV QueuePop failed", "key", p.Key, "error", err)
 				return err // Return the error itself (e.g., ErrQueueNotFound, ErrQueueEmpty)
 			}
-			kf.logger.Info("FSM applied queue_pop", "key", p.Key, "popped_value_len", len(value))
+			kf.logger.Debug("FSM applied queue_pop", "key", p.Key, "popped_value_len", len(value))
 			return value // Return the popped value on success
 		case cmdQueueDelete:
 			var p models.QueueDeleteRequest // Using models.QueueDeleteRequest
@@ -513,7 +524,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("TKV QueueDelete failed", "key", p.Key, "error", err)
 				return fmt.Errorf("tkv QueueDelete failed (key %s): %w", p.Key, err)
 			}
-			kf.logger.Info("FSM applied queue_delete", "key", p.Key)
+			kf.logger.Debug("FSM applied queue_delete", "key", p.Key)
 			return nil
 		default:
 			kf.logger.Error("Unknown raft command type in Apply", "command_type", cmd.Type)
@@ -579,7 +590,7 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 			}
 			remainingTTL := time.Until(timeOfEncodingPlusTTL)
 			if remainingTTL <= 0 {
-				kf.logger.Info("Skipping restore of cache entry as its remaining TTL is zero or negative", "key", entry.Key, "original_ttl_seconds", entry.TTL, "calculated_remaining_ttl", remainingTTL.String())
+				kf.logger.Debug("Skipping restore of cache entry as its remaining TTL is zero or negative", "key", entry.Key, "original_ttl_seconds", entry.TTL, "calculated_remaining_ttl", remainingTTL.String())
 				continue
 			}
 			stdCache.Set(entry.Key, entry.Value, remainingTTL)
@@ -623,6 +634,16 @@ func (kf *kvFsm) Set(kvp models.KVPayload) error {
 		return fmt.Errorf("could not marshal raft command for set_value: %w", err)
 	}
 
+	// CHECK FOR ACTUAL CHANGE BEFORE APPLYING TO NETWORK
+	//
+	exists, err := kf.tkv.Get(kvp.Key)
+	if err == nil && exists != "" {
+		if exists == kvp.Value {
+			kf.logger.Debug("SetValue already exists and is the same, skipping", "key", kvp.Key)
+			return nil
+		}
+	}
+
 	future := kf.r.Apply(cmdBytesApply, 500*time.Millisecond)
 	if err := future.Error(); err != nil {
 		kf.logger.Error("Raft Apply failed for SetValue", "key", kvp.Key, "error", err)
@@ -634,7 +655,7 @@ func (kf *kvFsm) Set(kvp models.KVPayload) error {
 		kf.logger.Error("FSM application error for SetValue", "key", kvp.Key, "error", responseErr)
 		return fmt.Errorf("fsm application error for SetValue (key %s): %w", kvp.Key, responseErr)
 	}
-	kf.logger.Info("SetValue Raft Apply successful", "key", kvp.Key)
+	kf.logger.Debug("SetValue Raft Apply successful", "key", kvp.Key)
 	return nil
 }
 
@@ -657,6 +678,13 @@ func (kf *kvFsm) Delete(key string) error {
 		return fmt.Errorf("could not marshal raft command for delete_value: %w", err)
 	}
 
+	// CHECK FOR ACTUAL CHANGE BEFORE APPLYING TO NETWORK
+	// - If we can't get it then theres nothing to delete
+	_, err = kf.tkv.Get(key)
+	if err != nil {
+		return nil // idempotency
+	}
+
 	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
 	if err := future.Error(); err != nil {
 		kf.logger.Error("Raft Apply failed for Delete", "key", key, "error", err)
@@ -668,7 +696,7 @@ func (kf *kvFsm) Delete(key string) error {
 		kf.logger.Error("FSM application error for Delete", "key", key, "error", responseErr)
 		return fmt.Errorf("fsm application error for Delete (key %s): %w", key, responseErr)
 	}
-	kf.logger.Info("Delete Raft Apply successful", "key", key)
+	kf.logger.Debug("Delete Raft Apply successful", "key", key)
 	return nil
 }
 
@@ -686,7 +714,7 @@ func (kf *kvFsm) Join(followerId string, followerAddress string) error {
 		kf.logger.Error("Failed to add follower/voter to Raft cluster", "follower_id", followerId, "follower_addr", followerAddress, "error", err)
 		return fmt.Errorf("failed to add voter (id: %s, addr: %s): %w", followerId, followerAddress, err)
 	}
-	kf.logger.Info("Successfully added follower/voter to Raft cluster", "follower_id", followerId, "follower_addr", followerAddress)
+	kf.logger.Debug("Successfully added follower/voter to Raft cluster", "follower_id", followerId, "follower_addr", followerAddress)
 	return nil
 }
 
@@ -727,7 +755,7 @@ func (kf *kvFsm) Publish(topic string, data any) error {
 		kf.logger.Error("FSM application error for Publish", "topic", topic, "error", responseErr)
 		return fmt.Errorf("fsm application error for Publish (topic %s): %w", topic, responseErr)
 	}
-	kf.logger.Info("Publish Raft Apply successful", "topic", topic)
+	kf.logger.Debug("Publish Raft Apply successful", "topic", topic)
 	return nil
 }
 
@@ -796,7 +824,7 @@ func (kf *kvFsm) SetCache(payload models.CachePayload) error {
 		kf.logger.Error("FSM application error for SetCache", "key", payload.Key, "error", responseErr)
 		return fmt.Errorf("fsm application error for SetCache (key %s): %w", payload.Key, responseErr)
 	}
-	kf.logger.Info("SetCache Raft Apply successful", "key", payload.Key)
+	kf.logger.Debug("SetCache Raft Apply successful", "key", payload.Key)
 	return nil
 }
 
@@ -833,7 +861,7 @@ func (kf *kvFsm) DeleteCache(key string) error {
 		kf.logger.Error("FSM application error for DeleteCache", "key", key, "error", responseErr)
 		return fmt.Errorf("fsm application error for DeleteCache (key %s): %w", key, responseErr)
 	}
-	kf.logger.Info("DeleteCache Raft Apply successful", "key", key)
+	kf.logger.Debug("DeleteCache Raft Apply successful", "key", key)
 	return nil
 }
 
@@ -888,7 +916,7 @@ func (kf *kvFsm) BatchSet(items []models.KVPayload) error {
 		kf.logger.Error("FSM application error for BatchSet", "item_count", len(items), "error", responseErr)
 		return fmt.Errorf("fsm application error for BatchSet (item_count %d): %w", len(items), responseErr)
 	}
-	kf.logger.Info("FSM BatchSet Raft Apply successful", "item_count", len(items))
+	kf.logger.Debug("FSM BatchSet Raft Apply successful", "item_count", len(items))
 	return nil
 }
 
@@ -931,56 +959,8 @@ func (kf *kvFsm) BatchDelete(keyPayloads []models.KeyPayload) error {
 		kf.logger.Error("FSM application error for BatchDelete", "key_count", len(keys), "error", responseErr)
 		return fmt.Errorf("fsm application error for BatchDelete (key_count %d): %w", len(keys), responseErr)
 	}
-	kf.logger.Info("FSM BatchDelete Raft Apply successful", "key_count", len(keys))
+	kf.logger.Debug("FSM BatchDelete Raft Apply successful", "key_count", len(keys))
 	return nil
-}
-
-// ------------
-
-func (kf *kvFsm) UpdateUsage(key string, bytesAdded int) error {
-
-	// TODO: WHOLE KEY given (the exact lookup) no prefixing here
-
-	// TODO: Load and +/- the stored usage -bytesAdded means some
-	// were removed.
-
-	// TODO: ensure bytes total not negative
-
-	// TODO: return ErrInsufficientSpace if bytesAdded exceeds
-	// the total bytes available and dont save the new usage
-	// (this indicates the write should fail)
-
-	// todo: read from the ROOT_PREFIX:usage:ENTITY_NAME:KEY
-	// to get usage
-
-	// TODO: write to the ROOT_PREFIX:usage:ENTITY_NAME:KEY:tracker
-	// to store the new usage
-
-	return nil
-}
-
-type BadgerLogger struct {
-	slogger *slog.Logger
-}
-
-func NewBadgerLogger(logger *slog.Logger) *BadgerLogger {
-	return &BadgerLogger{slogger: logger}
-}
-
-func (bl *BadgerLogger) Errorf(format string, args ...any) {
-	bl.slogger.Error(fmt.Sprintf(format, args...))
-}
-
-func (bl *BadgerLogger) Warningf(format string, args ...any) {
-	bl.slogger.Warn(fmt.Sprintf(format, args...))
-}
-
-func (bl *BadgerLogger) Infof(format string, args ...any) {
-	bl.slogger.Info(fmt.Sprintf(format, args...))
-}
-
-func (bl *BadgerLogger) Debugf(format string, args ...any) {
-	bl.slogger.Debug(fmt.Sprintf(format, args...))
 }
 
 func (kf *kvFsm) IsLeader() bool {
@@ -1078,7 +1058,7 @@ func (kf *kvFsm) AtomicNew(key string, overwrite bool) error {
 		// This error comes from the Apply method (e.g., tkv.AtomicNew returning ErrKeyExists)
 		return responseErr
 	}
-	kf.logger.Info("AtomicNewRaft Raft Apply successful", "key", key)
+	kf.logger.Debug("AtomicNewRaft Raft Apply successful", "key", key)
 	return nil
 }
 
@@ -1120,7 +1100,7 @@ func (kf *kvFsm) AtomicAdd(key string, delta int64) (int64, error) {
 		return 0, fmt.Errorf("unexpected response type from FSM for AtomicAddRaft: got %T, expected int64 or error", response)
 	}
 
-	kf.logger.Info("AtomicAddRaft Raft Apply successful", "key", key, "new_value", newValue)
+	kf.logger.Debug("AtomicAddRaft Raft Apply successful", "key", key, "new_value", newValue)
 	return newValue, nil
 }
 
@@ -1154,7 +1134,7 @@ func (kf *kvFsm) AtomicDelete(key string) error {
 		kf.logger.Error("FSM application error for AtomicDeleteRaft", "key", key, "error", responseErr)
 		return responseErr // Error from Apply
 	}
-	kf.logger.Info("AtomicDeleteRaft Raft Apply successful", "key", key)
+	kf.logger.Debug("AtomicDeleteRaft Raft Apply successful", "key", key)
 	return nil
 }
 
@@ -1198,7 +1178,7 @@ func (kf *kvFsm) QueueNew(key string) error {
 		kf.logger.Error("FSM application error for QueueNewRaft", "key", key, "error", responseErr)
 		return responseErr
 	}
-	kf.logger.Info("QueueNewRaft Raft Apply successful", "key", key)
+	kf.logger.Debug("QueueNewRaft Raft Apply successful", "key", key)
 	return nil
 }
 
@@ -1239,7 +1219,7 @@ func (kf *kvFsm) QueuePush(key string, value string) (int, error) {
 		return 0, fmt.Errorf("unexpected response type from FSM for QueuePushRaft: got %T, expected int or error", response)
 	}
 
-	kf.logger.Info("QueuePushRaft Raft Apply successful", "key", key, "new_length", newLength)
+	kf.logger.Debug("QueuePushRaft Raft Apply successful", "key", key, "new_length", newLength)
 	return newLength, nil
 }
 
@@ -1280,7 +1260,7 @@ func (kf *kvFsm) QueuePop(key string) (string, error) {
 		return "", fmt.Errorf("unexpected response type from FSM for QueuePopRaft: got %T, expected string or error", response)
 	}
 
-	kf.logger.Info("QueuePopRaft Raft Apply successful", "key", key, "popped_value_len", len(poppedValue))
+	kf.logger.Debug("QueuePopRaft Raft Apply successful", "key", key, "popped_value_len", len(poppedValue))
 	return poppedValue, nil
 }
 
@@ -1314,7 +1294,7 @@ func (kf *kvFsm) QueueDelete(key string) error {
 		kf.logger.Error("FSM application error for QueueDeleteRaft", "key", key, "error", responseErr)
 		return responseErr
 	}
-	kf.logger.Info("QueueDeleteRaft Raft Apply successful", "key", key)
+	kf.logger.Debug("QueueDeleteRaft Raft Apply successful", "key", key)
 	return nil
 }
 

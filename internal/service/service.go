@@ -285,3 +285,17 @@ func (s *Service) Run() {
 
 	s.apiCache.Stop()
 }
+
+// Whenever a cache entry expires, not from deletion, but from TTL expiration this is called
+func (s *Service) OnTTLCacheEviction(key string, value string) error {
+
+	// Only leader should modify the counter on eviction
+	// the others can just let it die
+	if !s.fsm.IsLeader() {
+		fmt.Println("OnTTLCacheEviction not leader, skipping")
+		return nil
+	}
+
+	fmt.Println("OnTTLCacheEviction", key, value)
+	return nil
+}
