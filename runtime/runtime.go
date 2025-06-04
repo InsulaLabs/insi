@@ -13,15 +13,22 @@ import (
 	"sync"
 	"syscall"
 
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
+	"math/big"
+	"net"
+	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/internal/service"
 	"github.com/InsulaLabs/insi/internal/tkv"
-	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
@@ -273,6 +280,13 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		os.Exit(1)
 	}
 
+	keyPath := filepath.Join(r.clusterCfg.InsidHome, "keys")
+
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		nodeLogger.Info("Creating keys directory", "path", keyPath)
+		r.setupKeys(keyPath)
+	}
+
 	nodeDataRootPath := filepath.Join(r.clusterCfg.InsidHome, nodeId)
 	if err := os.MkdirAll(nodeDataRootPath, os.ModePerm); err != nil {
 		nodeLogger.Error("Could not create node data root directory", "path", nodeDataRootPath, "error", err)
@@ -430,18 +444,149 @@ func (r *Runtime) GetHomeDir() string {
 	return r.clusterCfg.InsidHome
 }
 
-func (r *Runtime) RT_IsRoot(td models.TokenData) bool {
-	return td.Entity == service.EntityRoot && td.UUID == r.clusterCfg.RootPrefix
-}
+func (r *Runtime) setupKeys(keyPath string) {
 
-func (r *Runtime) RT_GetNodeConfig() *config.Node {
-	nodeCfg, ok := r.clusterCfg.Nodes[r.asNodeId]
-	if !ok {
-		return nil
+	if err := os.MkdirAll(keyPath, os.ModePerm); err != nil {
+		r.logger.Error("Failed to create keys directory", "path", keyPath, "error", err)
+		os.Exit(1)
 	}
-	return &nodeCfg
+
+	/*
+
+		Generate self signed TLS certificate
+
+	*/
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		r.logger.Error("Failed to generate private key", "error", err)
+		os.Exit(1)
+	}
+
+	notBefore := time.Now()
+	notAfter := notBefore.AddDate(10, 0, 0)
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"[ I N S I - L O C A L ]"},
+			CommonName:   "insid-node",
+		},
+		NotBefore: notBefore,
+		NotAfter:  notAfter,
+
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+	}
+
+	// Initialize DNSNames and IPAddresses with defaults
+	template.DNSNames = []string{"localhost"}
+	template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+
+	// Add IP addresses and DNS names from node configurations
+	// This is important for the certificate to be valid for the node's bindings.
+	for _, nodeCfg := range r.clusterCfg.Nodes {
+		if nodeCfg.HttpBinding != "" {
+			host, _, err := net.SplitHostPort(nodeCfg.HttpBinding)
+			if err == nil {
+				if ip := net.ParseIP(host); ip != nil {
+					template.IPAddresses = append(template.IPAddresses, ip)
+				} else if host != "" {
+					template.DNSNames = append(template.DNSNames, host)
+				}
+			} else {
+				if ip := net.ParseIP(nodeCfg.HttpBinding); ip != nil {
+					template.IPAddresses = append(template.IPAddresses, ip)
+				} else if nodeCfg.HttpBinding != "" {
+					template.DNSNames = append(template.DNSNames, nodeCfg.HttpBinding)
+				}
+			}
+		}
+
+		if nodeCfg.ClientDomain != "" {
+			clientHost, _, err := net.SplitHostPort(nodeCfg.ClientDomain)
+			if err == nil {
+				if ip := net.ParseIP(clientHost); ip != nil {
+					template.IPAddresses = append(template.IPAddresses, ip)
+				} else if clientHost != "" {
+					template.DNSNames = append(template.DNSNames, clientHost)
+				}
+			} else { // Was likely just host
+				if ip := net.ParseIP(nodeCfg.ClientDomain); ip != nil {
+					template.IPAddresses = append(template.IPAddresses, ip)
+				} else if nodeCfg.ClientDomain != "" {
+					template.DNSNames = append(template.DNSNames, nodeCfg.ClientDomain)
+				}
+			}
+		}
+	}
+
+	// Remove duplicates
+	template.IPAddresses = removeDuplicateIPs(template.IPAddresses)
+	template.DNSNames = removeDuplicateStrings(template.DNSNames)
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		r.logger.Error("Failed to create certificate", "error", err)
+		os.Exit(1)
+	}
+
+	// Create PEM files for cert and key
+	certOut, err := os.Create(filepath.Join(keyPath, "server.crt"))
+	if err != nil {
+		r.logger.Error("Failed to open server.crt for writing", "error", err)
+		os.Exit(1)
+	}
+	defer certOut.Close()
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		r.logger.Error("Failed to write data to insid.crt", "error", err)
+		os.Exit(1)
+	}
+	r.logger.Info("Generated insid.crt", "path", certOut.Name())
+
+	keyOut, err := os.OpenFile(filepath.Join(keyPath, "server.key"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		r.logger.Error("Failed to open server.key for writing", "error", err)
+		os.Exit(1)
+	}
+	defer keyOut.Close()
+	privBytes := x509.MarshalPKCS1PrivateKey(priv)
+	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
+		r.logger.Error("Failed to write data to server.key", "error", err)
+		os.Exit(1)
+	}
+
+	// Sleep to ensure the files are written before we attempt to use them
+	time.Sleep(1 * time.Second)
+	r.logger.Info("Generated server.key", "path", keyOut.Name())
 }
 
-func (r *Runtime) RT_GetNodeID() string {
-	return r.asNodeId
+func removeDuplicateIPs(ips []net.IP) []net.IP {
+	seen := make(map[string]bool)
+	result := []net.IP{}
+	for _, ip := range ips {
+		if ip == nil {
+			continue
+		}
+		ipStr := ip.String()
+		if _, ok := seen[ipStr]; !ok {
+			seen[ipStr] = true
+			result = append(result, ip)
+		}
+	}
+	return result
+}
+
+func removeDuplicateStrings(s []string) []string {
+	seen := make(map[string]bool)
+	result := []string{}
+	for _, item := range s {
+		if _, ok := seen[item]; !ok {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	return result
 }
