@@ -1,6 +1,10 @@
 package service
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -76,7 +80,7 @@ func (s *Service) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenD
 		return models.TokenData{}, false
 	}
 
-	s.apiCache.Set(token, tdFromFsm, time.Minute*1)
+	s.apiCache.Set(token, tdFromFsm, time.Second*10)
 
 	return tdFromFsm, true
 }
@@ -105,7 +109,7 @@ func (s *Service) decomposeKey(token string) (string, string, error) {
 		return "", "", fmt.Errorf("could not decode base64: %w", err)
 	}
 
-	decryptedKeyData, err := s.identity.DecryptData(encryptedKeyData)
+	decryptedKeyData, err := s.decrypt(encryptedKeyData)
 	if err != nil {
 		return "", "", fmt.Errorf("could not decrypt key data: %w", err)
 	}
@@ -137,7 +141,7 @@ func (s *Service) CreateApiKey(keyName string) (string, error) {
 		return "", fmt.Errorf("could not marshal token data for api key string: %w", err)
 	}
 
-	encryptedKeyDataForApiKey, err := s.identity.EncryptData(tokenDataForApiKeyString)
+	encryptedKeyDataForApiKey, err := s.encrypt(tokenDataForApiKeyString)
 	if err != nil {
 		return "", fmt.Errorf("could not encrypt token data for api key string: %w", err)
 	}
@@ -185,4 +189,45 @@ func (s *Service) DeleteApiKey(key string) error {
 	s.apiCache.Delete(key)
 
 	return nil
+}
+
+func (s *Service) encrypt(data []byte) ([]byte, error) {
+	hash := sha256.Sum256([]byte(s.cfg.InstanceSecret))
+	aesKey := hash[:]
+
+	blockCipher, err := aes.NewCipher(aesKey)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(blockCipher)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	ciphertext := gcm.Seal(nonce, nonce, data, nil)
+	return ciphertext, nil
+}
+
+func (s *Service) decrypt(data []byte) ([]byte, error) {
+	// Derive a 32-byte key using SHA-256
+	hash := sha256.Sum256([]byte(s.cfg.InstanceSecret))
+	aesKey := hash[:]
+
+	blockCipher, err := aes.NewCipher(aesKey)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(blockCipher)
+	if err != nil {
+		return nil, err
+	}
+	nonce, ciphertext := data[:gcm.NonceSize()], data[gcm.NonceSize():]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, err
+	}
+	return plaintext, nil
 }
