@@ -22,6 +22,7 @@ import (
 	"github.com/InsulaLabs/insi/internal/service"
 	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/InsulaLabs/insula/security/badge"
+	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,6 +44,8 @@ type Runtime struct {
 	rtClients map[string]*client.Client
 
 	plugins map[string]Plugin
+
+	currentLogLevel slog.Level
 }
 
 var _ PluginRuntimeIF = &Runtime{}
@@ -118,6 +121,27 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configuration from %s: %w", r.configFile, err)
 	}
+
+	// Set the log level
+	if r.clusterCfg.Logging.Level != "" {
+		switch r.clusterCfg.Logging.Level {
+		case "debug":
+			r.currentLogLevel = slog.LevelDebug
+		case "info":
+			r.currentLogLevel = slog.LevelInfo
+		case "warn":
+			r.currentLogLevel = slog.LevelWarn
+		case "error":
+			r.currentLogLevel = slog.LevelError
+		default:
+			color.HiYellow("Unknown logging level: %s, defaulting to info", r.clusterCfg.Logging.Level)
+			r.currentLogLevel = slog.LevelInfo
+		}
+	}
+
+	r.logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: r.currentLogLevel,
+	})).With("service", "insidRuntime")
 
 	// Generate the root API key from the instance secret
 	// This key is used by runtime's internal clients and passed to services.
@@ -242,12 +266,12 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	nodeLogger := r.logger.With("node", nodeId)
 	nodeLogger.Info("Starting node instance")
 
-	if err := os.MkdirAll(r.clusterCfg.InsudbDir, os.ModePerm); err != nil {
-		nodeLogger.Error("Failed to create insudbDir", "path", r.clusterCfg.InsudbDir, "error", err)
+	if err := os.MkdirAll(r.clusterCfg.InsidHome, os.ModePerm); err != nil {
+		nodeLogger.Error("Failed to create insidHome", "path", r.clusterCfg.InsidHome, "error", err)
 		os.Exit(1)
 	}
 
-	nodeDataRootPath := filepath.Join(r.clusterCfg.InsudbDir, nodeId)
+	nodeDataRootPath := filepath.Join(r.clusterCfg.InsidHome, nodeId)
 	if err := os.MkdirAll(nodeDataRootPath, os.ModePerm); err != nil {
 		nodeLogger.Error("Could not create node data root directory", "path", nodeDataRootPath, "error", err)
 		os.Exit(1)
@@ -266,11 +290,12 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 
 	kvm, err := tkv.New(tkv.Config{
-		Identity:  b,
-		Logger:    nodeLogger.WithGroup("tkv"),
-		Directory: nodeDir,
-		AppCtx:    r.appCtx,
-		CacheTTL:  r.clusterCfg.Cache.StandardTTL,
+		Identity:       b,
+		Logger:         nodeLogger.WithGroup("tkv"),
+		BadgerLogLevel: r.currentLogLevel,
+		Directory:      nodeDir,
+		AppCtx:         r.appCtx,
+		CacheTTL:       r.clusterCfg.Cache.StandardTTL,
 	})
 	if err != nil {
 		nodeLogger.Error("Failed to create KV manager", "error", err)
@@ -397,4 +422,8 @@ func (r *Runtime) Wait() {
 func (r *Runtime) Stop() {
 	r.logger.Info("Runtime stop requested.")
 	r.appCancel()
+}
+
+func (r *Runtime) GetHomeDir() string {
+	return r.clusterCfg.InsidHome
 }

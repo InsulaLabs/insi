@@ -12,11 +12,12 @@ import (
 )
 
 type Config struct {
-	Identity  badge.Badge
-	Logger    *slog.Logger
-	Directory string
-	AppCtx    context.Context
-	CacheTTL  time.Duration
+	Identity       badge.Badge
+	Logger         *slog.Logger
+	BadgerLogLevel slog.Level
+	Directory      string
+	AppCtx         context.Context
+	CacheTTL       time.Duration
 }
 
 type data struct {
