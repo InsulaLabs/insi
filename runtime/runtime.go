@@ -266,12 +266,12 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	nodeLogger := r.logger.With("node", nodeId)
 	nodeLogger.Info("Starting node instance")
 
-	if err := os.MkdirAll(r.clusterCfg.InsudbDir, os.ModePerm); err != nil {
-		nodeLogger.Error("Failed to create insudbDir", "path", r.clusterCfg.InsudbDir, "error", err)
+	if err := os.MkdirAll(r.clusterCfg.InsidHome, os.ModePerm); err != nil {
+		nodeLogger.Error("Failed to create insidHome", "path", r.clusterCfg.InsidHome, "error", err)
 		os.Exit(1)
 	}
 
-	nodeDataRootPath := filepath.Join(r.clusterCfg.InsudbDir, nodeId)
+	nodeDataRootPath := filepath.Join(r.clusterCfg.InsidHome, nodeId)
 	if err := os.MkdirAll(nodeDataRootPath, os.ModePerm); err != nil {
 		nodeLogger.Error("Could not create node data root directory", "path", nodeDataRootPath, "error", err)
 		os.Exit(1)
@@ -422,4 +422,8 @@ func (r *Runtime) Wait() {
 func (r *Runtime) Stop() {
 	r.logger.Info("Runtime stop requested.")
 	r.appCancel()
+}
+
+func (r *Runtime) GetHomeDir() string {
+	return r.clusterCfg.InsidHome
 }

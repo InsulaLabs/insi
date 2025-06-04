@@ -5,8 +5,8 @@ rootPrefix: "some-secure-prefix"
 # If first time launch, non-leaders will auto-follow this leader
 defaultLeader: "node0"
 
-# Directory for storing insudb data
-insudbDir: "/home/bosley/.config/insudb"
+# Directory for storing insi data
+insiHome: "/home/bosley/.config/insi"
 
 # TLS will be in same spot on all nodes
 tls:
@@ -21,21 +21,21 @@ cache:
   keys: 1m # We dont bumb ttl here - its to avoid the db hit for 1 minute after an auth
 
 rateLimiters:
-  values:
-    limit: 100
-    burst: 150 
-  cache:
-    limit: 200
-    burst: 250
-  system:
-    limit: 10
-    burst: 20
-  default:
+  default:    # If an internal error occurs and we need to "default" to a limiter (cosmic edge case)
     limit: 5
     burst: 10
+  values:
+    limit: 1000
+    burst: 1500 
+  cache:
+    limit: 1000
+    burst: 1500
+  system:
+    limit: 10
+    burst: 15
   events:
-    limit: 500
-    burst: 750
+    limit: 1000
+    burst: 1500
   queues:
     limit: 1000
     burst: 1500

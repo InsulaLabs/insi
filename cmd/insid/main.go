@@ -50,7 +50,7 @@ func main() {
 
 	rt.WithPlugin(status.New(slog.Default().WithGroup("status-plugin")))
 
-	objectsDir := filepath.Join(os.Getenv("HOME"), ".config", "insidb", "objects")
+	objectsDir := filepath.Join(rt.GetHomeDir(), "plugins", "objects")
 	if err := os.MkdirAll(objectsDir, 0755); err != nil {
 		slog.Error("Failed to create objects directory", "error", err)
 		os.Exit(1)

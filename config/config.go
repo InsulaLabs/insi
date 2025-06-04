@@ -48,7 +48,7 @@ type Cluster struct {
 	Nodes            map[string]Node `yaml:"nodes"`
 	TLS              TLS             `yaml:"tls"`
 	ClientSkipVerify bool            `yaml:"clientSkipVerify"` // Across all nodes, if true, then their "join" clients will permit skip of TLS verification
-	InsudbDir        string          `yaml:"insudbDir"`
+	InsidHome        string          `yaml:"insiHome"`
 	ServerMustUseTLS bool            `yaml:"serverMustUseTLS"` // Across all nodes, if true, then their "join" clients will permit skip of TLS verification
 	Cache            Cache           `yaml:"cache"`
 	RootPrefix       string          `yaml:"rootPrefix"`
@@ -78,7 +78,7 @@ var (
 	ErrInstanceSecretMissing                   = errors.New("instanceSecret is missing in config")
 	ErrDefaultLeaderMissing                    = errors.New("defaultLeader is not set in config")
 	ErrNodesMissing                            = errors.New("no nodes defined in config")
-	ErrInsudbDirMissing                        = errors.New("insudbDir is missing in config and is required for lock files and node data")
+	ErrInsidHomeMissing                        = errors.New("insidHome is missing in config and is required for lock files and node data")
 	ErrTLSMissing                              = errors.New("TLS configuration incomplete: both cert and key must be provided if one is specified")
 	ErrDuplicateNodeSecret                     = errors.New("duplicate node secret in config - each node must contain a unique nodeSecret")
 	ErrCacheKeysMissing                        = errors.New("cache.keys is missing in config")
@@ -130,8 +130,8 @@ func LoadConfig(configFile string) (*Cluster, error) {
 		seenNodeSecrets[node.NodeSecret] = true
 	}
 
-	if cfg.InsudbDir == "" {
-		return nil, ErrInsudbDirMissing
+	if cfg.InsidHome == "" {
+		return nil, ErrInsidHomeMissing
 	}
 
 	if cfg.ServerMustUseTLS && (cfg.TLS.Cert == "" || cfg.TLS.Key == "") {
@@ -195,7 +195,7 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 		DefaultLeader:    "node0",
 		Nodes:            make(map[string]Node),
 		ClientSkipVerify: false,
-		InsudbDir:        "data/insudb", // Relative path for easier default setup
+		InsidHome:        "data/insi", // Relative path for easier default setup
 		ServerMustUseTLS: true,
 		TLS: TLS{
 			Cert: "config/tls/server.crt", // Placeholder - user needs to generate these

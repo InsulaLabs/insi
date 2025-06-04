@@ -173,7 +173,7 @@ func New(settings Settings) (FSMInstance, error) {
 	logger := settings.Logger.WithGroup("fsm_init")
 
 	lockFileName := settings.NodeId + ".lock"
-	lockFilePath := filepath.Join(settings.Config.InsudbDir, lockFileName)
+	lockFilePath := filepath.Join(settings.Config.InsidHome, lockFileName)
 	_, errLockFile := os.Stat(lockFilePath)
 	isFirstLaunch := os.IsNotExist(errLockFile)
 
@@ -185,7 +185,7 @@ func New(settings Settings) (FSMInstance, error) {
 		logger.Info("Lock file found: not a first-time launch", "path", lockFilePath)
 	}
 
-	nodeDataRootPath := filepath.Join(settings.Config.InsudbDir, settings.NodeId)
+	nodeDataRootPath := filepath.Join(settings.Config.InsidHome, settings.NodeId)
 	if err := os.MkdirAll(nodeDataRootPath, os.ModePerm); err != nil {
 		return nil, fmt.Errorf("could not create node data root %s: %v", nodeDataRootPath, err)
 	}
