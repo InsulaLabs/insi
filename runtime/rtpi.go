@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/config"
+	"github.com/InsulaLabs/insi/internal/service"
 	"github.com/InsulaLabs/insi/models"
 )
 
@@ -93,4 +94,20 @@ func (r *Runtime) RT_MountStatic(caller Plugin, fs http.Handler) error {
 
 func (r *Runtime) RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (models.TokenData, bool) {
 	return r.service.ValidateToken(req, mustBeRoot)
+}
+
+func (r *Runtime) RT_IsRoot(td models.TokenData) bool {
+	return td.Entity == service.EntityRoot && td.UUID == r.clusterCfg.RootPrefix
+}
+
+func (r *Runtime) RT_GetNodeConfig() *config.Node {
+	nodeCfg, ok := r.clusterCfg.Nodes[r.asNodeId]
+	if !ok {
+		return nil
+	}
+	return &nodeCfg
+}
+
+func (r *Runtime) RT_GetNodeID() string {
+	return r.asNodeId
 }

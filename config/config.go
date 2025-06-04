@@ -198,8 +198,8 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 		InsidHome:        "data/insi", // Relative path for easier default setup
 		ServerMustUseTLS: true,
 		TLS: TLS{
-			Cert: "config/tls/server.crt", // Placeholder - user needs to generate these
-			Key:  "config/tls/server.key", // Placeholder - user needs to generate these
+			Cert: "keys/server.crt", // Placeholder - user needs point these at their ~/.config/insi/keys/server.crt
+			Key:  "keys/server.key", // Placeholder - user needs point these at their ~/.config/insi/keys/server.key
 		},
 		Cache: Cache{
 			StandardTTL: 5 * time.Minute,

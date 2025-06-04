@@ -3,7 +3,7 @@ rootPrefix: "insi-db-rpfx-89024KKS903asSDsa112="
 
 defaultLeader: "db0"
 
-insudbDir: "/home/bosley/.config/insudb"
+insudbDir: "/home/bosley/.config/insi"
 
 tls:
   cert: /etc/letsencrypt/live/insula.dev/fullchain.pem 

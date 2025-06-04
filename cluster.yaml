@@ -10,8 +10,8 @@ insiHome: "/home/bosley/.config/insi"
 
 # TLS will be in same spot on all nodes
 tls:
-  cert: /home/bosley/.config/tekxus/keys/cert.pem
-  key: /home/bosley/.config/tekxus/keys/key.pem
+  cert: /home/bosley/.config/insi/keys/server.crt
+  key: /home/bosley/.config/insi/keys/server.key
 
 clientSkipVerify: true
 serverMustUseTLS: true
