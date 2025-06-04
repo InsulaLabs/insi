@@ -86,7 +86,7 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	td, ok := s.ValidateToken(r)
+	td, ok := s.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
