@@ -38,6 +38,10 @@ type SessionsConfig struct {
 	MaxConnections           int `yaml:"maxConnections"`
 }
 
+type LoggingConfig struct {
+	Level string `yaml:"level"`
+}
+
 type Cluster struct {
 	InstanceSecret   string          `yaml:"instanceSecret"` // on config load no two nodes should have the same instance secret
 	DefaultLeader    string          `yaml:"defaultLeader"`  // if first time launch, non-leaders will auto-follow this leader - need to set this and
@@ -50,6 +54,7 @@ type Cluster struct {
 	RootPrefix       string          `yaml:"rootPrefix"`
 	RateLimiters     RateLimiters    `yaml:"rateLimiters"`
 	Sessions         SessionsConfig  `yaml:"sessions"`
+	Logging          LoggingConfig   `yaml:"logging"`
 }
 
 type RateLimiterConfig struct {

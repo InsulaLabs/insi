@@ -94,8 +94,22 @@ func New(config Config) (TKV, error) {
 		return nil, &ErrInternal{Err: err}
 	}
 
+	badgerLogLevel := badger.INFO
+	if config.BadgerLogLevel == slog.LevelDebug {
+		badgerLogLevel = badger.DEBUG
+	} else if config.BadgerLogLevel == slog.LevelInfo {
+		badgerLogLevel = badger.INFO
+	} else if config.BadgerLogLevel == slog.LevelWarn {
+		badgerLogLevel = badger.WARNING
+	} else if config.BadgerLogLevel == slog.LevelError {
+		badgerLogLevel = badger.ERROR
+	} else {
+		config.Logger.Warn("Unknown badger log level, defaulting to info", "level", config.BadgerLogLevel)
+	}
+
 	dbOpts := badger.DefaultOptions(valuesDir).
 		WithLogger(newLogger(config.Logger.WithGroup("store"))).
+		WithLoggingLevel(badgerLogLevel).
 		WithMemTableSize(16 << 20) // 16MB MemTableSize
 
 	db, err := badger.Open(dbOpts)

@@ -62,3 +62,6 @@ nodes:
     httpBinding: 127.0.0.1:8445
     clientDomain: "localhost"
     nodeSecret: "node2-secret"
+
+logging:
+  level: "info"

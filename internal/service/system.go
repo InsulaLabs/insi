@@ -46,7 +46,8 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 		redirectURL += "?" + r.URL.RawQuery
 	}
 
-	s.logger.Info("Issuing redirect to leader",
+	// DBG because this is a lot of noise
+	s.logger.Debug("Issuing redirect to leader",
 		"current_node_is_follower", true,
 		"leader_connect_address_from_fsm", leaderConnectAddress,
 		"final_redirect_url", redirectURL)
