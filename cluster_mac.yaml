@@ -6,12 +6,12 @@ rootPrefix: "some-secure-prefix"
 defaultLeader: "node0"
 
 # Directory for storing insudb data
-insudbDir: "/Users/bosley/.config/insudb"
+insudbDir: "/Users/bosley/.config/insi"
 
 # TLS will be in same spot on all nodes
 tls:
-  cert: /Users/bosley/.config/tekxus/keys/cert.pem
-  key: /Users/bosley/.config/tekxus/keys/key.pem
+  cert: /Users/bosley/.config/insi/keys/server.crt
+  key: /Users/bosley/.config/insi/keys/server.key
 
 clientSkipVerify: true
 serverMustUseTLS: true

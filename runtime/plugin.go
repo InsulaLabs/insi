@@ -28,6 +28,7 @@ type EventStoreIF interface {
 type WebServerIF interface {
 	RT_MountStatic(caller Plugin, fs http.Handler) error
 	RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (models.TokenData, bool)
+	RT_IsRoot(models.TokenData) bool
 }
 
 // The restricted interfaces that permit the plugin
@@ -35,6 +36,8 @@ type WebServerIF interface {
 type PluginRuntimeIF interface {
 	RT_IsRunning() bool
 	RT_GetClusterConfig() *config.Cluster
+	RT_GetNodeConfig() *config.Node
+	RT_GetNodeID() string
 
 	ValueStoreIF
 	CacheStoreIF
