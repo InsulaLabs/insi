@@ -201,14 +201,15 @@ func New(settings Settings) (FSMInstance, error) {
 	currentRaftAdvertiseAddr := settings.NodeCfg.RaftBinding
 	isDefaultLeader := settings.NodeId == settings.Config.DefaultLeader
 
-	raftInstance, err := setupRaft(
-		nodeDataRootPath,
-		settings.NodeId,
-		currentRaftAdvertiseAddr,
-		kf,
-		settings.Config,
-		isDefaultLeader,
-	)
+	raftInstance, err := setupRaft(&SetupConfig{
+		Logger:               settings.Logger.WithGroup("raft_setup"),
+		NodeDir:              nodeDataRootPath,
+		NodeId:               settings.NodeId,
+		RaftAdvertiseAddress: currentRaftAdvertiseAddr,
+		KvFsm:                kf,
+		ClusterConfig:        settings.Config,
+		IsDefaultLeader:      isDefaultLeader,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup Raft for %s: %v", settings.NodeId, err)
 	}

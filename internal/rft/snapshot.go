@@ -17,7 +17,7 @@ const (
 
 // snapshotEntry is used to store entries in the snapshot with a DB type.
 type snapshotEntry struct {
-	DBType string // "values", "cache" "objects"
+	DBType string // "values", "cache"
 	Key    string
 	Value  string
 
@@ -26,9 +26,8 @@ type snapshotEntry struct {
 }
 
 type badgerFSMSnapshot struct {
-	valuesDb  *badger.DB
-	objectsDb *badger.DB
-	stdCache  *ttlcache.Cache[string, string]
+	valuesDb *badger.DB
+	stdCache *ttlcache.Cache[string, string]
 }
 
 func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
