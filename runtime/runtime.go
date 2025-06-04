@@ -21,6 +21,7 @@ import (
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/internal/service"
 	"github.com/InsulaLabs/insi/internal/tkv"
+	"github.com/InsulaLabs/insi/models"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
@@ -185,6 +186,7 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 			Logger:         r.logger.With("service", "insiClient").With("useCase", useCase),
 			ApiKey:         r.rootApiKey, // Use the runtime's generated root API key
 			Endpoints:      getEndpoints(),
+			SkipVerify:     r.clusterCfg.ClientSkipVerify,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create insi client: %w", err)
@@ -426,4 +428,20 @@ func (r *Runtime) Stop() {
 
 func (r *Runtime) GetHomeDir() string {
 	return r.clusterCfg.InsidHome
+}
+
+func (r *Runtime) RT_IsRoot(td models.TokenData) bool {
+	return td.Entity == service.EntityRoot && td.UUID == r.clusterCfg.RootPrefix
+}
+
+func (r *Runtime) RT_GetNodeConfig() *config.Node {
+	nodeCfg, ok := r.clusterCfg.Nodes[r.asNodeId]
+	if !ok {
+		return nil
+	}
+	return &nodeCfg
+}
+
+func (r *Runtime) RT_GetNodeID() string {
+	return r.asNodeId
 }
