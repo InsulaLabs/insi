@@ -10,6 +10,7 @@ import (
 
 	"github.com/InsulaLabs/insi/config"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb"
 )
@@ -63,9 +64,25 @@ func setupRaft(cfg *SetupConfig) (*raft.Raft, error) {
 		"advertising", cfg.RaftAdvertiseAddress,
 	)
 
-	raftCfg := raft.DefaultConfig()
-	raftCfg.LocalID = raft.ServerID(cfg.NodeId)
-	// raftCfg.LogLevel = "DEBUG" // Example: enable more detailed Raft logging if needed
+	raftCfg := &raft.Config{
+		ProtocolVersion:    raft.ProtocolVersionMax,
+		HeartbeatTimeout:   1000 * time.Millisecond,
+		ElectionTimeout:    1000 * time.Millisecond,
+		CommitTimeout:      50 * time.Millisecond,
+		MaxAppendEntries:   64,
+		ShutdownOnRemove:   true,
+		TrailingLogs:       10240,
+		SnapshotInterval:   120 * time.Second,
+		SnapshotThreshold:  8192,
+		LeaderLeaseTimeout: 500 * time.Millisecond,
+		LocalID:            raft.ServerID(cfg.NodeId),
+		LogOutput:          os.Stderr,
+		LogLevel:           hclog.Debug.String(),
+		Logger: hclog.New(&hclog.LoggerOptions{
+			Level:  hclog.Debug,
+			Output: os.Stderr,
+		}),
+	}
 
 	r, err := raft.NewRaft(raftCfg, cfg.KvFsm, store, store, snapshots, transport)
 	if err != nil {

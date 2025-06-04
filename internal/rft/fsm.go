@@ -636,7 +636,7 @@ func (kf *kvFsm) Set(kvp models.KVPayload) error {
 
 	// CHECK FOR ACTUAL CHANGE BEFORE APPLYING TO NETWORK
 	//
-	exists, err := kf.Get(kvp.Key)
+	exists, err := kf.tkv.Get(kvp.Key)
 	if err == nil && exists != "" {
 		if exists == kvp.Value {
 			kf.logger.Debug("SetValue already exists and is the same, skipping", "key", kvp.Key)
@@ -680,7 +680,7 @@ func (kf *kvFsm) Delete(key string) error {
 
 	// CHECK FOR ACTUAL CHANGE BEFORE APPLYING TO NETWORK
 	// - If we can't get it then theres nothing to delete
-	_, err = kf.Get(key)
+	_, err = kf.tkv.Get(key)
 	if err != nil {
 		return nil // idempotency
 	}
