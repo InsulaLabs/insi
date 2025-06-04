@@ -346,7 +346,7 @@ func (s *Service) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenD
 		return models.TokenData{}, false
 	}
 
-	s.apiCache.Set(token, tdFromFsm, time.Second*10)
+	s.apiCache.Set(token, tdFromFsm, s.cfg.Cache.Keys)
 
 	return tdFromFsm, true
 }

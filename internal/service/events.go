@@ -47,7 +47,6 @@ As events come in this function is called once per-node per-event. So, any subsc
 that would be connected over websockets to this node address can have the event forwarded to them
 */
 func (es *eventSubsystem) Receive(topic string, data any) error {
-	fmt.Printf("DEV> Node %s received event: %s %v\n", es.service.nodeCfg.HttpBinding, topic, data)
 	// Instead of directly putting to es.eventCh, we now also handle dispatching
 	// to WebSocket subscribers from the service layer.
 	// The eventCh is still useful for the FSM->Service notification.
@@ -403,8 +402,6 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		s.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
-
-	fmt.Println("DEV> eventsHandler", td.Entity, td.UUID)
 
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
