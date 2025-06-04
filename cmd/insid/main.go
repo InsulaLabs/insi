@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +14,11 @@ import (
 )
 
 func main() {
+	// misconfigured logger in raft bbolt backend
+	// we use slog so this only silences the bbolt backend
+	// to raft snapshot store that isn't directly used by us
+	log.SetOutput(io.Discard)
+
 	args := os.Args[1:]
 	var staticPath string
 	var remainingArgs []string

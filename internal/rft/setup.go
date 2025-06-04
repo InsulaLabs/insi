@@ -2,6 +2,7 @@ package rft
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -44,7 +45,7 @@ func setupRaft(cfg *SetupConfig) (*raft.Raft, error) {
 	if err := os.MkdirAll(snapshotStorePath, os.ModePerm); err != nil {
 		return nil, fmt.Errorf("could not create snapshot directory %s: %w", snapshotStorePath, err)
 	}
-	snapshots, err := raft.NewFileSnapshotStore(snapshotStorePath, 2, os.Stderr)
+	snapshots, err := raft.NewFileSnapshotStore(snapshotStorePath, 2, io.Discard)
 	if err != nil {
 		return nil, fmt.Errorf("could not create snapshot store at %s: %w", snapshotStorePath, err)
 	}
@@ -54,7 +55,7 @@ func setupRaft(cfg *SetupConfig) (*raft.Raft, error) {
 		return nil, fmt.Errorf("could not resolve raft advertise address %s: %w", cfg.RaftAdvertiseAddress, err)
 	}
 
-	transport, err := raft.NewTCPTransport(cfg.RaftAdvertiseAddress, parsedRaftAddr, 3, 10*time.Second, os.Stderr)
+	transport, err := raft.NewTCPTransport(cfg.RaftAdvertiseAddress, parsedRaftAddr, 3, 10*time.Second, io.Discard)
 	if err != nil {
 		return nil, fmt.Errorf("could not create tcp transport (advertise: %s): %w", cfg.RaftAdvertiseAddress, err)
 	}
@@ -76,11 +77,11 @@ func setupRaft(cfg *SetupConfig) (*raft.Raft, error) {
 		SnapshotThreshold:  8192,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
 		LocalID:            raft.ServerID(cfg.NodeId),
-		LogOutput:          os.Stderr,
-		LogLevel:           hclog.Debug.String(),
+		LogOutput:          os.Stdout,
+		LogLevel:           "INFO",
 		Logger: hclog.New(&hclog.LoggerOptions{
-			Level:  hclog.Debug,
-			Output: os.Stderr,
+			Level:  hclog.Info,
+			Output: os.Stdout,
 		}),
 	}
 
