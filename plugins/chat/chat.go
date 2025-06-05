@@ -407,3 +407,20 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, td *models.TokenData, m
 	responseLogger.Info("Finished sending all response content to output channel.")
 	return nil
 }
+
+/*
+
+Notes:
+
+
+Since we are potentially execing on an env we could make them bunmp ttld with identifiers
+being the time the first message was sent, the hash of the first message + the uuid of the user
+HASHED as a key in the cache. We can then map that to a "chat session" which is a vm instance
+that will be used to execute things
+
+"Branching" Could be just appending the branch point
+
+
+
+
+*/

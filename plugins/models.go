@@ -1,6 +1,10 @@
-package island
+package plugins
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 type Island struct {
 	Entity     string `json:"entity"`
@@ -46,45 +50,34 @@ type Resource struct {
 	Description string    `json:"description"`
 }
 
-/// requests
+// Key helpers
 
-type NewIslandRequest struct {
-	Name        string `json:"name"`
-	ModelSlug   string `json:"model_slug"`
-	Description string `json:"description"`
+func GetIslandKey(entityUUID, islandUUID string) string {
+	return fmt.Sprintf("plugin:island:%s:%s", entityUUID, islandUUID)
 }
 
-type DeleteIslandRequest struct {
-	UUID string `json:"uuid"`
+func GetIslandIterationPrefix(entityUUID string) string {
+	return fmt.Sprintf("plugin:island:%s:", entityUUID)
 }
 
-type UpdateIslandNameRequest struct {
-	UUID string `json:"uuid"`
-	Name string `json:"name"`
+func GetIslandSlugKey(entityUUID, slug string) string {
+	return fmt.Sprintf("plugin:island:slug:%s:%s", entityUUID, normalizeSlug(slug))
 }
 
-type UpdateIslandDescriptionRequest struct {
-	UUID        string `json:"uuid"`
-	Description string `json:"description"`
+func GetIslandResourceKey(entityUUID, islandUUID, resourceUUID string) string {
+	return fmt.Sprintf("plugin:island:%s:%s:resource:%s", entityUUID, islandUUID, resourceUUID)
 }
 
-type UpdateIslandModelSlugRequest struct {
-	UUID      string `json:"uuid"`
-	ModelSlug string `json:"model_slug"`
+func GetIslandResourceIterationPrefix(entityUUID, islandUUID string) string {
+	return fmt.Sprintf("plugin:island:%s:%s:resource:", entityUUID, islandUUID)
 }
 
-type UpdateIslandAddResourcesRequest struct {
-	IslandUUID string     `json:"island_uuid"`
-	Resources  []Resource `json:"resources"`
-}
-
-type UpdateIslandRemoveResourcesRequest struct {
-	IslandUUID    string   `json:"island_uuid"`
-	ResourceUUIDs []string `json:"resource_uuids"`
-}
-
-type IterateIslandResourcesRequest struct {
-	IslandUUID string `json:"island_uuid"`
-	Offset     int    `json:"offset"`
-	Limit      int    `json:"limit"`
+func normalizeSlug(slug string) string {
+	slug = strings.ReplaceAll(slug, " ", "-")
+	slug = strings.ReplaceAll(slug, "_", "-")
+	slug = strings.ReplaceAll(slug, ".", "-")
+	slug = strings.ReplaceAll(slug, "/", "-")
+	slug = strings.ReplaceAll(slug, "\\", "-")
+	slug = strings.ReplaceAll(slug, "|", "-")
+	return strings.ToLower(strings.TrimSpace(slug))
 }

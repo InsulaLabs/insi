@@ -34,14 +34,6 @@ import (
 
 
 		Path "upload"
-
-
-
-
-
-
-
-
 */
 
 // MetaData stores information about the uploaded object.
