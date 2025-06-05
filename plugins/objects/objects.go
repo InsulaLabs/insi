@@ -349,6 +349,11 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Reconstruct the full object name for path resolution using the owner's UUID from metadata.
+	fullObjectNameForPath = fmt.Sprintf("%s:%s", metaDataFromDB.UserUUID, objectFileUUID)
+	objectDir = filepath.Join(p.uploadDir, fullObjectNameForPath)
+	dataFile = filepath.Join(objectDir, "file.data")
+
 	// If the object is hosted at a different node, redirect to the node that the object is hosted at
 	if metaDataFromDB.HostedAtNodeID != p.prif.RT_GetNodeID() {
 

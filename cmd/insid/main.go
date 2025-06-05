@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/InsulaLabs/insi/plugins/chat"
+	"github.com/InsulaLabs/insi/plugins/island"
 	"github.com/InsulaLabs/insi/plugins/objects"
 	"github.com/InsulaLabs/insi/plugins/static"
 	"github.com/InsulaLabs/insi/plugins/status"
@@ -49,6 +51,14 @@ func main() {
 	// ------------------- Add Plugins -------------------
 
 	rt.WithPlugin(status.New(slog.Default().WithGroup("status-plugin")))
+
+	rt.WithPlugin(chat.New(
+		slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		}).WithGroup("chat-plugin")),
+	))
+
+	rt.WithPlugin(island.New(slog.Default().WithGroup("island-plugin")))
 
 	objectsDir := filepath.Join(rt.GetHomeDir(), "plugins", "objects")
 	if err := os.MkdirAll(objectsDir, 0755); err != nil {
