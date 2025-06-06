@@ -29,12 +29,12 @@ ALlowing the server to server static files without modifying the internals
 
 type IslandPlugin struct {
 	logger    *slog.Logger
-	prif      runtime.PluginRuntimeIF
+	prif      runtime.ServiceRuntimeIF
 	staticDir string
 	startedAt time.Time
 }
 
-var _ runtime.Plugin = &IslandPlugin{}
+var _ runtime.Service = &IslandPlugin{}
 
 func New(logger *slog.Logger) *IslandPlugin {
 	return &IslandPlugin{
@@ -46,24 +46,24 @@ func (p *IslandPlugin) GetName() string {
 	return "island"
 }
 
-func (p *IslandPlugin) Init(prif runtime.PluginRuntimeIF) *runtime.PluginImplError {
+func (p *IslandPlugin) Init(prif runtime.ServiceRuntimeIF) *runtime.ServiceImplError {
 	p.prif = prif
 	if _, err := os.Stat(p.staticDir); os.IsNotExist(err) {
-		return &runtime.PluginImplError{Err: fmt.Errorf("static directory does not exist, so plugin cannot be initialized: %s", p.staticDir)}
+		return &runtime.ServiceImplError{Err: fmt.Errorf("static directory does not exist, so plugin cannot be initialized: %s", p.staticDir)}
 	}
 	p.startedAt = time.Now()
 
 	fs := http.FileServer(http.Dir(p.staticDir))
 	err := p.prif.RT_MountStatic(p, fs)
 	if err != nil {
-		return &runtime.PluginImplError{Err: fmt.Errorf("failed to mount static files: %w", err)}
+		return &runtime.ServiceImplError{Err: fmt.Errorf("failed to mount static files: %w", err)}
 	}
 	return nil
 }
 
-func (p *IslandPlugin) GetRoutes() []runtime.PluginRoute {
+func (p *IslandPlugin) GetRoutes() []runtime.ServiceRoute {
 	// No routes for static plugin
-	return []runtime.PluginRoute{
+	return []runtime.ServiceRoute{
 		{
 			Path:    "/new",
 			Handler: http.HandlerFunc(p.handleNewIsland),

@@ -50,13 +50,13 @@ type MetaData struct {
 
 type ObjectsPlugin struct {
 	logger *slog.Logger
-	prif   runtime.PluginRuntimeIF
+	prif   runtime.ServiceRuntimeIF
 
 	startedAt time.Time
 	uploadDir string
 }
 
-var _ runtime.Plugin = &ObjectsPlugin{}
+var _ runtime.Service = &ObjectsPlugin{}
 
 func New(logger *slog.Logger, uploadDir string) *ObjectsPlugin {
 	return &ObjectsPlugin{
@@ -69,24 +69,24 @@ func (p *ObjectsPlugin) GetName() string {
 	return "objects"
 }
 
-func (p *ObjectsPlugin) Init(prif runtime.PluginRuntimeIF) *runtime.PluginImplError {
+func (p *ObjectsPlugin) Init(prif runtime.ServiceRuntimeIF) *runtime.ServiceImplError {
 	p.prif = prif
 	p.startedAt = time.Now()
 
 	if err := os.MkdirAll(p.uploadDir, 0755); err != nil {
-		return &runtime.PluginImplError{Err: err}
+		return &runtime.ServiceImplError{Err: err}
 	}
 
 	uploadDir := filepath.Join(p.uploadDir, "uploads")
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
-		return &runtime.PluginImplError{Err: err}
+		return &runtime.ServiceImplError{Err: err}
 	}
 
 	return nil
 }
 
-func (p *ObjectsPlugin) GetRoutes() []runtime.PluginRoute {
-	return []runtime.PluginRoute{
+func (p *ObjectsPlugin) GetRoutes() []runtime.ServiceRoute {
+	return []runtime.ServiceRoute{
 		/*
 			IMPORTANT:
 				DO NOT PREFIX THE PATH WITH TEH NAME OF THE PLUGIN

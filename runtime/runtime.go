@@ -51,12 +51,12 @@ type Runtime struct {
 
 	rtClients map[string]*client.Client
 
-	plugins map[string]Plugin
+	services map[string]Service
 
 	currentLogLevel slog.Level
 }
 
-var _ PluginRuntimeIF = &Runtime{}
+var _ ServiceRuntimeIF = &Runtime{}
 
 // New creates a new Runtime instance.
 // It initializes the application context, sets up signal handling,
@@ -65,7 +65,7 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r := &Runtime{
 		rawArgs:   args,
-		plugins:   make(map[string]Plugin),
+		services:  make(map[string]Service),
 		rtClients: make(map[string]*client.Client),
 	}
 
@@ -204,8 +204,8 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 	return r, nil
 }
 
-func (r *Runtime) WithPlugin(plugin Plugin) *Runtime {
-	r.plugins[plugin.GetName()] = plugin
+func (r *Runtime) WithService(service Service) *Runtime {
+	r.services[service.GetName()] = service
 	return r
 }
 
@@ -335,11 +335,11 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 
 	// Mount the plugins
-	nodeLogger.Info("Mounting plugins", "count", len(r.plugins))
+	nodeLogger.Info("Mounting services", "count", len(r.services))
 
-	createRoute := func(plugin Plugin, route PluginRoute) string {
-		nodeLogger.Info("Mounting plugin route", "plugin", plugin.GetName(), "path", route.Path)
-		pName := strings.Trim(plugin.GetName(), "/")
+	createRoute := func(service Service, route ServiceRoute) string {
+		nodeLogger.Info("Mounting service route", "service", service.GetName(), "path", route.Path)
+		pName := strings.Trim(service.GetName(), "/")
 		rPath := strings.Trim(route.Path, "/")
 		mountPath := "/" // Always start with a slash for the root
 		if pName != "" {
@@ -355,24 +355,24 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		Setup the routes for the plugin and init it so it has
 		a means to access the runtime.
 	*/
-	for _, plugin := range r.plugins {
+	for _, service := range r.services {
 
 		r.logger.Info(
-			"Mounting routes for plugin",
-			"plugin", plugin.GetName(),
-			"count", len(plugin.GetRoutes()),
+			"Mounting routes for service",
+			"service", service.GetName(),
+			"count", len(service.GetRoutes()),
 		)
 
-		for _, route := range plugin.GetRoutes() {
+		for _, route := range service.GetRoutes() {
 			r.service.WithRoute(
-				createRoute(plugin, route),
+				createRoute(service, route),
 				route.Handler,
 				route.Limit,
 				route.Burst,
 			)
 		}
 
-		plugin.Init(r)
+		service.Init(r)
 	}
 
 	// Run the service. This should block until the service is done or context is cancelled.

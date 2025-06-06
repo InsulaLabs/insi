@@ -50,15 +50,15 @@ func main() {
 
 	// ------------------- Add Plugins -------------------
 
-	rt.WithPlugin(status.New(slog.Default().WithGroup("status-plugin")))
+	rt.WithService(status.New(slog.Default().WithGroup("status-plugin")))
 
-	rt.WithPlugin(chat.New(
+	rt.WithService(chat.New(
 		slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 			Level: slog.LevelDebug,
 		}).WithGroup("chat-plugin")),
 	))
 
-	rt.WithPlugin(island.New(slog.Default().WithGroup("island-plugin")))
+	rt.WithService(island.New(slog.Default().WithGroup("island-plugin")))
 
 	objectsDir := filepath.Join(rt.GetHomeDir(), "plugins", "objects")
 	if err := os.MkdirAll(objectsDir, 0755); err != nil {
@@ -66,11 +66,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	rt.WithPlugin(objects.New(slog.Default().WithGroup("objects-plugin"), objectsDir))
+	rt.WithService(objects.New(slog.Default().WithGroup("objects-plugin"), objectsDir))
 
 	if staticPath != "" {
 		staticPlugin := static.New(slog.Default().WithGroup("static-plugin"), staticPath)
-		rt.WithPlugin(staticPlugin)
+		rt.WithService(staticPlugin)
 		slog.Info("Static plugin enabled", "path", staticPath)
 	}
 

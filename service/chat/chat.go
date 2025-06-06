@@ -27,11 +27,11 @@ ALlowing the server to server static files without modifying the internals
 
 type ChatPlugin struct {
 	logger    *slog.Logger
-	prif      runtime.PluginRuntimeIF
+	prif      runtime.ServiceRuntimeIF
 	startedAt time.Time
 }
 
-var _ runtime.Plugin = &ChatPlugin{}
+var _ runtime.Service = &ChatPlugin{}
 
 func New(logger *slog.Logger) *ChatPlugin {
 	return &ChatPlugin{
@@ -43,7 +43,7 @@ func (p *ChatPlugin) GetName() string {
 	return "chat"
 }
 
-func (p *ChatPlugin) Init(prif runtime.PluginRuntimeIF) *runtime.PluginImplError {
+func (p *ChatPlugin) Init(prif runtime.ServiceRuntimeIF) *runtime.ServiceImplError {
 	p.prif = prif
 	p.startedAt = time.Now()
 
@@ -51,8 +51,8 @@ func (p *ChatPlugin) Init(prif runtime.PluginRuntimeIF) *runtime.PluginImplError
 	return nil
 }
 
-func (p *ChatPlugin) GetRoutes() []runtime.PluginRoute {
-	return []runtime.PluginRoute{
+func (p *ChatPlugin) GetRoutes() []runtime.ServiceRoute {
+	return []runtime.ServiceRoute{
 		{
 			Path:    "completions",
 			Handler: http.HandlerFunc(p.handleChatCompletions),

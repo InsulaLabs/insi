@@ -81,7 +81,7 @@ func (r *Runtime) RT_GetClusterConfig() *config.Cluster {
 }
 
 // A Special case command made for static plugin (no better way - only exception)
-func (r *Runtime) RT_MountStatic(caller Plugin, fs http.Handler) error {
+func (r *Runtime) RT_MountStatic(caller Service, fs http.Handler) error {
 	pluginName := strings.Trim(caller.GetName(), "/")
 	if pluginName == "" {
 		return fmt.Errorf("plugin name cannot be empty for mounting static files")

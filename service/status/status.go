@@ -11,12 +11,12 @@ import (
 
 type StatusPlugin struct {
 	logger *slog.Logger
-	prif   runtime.PluginRuntimeIF
+	prif   runtime.ServiceRuntimeIF
 
 	startedAt time.Time
 }
 
-var _ runtime.Plugin = &StatusPlugin{}
+var _ runtime.Service = &StatusPlugin{}
 
 func New(logger *slog.Logger) *StatusPlugin {
 	return &StatusPlugin{
@@ -28,14 +28,14 @@ func (p *StatusPlugin) GetName() string {
 	return "status"
 }
 
-func (p *StatusPlugin) Init(prif runtime.PluginRuntimeIF) *runtime.PluginImplError {
+func (p *StatusPlugin) Init(prif runtime.ServiceRuntimeIF) *runtime.ServiceImplError {
 	p.prif = prif
 	p.startedAt = time.Now()
 	return nil
 }
 
-func (p *StatusPlugin) GetRoutes() []runtime.PluginRoute {
-	return []runtime.PluginRoute{
+func (p *StatusPlugin) GetRoutes() []runtime.ServiceRoute {
+	return []runtime.ServiceRoute{
 		/*
 			IMPORTANT:
 				DO NOT PREFIX THE PATH WITH TEH NAME OF THE PLUGIN
