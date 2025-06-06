@@ -5,22 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/InsulaLabs/insi/ai/kit"
 	db_models "github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/runtime"
+	"github.com/InsulaLabs/insi/service/chat/insikit"
 	service_models "github.com/InsulaLabs/insi/service/models"
+	"github.com/InsulaLabs/insi/slp"
 	"github.com/tmc/langchaingo/llms"
 )
 
 var ErrContextCancelled = errors.New("context cancelled")
 
 type GenerativeInstance struct {
+	prif           runtime.ServiceRuntimeIF
 	logger         *slog.Logger
 	ctx            context.Context
 	td             *db_models.TokenData
+	insiApiKey     string
 	messageHistory []ChatMessage
 	provider       service_models.Provider
 	output         chan<- string
@@ -53,30 +57,14 @@ func (gi *GenerativeInstance) handleSendRoutine() {
 	defer gi.wg.Done()
 
 	sendData := func(data string) error {
-		words := strings.Fields(data)
-		if len(words) == 0 && len(data) > 0 {
-			words = []string{data}
-		}
-
 		gi.sending.Store(true)
 		defer gi.sending.Store(false)
 
-		for i, word := range words {
-			chunk := word
-			// Add a space after each word, except for the last one, only if there are more words.
-			// This prevents adding a trailing space if the response is a single word or the last word.
-			if i < len(words)-1 {
-				chunk += " "
-			}
-
-			select {
-			case <-gi.ctx.Done():
-				// Error in here because we were working, but its ultimately okay to ignore
-				return ErrContextCancelled
-			case gi.output <- chunk:
-				gi.logger.Debug("Sent chunk to output channel", "chunk", chunk)
-
-			}
+		select {
+		case <-gi.ctx.Done():
+			return ErrContextCancelled
+		case gi.output <- data:
+			gi.logger.Debug("Sent chunk to output channel", "chunk", data)
 		}
 		return nil
 	}
@@ -98,7 +86,6 @@ func (gi *GenerativeInstance) handleSendRoutine() {
 			}
 		}
 	}
-
 }
 
 // ---------------------------------------- Response Generation ----------------------------------------
@@ -154,6 +141,32 @@ func (gi *GenerativeInstance) handleResponse() ([]llms.MessageContent, error) {
 		}
 	}
 
+	// Check the last user message for macros and load tools if necessary.
+	lastUserMessage := ""
+	for i := len(messageHistory) - 1; i >= 0; i-- {
+		if messageHistory[i].Role == llms.ChatMessageTypeHuman {
+			if text, ok := messageHistory[i].Parts[0].(llms.TextContent); ok {
+				lastUserMessage = text.Text
+				break
+			}
+		}
+	}
+
+	if lastUserMessage != "" {
+		tools, err := gi.parseMacro(lastUserMessage)
+		if err != nil {
+			gi.logger.Warn("failed to parse or execute macro", "error", err)
+			gi.bsend(fmt.Sprintf("[System: Error processing command: %v]\n", err))
+		} else {
+			if len(tools) > 0 {
+				gi.bsend(fmt.Sprintf("[System: Loaded %d tool(s)]\n", len(tools)))
+				for _, t := range tools {
+					k.WithTool(t)
+				}
+			}
+		}
+	}
+
 	response := k.Complete(gi.ctx, messageHistory, kit.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
 		gi.bsend(string(chunk))
 		return nil
@@ -163,3 +176,150 @@ func (gi *GenerativeInstance) handleResponse() ([]llms.MessageContent, error) {
 }
 
 // ---------------------------------------- Response Generation ----------------------------------------
+
+func (gi *GenerativeInstance) parseMacro(message string) ([]kit.Tool, error) {
+
+	program, err := slp.ParseBlock(message)
+	if err != nil {
+		return nil, err
+	}
+
+	if program == nil {
+		return nil, nil
+	}
+
+	/*
+
+		(\'COMMAND ARG ARG ARG ARG)
+
+		Commands:
+
+			cc  - compact context
+				Tool does not yet exist:
+					It will take the full length of the messages, have a forge and crit "compact" the context
+					to ensure all essential information is preserved (current message not touched) this will
+					ensure the essential history of the conversation is preserved while chatting
+
+			help - help
+				Tool does not yet exist:
+					It will NOT send to the LLM, instead, it will return a fake llm response and stream out
+					the moment it is called (directly to output buffer)
+
+			tl - Tool load
+
+
+				(\'tl tool-one tool-two)
+
+
+
+	*/
+
+	tools := make([]kit.Tool, 0)
+
+	commandMap := map[string]slp.Function{
+		"cc": func(p *slp.Proc, args []slp.Value) (slp.Value, error) {
+			gi.clearContext()
+			return slp.Value{
+				Type:  slp.DataTypeString,
+				Value: "Context cleared",
+			}, nil
+		},
+		"help": func(p *slp.Proc, args []slp.Value) (slp.Value, error) {
+			gi.help()
+			return slp.Value{
+				Type:  slp.DataTypeString,
+				Value: "Help message sent to output buffer",
+			}, nil
+		},
+		"tl": func(p *slp.Proc, args []slp.Value) (slp.Value, error) {
+			loadedTools, err := gi.loadTools(args)
+			message := ""
+			if err != nil {
+				message = "Error loading tools"
+			} else {
+				message = "Tools loaded successfully"
+			}
+			tools = append(tools, loadedTools...)
+			return slp.Value{
+				Type:  slp.DataTypeString,
+				Value: message,
+			}, err
+		},
+	}
+
+	// Create a new environment for the SLP processor
+	env := slp.NewEnv(nil)
+	for cmdName, command := range commandMap {
+		env.Set(cmdName, slp.Value{
+			Type:  slp.DataTypeFunction,
+			Value: command,
+		})
+	}
+
+	proc := slp.NewProcessor(env, program)
+
+	return tools, proc.Run()
+}
+
+func (gi *GenerativeInstance) clearContext() {
+
+	fmt.Println("clearContext")
+}
+
+func (gi *GenerativeInstance) help() {
+
+	helpText := `
+
+	This is some help text!!!!!
+
+	`
+
+	gi.bsend(helpText)
+}
+
+func (gi *GenerativeInstance) loadTools(args []slp.Value) ([]kit.Tool, error) {
+	gi.logger.Debug("loading tools from macro", "args", args)
+
+	tools := make([]kit.Tool, 0)
+	for _, arg := range args {
+		loadedTools, err := gi.loadTool(arg)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, loadedTools...)
+	}
+
+	return tools, nil
+}
+
+func (gi *GenerativeInstance) loadTool(arg slp.Value) ([]kit.Tool, error) {
+	var toolName string
+	switch arg.Type {
+	case slp.DataTypeIdentifier:
+		val, ok := arg.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for identifier value: %T", arg.Value)
+		}
+		toolName = val
+	default:
+		return nil, fmt.Errorf("loadTool expects an identifier, got %s", arg.Type)
+	}
+
+	gi.logger.Info("loading tool kit", "name", toolName)
+
+	switch toolName {
+	case "kvs":
+		// This configuration is based on cmd/insit/main.go.
+		// It assumes the insi service is available on localhost:8443.
+		// The client uses the user's token for authentication.
+		insiClient, err := gi.prif.RT_GetClientForToken(gi.insiApiKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create insi client for kvkit: %w", err)
+		}
+
+		kvk := insikit.NewKVKit(insiClient)
+		return kvk.GetAllTools(), nil
+	default:
+		return nil, fmt.Errorf("unknown tool kit: %s", toolName)
+	}
+}

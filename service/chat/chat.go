@@ -139,7 +139,7 @@ func (p *ChatPlugin) handleChatCompletions(w http.ResponseWriter, r *http.Reques
 	// Goroutine to run handleResponse and close the output channel
 	go func() {
 		defer close(output)
-		err := p.handleResponse(r.Context(), &td, request.Messages, output)
+		err := p.handleResponse(r.Context(), token, &td, request.Messages, output)
 		if err != nil {
 			// Log error from handleResponse.
 			// Further error propagation to HTTP response might be complex, especially for streaming.
@@ -377,7 +377,7 @@ func (p *ChatPlugin) checkApiKeyRateLimit(td *db_models.TokenData) (bool, int) {
 /*
 Setup the generative instance and handle the response generation.
 */
-func (p *ChatPlugin) handleResponse(ctx context.Context, td *db_models.TokenData, messages []ChatMessage, output chan<- string) error {
+func (p *ChatPlugin) handleResponse(ctx context.Context, apiKey string, td *db_models.TokenData, messages []ChatMessage, output chan<- string) error {
 	responseLogger := p.logger.WithGroup("response_handler")
 	responseLogger.Info("Starting response generation", "num_messages", len(messages))
 
@@ -446,6 +446,7 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, td *db_models.TokenData
 	gi := &GenerativeInstance{
 		logger:         responseLogger.With("instance_id", uuid.New().String()),
 		ctx:            giCtx,
+		insiApiKey:     apiKey, //
 		td:             td,
 		messageHistory: messages,
 		output:         output,
@@ -453,6 +454,7 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, td *db_models.TokenData
 		err:            nil,
 		errMu:          sync.Mutex{},
 		provider:       preferredProvider,
+		prif:           p.prif,
 	}
 
 	// Start the send routine that handles all text output to the user

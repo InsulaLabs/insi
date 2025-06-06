@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/db/core"
 	db_models "github.com/InsulaLabs/insi/db/models"
@@ -70,6 +71,10 @@ func (r *Runtime) RT_DeleteCache(key string) error {
 
 func (r *Runtime) RT_PublishEvent(topic string, data any) error {
 	return r.rtClients["publishEvent"].PublishEvent(topic, data)
+}
+
+func (r *Runtime) RT_GetClientForToken(token string) (*client.Client, error) {
+	return r.GetClientForToken(token)
 }
 
 // ------------------------------------------------------------

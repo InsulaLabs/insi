@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
 	db_models "github.com/InsulaLabs/insi/db/models"
 )
@@ -38,6 +39,7 @@ type ServiceRuntimeIF interface {
 	RT_GetClusterConfig() *config.Cluster
 	RT_GetNodeConfig() *config.Node
 	RT_GetNodeID() string
+	RT_GetClientForToken(token string) (*client.Client, error)
 
 	ValueStoreIF
 	CacheStoreIF
