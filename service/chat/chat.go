@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
@@ -359,13 +360,16 @@ func (p *ChatPlugin) checkApiKeyRateLimit(td *db_models.TokenData) (bool, int) {
 	return true, 0
 }
 
+/*
+Setup the generative instance and handle the response generation.
+*/
 func (p *ChatPlugin) handleResponse(ctx context.Context, td *db_models.TokenData, messages []ChatMessage, output chan<- string) error {
 	responseLogger := p.logger.WithGroup("response_handler")
 	responseLogger.Info("Starting response generation", "num_messages", len(messages))
 
 	if len(messages) == 0 {
 		select {
-		case output <- "I am a helpful assistant. How can I help you today?": // Default response if no input
+		case output <- "I am a helpful assistant. How can I help you today?":
 			responseLogger.Debug("Sent default 'no messages' response to output channel")
 		case <-ctx.Done():
 			responseLogger.Warn("Context cancelled before sending default 'no messages' response", "error", ctx.Err())
@@ -374,53 +378,55 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, td *db_models.TokenData
 		return nil
 	}
 
-	// For this example, we'll echo the last message content.
-	// In a real application, this is where LLM interaction would happen.
-	lastMessageContent := messages[len(messages)-1].Content
-	fullResponse := "Echo: " + lastMessageContent
+	/*
+		Create a context that can be cancelled to stop the response generation.
+	*/
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	// Simulate streaming by sending the response in chunks (e.g., word by word)
-	words := strings.Fields(fullResponse)
-	if len(words) == 0 && len(fullResponse) > 0 { // Handle case where fullResponse is not empty but has no spaces (e.g. "Echo:Test")
-		words = []string{fullResponse}
+	/*
+		Start the generative instance, it will die off when context is cancelled.
+	*/
+	gi := &GenerativeInstance{
+		logger:         responseLogger.With("instance_id", uuid.New().String()),
+		ctx:            ctx,
+		td:             td,
+		messageHistory: messages,
+		output:         output,
+		outputbuffer:   make(chan string),
+		err:            nil,
+		errMu:          sync.Mutex{},
 	}
 
-	for i, word := range words {
-		chunk := word
-		// Add a space after each word, except for the last one, only if there are more words.
-		// This prevents adding a trailing space if the response is a single word or the last word.
-		if i < len(words)-1 {
-			chunk += " "
-		}
+	// Start the send routine that handles all text output to the user
+	go gi.handleSendRoutine()
 
-		select {
-		case <-ctx.Done():
-			responseLogger.Warn("Context cancelled during response generation", "error", ctx.Err())
-			return ctx.Err()
-		case output <- chunk:
-			responseLogger.Debug("Sent chunk to output channel", "chunk", chunk)
-			// Simulate work / delay between chunks
-			time.Sleep(50 * time.Millisecond)
+	// Handle the response generation
+	if err := gi.handleResponse(); err != nil {
+		if err == ErrContextCancelled {
+			responseLogger.Warn("Context cancelled during response generation", "error", err)
+			return nil
 		}
+		responseLogger.Error("Error during response generation", "error", err)
+		return err
+	}
+
+	// Wait for the sending routine to finish
+	for gi.sending.Load() {
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Cancel the context
+	cancel()
+
+	// Wait for the response generation to finish
+	gi.wg.Wait()
+
+	if gi.err != nil {
+		responseLogger.Error("Error during response generation", "error", gi.err)
+		return gi.err
 	}
 
 	responseLogger.Info("Finished sending all response content to output channel.")
 	return nil
 }
-
-/*
-
-Notes:
-
-
-Since we are potentially execing on an env we could make them bunmp ttld with identifiers
-being the time the first message was sent, the hash of the first message + the uuid of the user
-HASHED as a key in the cache. We can then map that to a "chat session" which is a vm instance
-that will be used to execute things
-
-"Branching" Could be just appending the branch point
-
-
-
-
-*/
