@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snake Game</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+body {
+    background: linear-gradient(to bottom, #2c3e50, #3498db);
+}
+
+#gameCanvas {
+    border: 2px solid #3498db;
+}
+            align-items: center;
+            height: 100vh;
+body {
+    background-color: #2c3e50;
+}
+
+#gameCanvas {
+    border: 2px solid #3498db;
+}
+            margin: 0;
+            background-color: #000;
+        }
+        #gameCanvas {
+            border: 1px solid #fff;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="400" height="400"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const gridSize = 20;
+        const tileCount = 20;
+        let snake = [{x: 10, y: 10}];
+function checkCollision() {
+    if (snake[0].x < 0 || snake[0].x >= canvas.width/gridSize || snake[0].y < 0 || snake[0].y >= canvas.height/gridSize) {
+        gameOver();
+    }
+    for (let i = 1; i < snake.length; i++) {
+        if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) {
+            gameOver();
+        }
+    }
+}
+        let food = {x: 15, y: 15};
+        let dx = 0;
+        let dy = 0;
+        let score = 0;
+        let gameLoop;
+
+        function drawGame() {
+            clearCanvas();
+            drawSnake();
+            drawFood();
+            moveSnake();
+function generateFood() {
+    food.x = Math.floor(Math.random() * (canvas.width/gridSize));
+    food.y = Math.floor(Math.random() * (canvas.height/gridSize));
+}
+            checkCollision();
+// Function to move the snake
+function gameOver() {
+    clearInterval(gameLoop);
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; text-align: center;';
+    modal.innerHTML = '<h2>Game Over!</h2><p>Your score: ' + score + '</p><button onclick="restartGame()">Restart</button><button onclick="location.reload()">Quit</button>';
+    document.body.appendChild(modal);
+}
+function moveSnake() {
+    const head = {x: snake[0].x + dx, y: snake[0].y + dy};
+    snake.unshift(head);
+    if (head.x === food.x && head.y === food.y) {
+        score++;
+        generateFood();
+    } else {
+        snake.pop();
+    }
+}
+
+// Function to check for collisions
+function checkCollision() {
+    if (snake[0].x < 0 || snake[0].x >= canvas.width/gridSize || snake[0].y < 0 || snake[0].y >= canvas.height/gridSize) {
+        gameOver();
+    }
+    for (let i = 1; i < snake.length; i++) {
+        if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) {
+            gameOver();
+        }
+    }
+}
+
+// Function to restart the game
+function restartGame() {
+    clearInterval(gameLoop);
+    snake = [{x: 10, y: 10}];
+    food = {x: 15, y: 15};
+    dx = 0;
+    dy = 0;
+    score = 0;
+    gameLoop = setInterval(drawGame, 100);
+}
+            updateScore();
+        }
+
+        function clearCanvas() {
+function checkCollision() {
+    if (snake[0].x < 0 || snake[0].x >= tileCount - 1 || snake[0].y < 0 || snake[0].y >= tileCount - 1) {
+        gameOver();
+    }
+function gameOver() {
+    clearInterval(gameLoop);
+    if (confirm('Game Over! Your score: ' + score + '. Do you want to restart?')) {
+        restartGame();
+    }
+}
+    for (let i = 1; i < snake.length; i++) {
+        if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) {
+            gameOver();
+        }
+    }
+}
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+function gameOver() {
+    clearInterval(gameLoop);
+    if (confirm('Game Over! Your score: ' + score + '. Do you want to restart?')) {
+        restartGame();
+    }
+}
+        }
+
+        function drawSnake() {
+            ctx.fillStyle = 'green';
+            snake.forEach(segment => {
+                ctx.fillRect(segment.x * gridSize, segment.y * gridSize, gridSize - 2, gridSize - 2);
+            });
+        }
+
+        function drawFood() {
+            ctx.fillStyle = 'red';
+            ctx.fillRect(food.x * gridSize, food.y * gridSize, gridSize - 2, gridSize - 2);
+        }
+
+        function moveSnake() {
+function restartGame() {
+    clearInterval(gameLoop);
+    snake = [{x: 10, y: 10}];
+    food = {x: 15, y: 15};
+    dx = 0;
+    dy = 0;
+    score = 0;
+    gameLoop = setInterval(drawGame, 100);
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.keyCode === 82) { // 'R' key
+        restartGame();
+    }
+});
+            const head = {x: snake[0].x + dx, y: snake[0].y + dy};
+            snake.unshift(head);
+            if (head.x === food.x && head.y === food.y) {
+                score++;
+                generateFood();
+            } else {
+                snake.pop();
+            }
+        }
+
+        function checkCollision() {
+            if (snake[0].x < 0 || snake[0].x >= tileCount || snake[0].y < 0 || snake[0].y >= tileCount) {
+                gameOver();
+            }
+            for (let i = 1; i < snake.length; i++) {
+                if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) {
+                    gameOver();
+                }
+            }
+        }
+
+        function updateScore() {
+            ctx.fillStyle = 'white';
+            ctx.font = '20px Arial';
+            ctx.fillText('Score: ' + score, 10, 30);
+        }
+
+        function generateFood() {
+            food.x = Math.floor(Math.random() * tileCount);
+            food.y = Math.floor(Math.random() * tileCount);
+        }
+
+        function gameOver() {
+            clearInterval(gameLoop);
+            alert('Game Over! Your score: ' + score);
+        }
+
+        document.addEventListener('keydown', (e) => {
+            switch(e.keyCode) {
+                case 37: if (dx === 0) { dx = -1; dy = 0; } break; // Left
+                case 38: if (dy === 0) { dx = 0; dy = -1; } break; // Up
+                case 39: if (dx === 0) { dx = 1; dy = 0; } break; // Right
+                case 40: if (dy === 0) { dx = 0; dy = 1; } break; // Down
+            }
+        });
+
+        gameLoop = setInterval(drawGame, 100);
+    </script>
+</body>
+</html>
+<!-- SNAKE GAME GOES HERE -->
