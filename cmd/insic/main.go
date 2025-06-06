@@ -180,6 +180,8 @@ func main() {
 		handleObject(cli, cmdArgs)
 	case "island":
 		handleIsland(cli, cmdArgs)
+	case "provider":
+		handleProvider(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -237,6 +239,13 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("island"), color.CyanString("add-resource"), color.CyanString("<island-uuid>"), color.CyanString("<object-uuid>"), color.CyanString("<type>"), color.CyanString("[description]"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("island"), color.CyanString("remove-resources"), color.CyanString("<island-uuid>"), color.CyanString("<resource-uuid>..."))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("island"), color.CyanString("list-resources"), color.CyanString("<island-uuid>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+	// Provider Commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("provider"), color.CyanString("new"), color.CyanString("<display-name>"), color.CyanString("<provider-type>"), color.CyanString("<api-key>"), color.CyanString("[base-url]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("provider"), color.CyanString("delete"), color.CyanString("<uuid>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("list"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("update-display-name"), color.CyanString("<uuid>"), color.CyanString("<new-display-name>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("update-api-key"), color.CyanString("<uuid>"), color.CyanString("<new-api-key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("update-base-url"), color.CyanString("<uuid>"), color.CyanString("<new-base-url>"))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -1370,4 +1379,207 @@ func handleIslandListResources(c *client.Client, args []string) {
 			resource.Description,
 			resource.CreatedAt.Format(time.RFC3339))
 	}
+}
+
+// --- Provider Command Handlers ---
+
+func handleProvider(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("provider: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "new":
+		handleProviderNew(c, subArgs)
+	case "delete":
+		handleProviderDelete(c, subArgs)
+	case "list":
+		handleProviderList(c, subArgs)
+	case "update-display-name":
+		handleProviderUpdateDisplayName(c, subArgs)
+	case "update-api-key":
+		handleProviderUpdateAPIKey(c, subArgs)
+	case "update-base-url":
+		handleProviderUpdateBaseURL(c, subArgs)
+	default:
+		logger.Error("provider: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleProviderNew(c *client.Client, args []string) {
+	if len(args) < 3 || len(args) > 4 {
+		logger.Error("provider new: requires <display-name> <provider-type> <api-key> [base-url]")
+		printUsage()
+		os.Exit(1)
+	}
+	displayName := args[0]
+	providerType := args[1]
+	apiKey := args[2]
+	baseURL := ""
+	if len(args) == 4 {
+		baseURL = args[3]
+	}
+
+	validTypes := []client.SupportedProvider{
+		client.SupportedProviderOpenAI,
+		client.SupportedProviderAnthropic,
+		client.SupportedProviderXAI,
+	}
+	isValidType := false
+	for _, t := range validTypes {
+		if client.SupportedProvider(providerType) == t {
+			isValidType = true
+			break
+		}
+	}
+	if !isValidType {
+		logger.Error("provider new: invalid provider type", "type", providerType)
+		types := []string{}
+		for _, t := range validTypes {
+			types = append(types, string(t))
+		}
+		fmt.Fprintf(os.Stderr, "%s Invalid provider type: %s\nValid types are: %s\n", color.RedString("Error:"), providerType, strings.Join(types, ", "))
+		os.Exit(1)
+	}
+
+	req := client.NewProviderRequest{
+		DisplayName: displayName,
+		Provider:    providerType,
+		APIKey:      apiKey,
+		BaseURL:     baseURL,
+	}
+	provider, err := c.NewProvider(req)
+	if err != nil {
+		logger.Error("Provider creation failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("Provider created successfully:\n")
+	fmt.Printf("  UUID:         %s\n", color.CyanString(provider.UUID))
+	fmt.Printf("  Display Name: %s\n", provider.DisplayName)
+	fmt.Printf("  Provider:     %s\n", provider.Provider)
+	fmt.Printf("  Base URL:     %s\n", provider.BaseURL)
+}
+
+func handleProviderDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("provider delete: requires <uuid>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	req := client.DeleteProviderRequest{UUID: uuid}
+	err := c.DeleteProvider(req)
+	if err != nil {
+		logger.Error("Provider deletion failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleProviderList(c *client.Client, args []string) {
+	if len(args) > 2 {
+		logger.Error("provider list: takes optional [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	offset, limit := 0, 100 // Defaults
+	var err error
+	if len(args) > 0 {
+		offset, err = strconv.Atoi(args[0])
+		if err != nil {
+			logger.Error("provider list: invalid offset", "offset_str", args[0], "error", err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 1 {
+		limit, err = strconv.Atoi(args[1])
+		if err != nil {
+			logger.Error("provider list: invalid limit", "limit_str", args[1], "error", err)
+			os.Exit(1)
+		}
+	}
+
+	providers, err := c.IterateProviders(offset, limit)
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) || strings.Contains(err.Error(), "key not found") {
+			fmt.Println("No providers found.")
+			os.Exit(0)
+		}
+		logger.Error("Provider list failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(providers) == 0 {
+		fmt.Println("No providers found.")
+		return
+	}
+
+	fmt.Println("Providers:")
+	for _, p := range providers {
+		fmt.Printf("  UUID: %s, Name: %s, Provider: %s, BaseURL: %s\n",
+			color.CyanString(p.UUID),
+			p.DisplayName,
+			p.Provider,
+			p.BaseURL)
+	}
+}
+
+func handleProviderUpdateDisplayName(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("provider update-display-name: requires <uuid> <new-display-name>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid, displayName := args[0], args[1]
+	req := client.UpdateProviderDisplayNameRequest{UUID: uuid, DisplayName: displayName}
+	_, err := c.UpdateProviderDisplayName(req)
+	if err != nil {
+		logger.Error("Provider display name update failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleProviderUpdateAPIKey(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("provider update-api-key: requires <uuid> <new-api-key>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid, apiKey := args[0], args[1]
+	req := client.UpdateProviderAPIKeyRequest{UUID: uuid, APIKey: apiKey}
+	_, err := c.UpdateProviderAPIKey(req)
+	if err != nil {
+		logger.Error("Provider API key update failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleProviderUpdateBaseURL(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("provider update-base-url: requires <uuid> <new-base-url>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid, baseURL := args[0], args[1]
+	req := client.UpdateProviderBaseURLRequest{UUID: uuid, BaseURL: baseURL}
+	_, err := c.UpdateProviderBaseURL(req)
+	if err != nil {
+		logger.Error("Provider base URL update failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
 }

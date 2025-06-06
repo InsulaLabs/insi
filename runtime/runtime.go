@@ -162,9 +162,27 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r.rootApiKey = base64.StdEncoding.EncodeToString([]byte(r.rootApiKey))
 
-	// Convert the cluster config into a list of endpoints
-	// for the client to use when utilizing a client for the backend
-	// of a runtime request
+	/*
+		Create a series of clients for the runtime to isolate operations
+		to single-use clients.
+	*/
+	for _, useCase := range []string{
+		"set", "get", "delete", "iterate",
+		"setObject", "getObject", "deleteObject", "iterateObject", "getObjectList",
+		"setCache", "getCache", "deleteCache",
+		"publishEvent",
+	} {
+		rtClient, err := r.GetClientForToken(r.rootApiKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create insi client: %w", err)
+		}
+		r.rtClients[useCase] = rtClient
+	}
+
+	return r, nil
+}
+
+func (r *Runtime) GetClientForToken(token string) (*client.Client, error) {
 	getEndpoints := func() []client.Endpoint {
 		eps := make([]client.Endpoint, 0, len(r.clusterCfg.Nodes))
 		for nodeId, node := range r.clusterCfg.Nodes {
@@ -177,31 +195,17 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 		}
 		return eps
 	}
-
-	/*
-		Create a series of clients for the runtime to isolate operations
-		to single-use clients.
-	*/
-	for _, useCase := range []string{
-		"set", "get", "delete", "iterate",
-		"setObject", "getObject", "deleteObject", "iterateObject", "getObjectList",
-		"setCache", "getCache", "deleteCache",
-		"publishEvent",
-	} {
-		rtClient, err := client.NewClient(&client.Config{
-			ConnectionType: client.ConnectionTypeRandom,
-			Logger:         r.logger.With("service", "insiClient").With("useCase", useCase),
-			ApiKey:         r.rootApiKey, // Use the runtime's generated root API key
-			Endpoints:      getEndpoints(),
-			SkipVerify:     r.clusterCfg.ClientSkipVerify,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create insi client: %w", err)
-		}
-		r.rtClients[useCase] = rtClient
+	rtClient, err := client.NewClient(&client.Config{
+		ConnectionType: client.ConnectionTypeRandom,
+		Logger:         r.logger.With("service", "insiClient"),
+		ApiKey:         token,
+		Endpoints:      getEndpoints(),
+		SkipVerify:     r.clusterCfg.ClientSkipVerify,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create insi client: %w", err)
 	}
-
-	return r, nil
+	return rtClient, nil
 }
 
 func (r *Runtime) WithService(service Service) *Runtime {

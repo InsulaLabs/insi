@@ -72,6 +72,10 @@ echo "🚀 Running islands.sh..."
 run_test_script /tmp/insi-test-cluster/islands.sh
 echo "✅ Success: islands.sh completed."
 
+echo "🚀 Running provider.sh..."
+run_test_script /tmp/insi-test-cluster/provider.sh
+echo "✅ Success: provider.sh completed."
+
 sleep 5 # wait for insid to finish stopping and logging out
 
 cd $cwd

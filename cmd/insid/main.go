@@ -11,6 +11,7 @@ import (
 	"github.com/InsulaLabs/insi/service/chat"
 	"github.com/InsulaLabs/insi/service/island"
 	"github.com/InsulaLabs/insi/service/objects"
+	"github.com/InsulaLabs/insi/service/provider"
 	"github.com/InsulaLabs/insi/service/static"
 	"github.com/InsulaLabs/insi/service/status"
 )
@@ -51,6 +52,8 @@ func main() {
 	// ------------------- Add Plugins -------------------
 
 	rt.WithService(status.New(slog.Default().WithGroup("status-plugin")))
+
+	rt.WithService(provider.New(slog.Default().WithGroup("provider-plugin")))
 
 	rt.WithService(chat.New(
 		slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{

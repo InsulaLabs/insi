@@ -50,6 +50,31 @@ type Resource struct {
 	Description string    `json:"description"`
 }
 
+type SupportedProvider string
+
+const (
+	SupportedProviderOpenAI    SupportedProvider = "openai"
+	SupportedProviderAnthropic SupportedProvider = "anthropic"
+	SupportedProviderXAI       SupportedProvider = "xai"
+)
+
+type Provider struct {
+	EntityUUID string `json:"entity_uuid"`
+	UUID       string `json:"uuid"`
+
+	DisplayName string            `json:"display_name"` // user-set max 32 chars
+	Provider    SupportedProvider `json:"provider"`
+	APIKey      string            `json:"api_key"`
+	BaseURL     string            `json:"base_url"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (p *Provider) GetDisplayData() string {
+	return fmt.Sprintf("%s (%s)", p.DisplayName, p.Provider)
+}
+
 // Key helpers
 
 func GetIslandKey(entityUUID, islandUUID string) string {
@@ -80,4 +105,12 @@ func normalizeSlug(slug string) string {
 	slug = strings.ReplaceAll(slug, "\\", "-")
 	slug = strings.ReplaceAll(slug, "|", "-")
 	return strings.ToLower(strings.TrimSpace(slug))
+}
+
+func GetProviderKey(entityUUID, providerUUID string) string {
+	return fmt.Sprintf("plugin:provider:%s:%s", entityUUID, providerUUID)
+}
+
+func GetProviderIterationPrefix(entityUUID string) string {
+	return fmt.Sprintf("plugin:provider:%s:", entityUUID)
 }

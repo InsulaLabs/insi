@@ -131,6 +131,60 @@ type IterateIslandResourcesRequest struct {
 	Limit      int    `json:"limit,omitempty"`
 }
 
+// --- Provider Structs ---
+
+// SupportedProvider is the type of provider
+type SupportedProvider string
+
+const (
+	SupportedProviderOpenAI    SupportedProvider = "openai"
+	SupportedProviderAnthropic SupportedProvider = "anthropic"
+	SupportedProviderXAI       SupportedProvider = "xai"
+)
+
+// Provider is a struct that represents a provider configuration
+type Provider struct {
+	EntityUUID  string            `json:"entity_uuid"`
+	UUID        string            `json:"uuid"`
+	DisplayName string            `json:"display_name"`
+	Provider    SupportedProvider `json:"provider"`
+	APIKey      string            `json:"api_key"`
+	BaseURL     string            `json:"base_url"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+// NewProviderRequest is the request to create a new provider
+type NewProviderRequest struct {
+	DisplayName string `json:"display_name"`
+	Provider    string `json:"provider"`
+	APIKey      string `json:"api_key"`
+	BaseURL     string `json:"base_url"`
+}
+
+// DeleteProviderRequest is the request to delete a provider
+type DeleteProviderRequest struct {
+	UUID string `json:"uuid"`
+}
+
+// UpdateProviderDisplayNameRequest is the request to update the display name of a provider
+type UpdateProviderDisplayNameRequest struct {
+	UUID        string `json:"uuid"`
+	DisplayName string `json:"display_name"`
+}
+
+// UpdateProviderAPIKeyRequest is the request to update the API key of a provider
+type UpdateProviderAPIKeyRequest struct {
+	UUID   string `json:"uuid"`
+	APIKey string `json:"api_key"`
+}
+
+// UpdateProviderBaseURLRequest is the request to update the base URL of a provider
+type UpdateProviderBaseURLRequest struct {
+	UUID    string `json:"uuid"`
+	BaseURL string `json:"base_url"`
+}
+
 // --- Objects Structs ---
 
 // ObjectUploadResponse is the response from a successful object upload.
@@ -1009,6 +1063,61 @@ func (c *Client) IterateIslands(offset, limit int) ([]Island, error) {
 		return nil, err
 	}
 	return islands, nil
+}
+
+// --- Provider Operations ---
+
+func (c *Client) NewProvider(req NewProviderRequest) (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodPost, "provider/new", nil, req, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
+}
+
+func (c *Client) DeleteProvider(req DeleteProviderRequest) error {
+	return c.doRequest(http.MethodPost, "provider/delete", nil, req, nil)
+}
+
+func (c *Client) UpdateProviderDisplayName(req UpdateProviderDisplayNameRequest) (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodPost, "provider/update/display-name", nil, req, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
+}
+
+func (c *Client) UpdateProviderAPIKey(req UpdateProviderAPIKeyRequest) (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodPost, "provider/update/api-key", nil, req, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
+}
+
+func (c *Client) UpdateProviderBaseURL(req UpdateProviderBaseURLRequest) (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodPost, "provider/update/base-url", nil, req, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
+}
+
+func (c *Client) IterateProviders(offset, limit int) ([]Provider, error) {
+	params := map[string]string{
+		"offset": strconv.Itoa(offset),
+		"limit":  strconv.Itoa(limit),
+	}
+	var providers []Provider
+	err := c.doRequest(http.MethodGet, "provider/iterate/providers", params, nil, &providers)
+	if err != nil {
+		return nil, err
+	}
+	return providers, nil
 }
 
 // --- Object Operations ---
