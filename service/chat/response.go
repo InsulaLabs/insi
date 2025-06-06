@@ -12,6 +12,7 @@ import (
 	db_models "github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/runtime"
 	"github.com/InsulaLabs/insi/service/chat/insikit"
+	"github.com/InsulaLabs/insi/service/models"
 	service_models "github.com/InsulaLabs/insi/service/models"
 	"github.com/InsulaLabs/insi/slp"
 	"github.com/tmc/langchaingo/llms"
@@ -20,21 +21,23 @@ import (
 var ErrContextCancelled = errors.New("context cancelled")
 
 type GenerativeInstance struct {
-	prif           runtime.ServiceRuntimeIF
-	logger         *slog.Logger
-	ctx            context.Context
-	td             *db_models.TokenData
-	insiApiKey     string
-	messageHistory []ChatMessage
-	provider       service_models.Provider
-	output         chan<- string
-	outputbuffer   chan string
+	prif         runtime.ServiceRuntimeIF
+	logger       *slog.Logger
+	ctx          context.Context
+	td           *db_models.TokenData
+	insiApiKey   string
+	ccr          ChatCompletionRequest
+	provider     service_models.Provider
+	output       chan<- string
+	outputbuffer chan string
 
 	err   error
 	errMu sync.Mutex
 	wg    sync.WaitGroup
 
 	sending atomic.Bool
+
+	tokensPermitted int
 }
 
 /*
@@ -55,6 +58,13 @@ in a way that is smooth and readable
 func (gi *GenerativeInstance) handleSendRoutine() {
 	gi.wg.Add(1)
 	defer gi.wg.Done()
+
+	defer func() {
+		//recover from any panics
+		if r := recover(); r != nil {
+			gi.logger.Error("panic in handleSendRoutine", "error", r)
+		}
+	}()
 
 	sendData := func(data string) error {
 		gi.sending.Store(true)
@@ -92,9 +102,44 @@ func (gi *GenerativeInstance) handleSendRoutine() {
 
 func (gi *GenerativeInstance) handleResponse() ([]llms.MessageContent, error) {
 	defer close(gi.outputbuffer)
+	/*
+
+		Load the users targetd island based on the model slug provided via the ccr
+
+	*/
+
+	slug := gi.ccr.Model
+
+	insiClient, err := gi.prif.RT_GetClientForToken(gi.insiApiKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create insi client for kvkit: %w", err)
+	}
+
+	islands, err := insiClient.IterateIslands(0, 100)
+	if err != nil {
+		return nil, fmt.Errorf("failed to iterate islands: %w", err)
+	}
+
+	var targetIsland *models.Island
+	for _, island := range islands {
+		if island.ModelSlug == slug {
+			targetIsland = &models.Island{
+				Entity:      island.Entity,
+				EntityUUID:  island.EntityUUID,
+				UUID:        island.UUID,
+				Name:        island.Name,
+				ModelSlug:   island.ModelSlug,
+				Description: island.Description,
+			}
+			break
+		}
+	}
+
+	if targetIsland == nil {
+		return nil, fmt.Errorf("island not found")
+	}
 
 	var llm llms.Model
-	var err error
 	switch gi.provider.Provider {
 	case service_models.SupportedProviderOpenAI:
 		llm, err = kit.GetOpenAILLM(gi.provider.APIKey)
@@ -117,8 +162,8 @@ func (gi *GenerativeInstance) handleResponse() ([]llms.MessageContent, error) {
 
 	k := kit.NewKit(gi.ctx, llm, gi.logger)
 
-	messageHistory := make([]llms.MessageContent, len(gi.messageHistory))
-	for i, message := range gi.messageHistory {
+	messageHistory := make([]llms.MessageContent, len(gi.ccr.Messages))
+	for i, message := range gi.ccr.Messages {
 		var llmRole llms.ChatMessageType
 
 		switch message.Role {
@@ -176,6 +221,9 @@ func (gi *GenerativeInstance) handleResponse() ([]llms.MessageContent, error) {
 			}
 		}
 	}
+
+	// Respect the user's token limit
+	k.WithMaxTokens(gi.tokensPermitted)
 
 	response := k.Complete(gi.ctx, messageHistory, kit.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
 		gi.bsend(string(chunk))
@@ -319,9 +367,6 @@ func (gi *GenerativeInstance) loadTool(arg slp.Value) ([]kit.Tool, error) {
 
 	switch toolName {
 	case "kvs":
-		// This configuration is based on cmd/insit/main.go.
-		// It assumes the insi service is available on localhost:8443.
-		// The client uses the user's token for authentication.
 		insiClient, err := gi.prif.RT_GetClientForToken(gi.insiApiKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create insi client for kvkit: %w", err)

@@ -10,11 +10,12 @@ import (
 
 // Kit is a tool-using agent that can complete tasks and stream responses.
 type Kit struct {
-	llm    llms.Model
-	log    *slog.Logger
-	tools  map[string]Tool
-	ctx    context.Context
-	cancel context.CancelFunc
+	llm       llms.Model
+	log       *slog.Logger
+	tools     map[string]Tool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	maxTokens int
 }
 
 // Tool is an interface for tools that can be used by the Kit.
@@ -29,17 +30,23 @@ type Tool interface {
 func NewKit(parentCtx context.Context, llm llms.Model, logger *slog.Logger) *Kit {
 	ctx, cancel := context.WithCancel(parentCtx)
 	return &Kit{
-		llm:    llm,
-		log:    logger,
-		tools:  make(map[string]Tool),
-		ctx:    ctx,
-		cancel: cancel,
+		llm:       llm,
+		log:       logger,
+		tools:     make(map[string]Tool),
+		ctx:       ctx,
+		cancel:    cancel,
+		maxTokens: 8192,
 	}
 }
 
 // Ctx returns the Kit's managed context.
 func (k *Kit) Ctx() context.Context {
 	return k.ctx
+}
+
+func (k *Kit) WithMaxTokens(maxTokens int) *Kit {
+	k.maxTokens = maxTokens
+	return k
 }
 
 // WithTool adds a tool to the Kit.
@@ -107,7 +114,7 @@ func (k *Kit) run(ctx context.Context, messages []llms.MessageContent, cOpts *co
 	toolDefs := k.getToolDefinitions()
 	baseOpts := []llms.CallOption{
 		llms.WithTools(toolDefs),
-		llms.WithMaxTokens(8192),
+		llms.WithMaxTokens(k.maxTokens),
 	}
 
 	firstCall := true

@@ -26,7 +26,7 @@ func main() {
 	httpClient := &http.Client{Transport: customTransport}
 
 	llm, err := openai.New(
-		openai.WithModel("insi-01"),
+		openai.WithModel("test-island"),
 		openai.WithToken(os.Getenv("INSI_API_KEY")),
 		openai.WithBaseURL("https://localhost:8443"),
 		openai.WithHTTPClient(httpClient), // Add the custom HTTP client
@@ -39,7 +39,7 @@ func main() {
 	content := []llms.MessageContent{
 		llms.TextParts(llms.ChatMessageTypeSystem, "You are a helpful assistant."),
 		llms.TextParts(llms.ChatMessageTypeHuman, `
-		(\'tl kvs)
+		(\'tl kvs)(\'help)
 		Please use the tools provided to set the key "blue" to the value "HELL YEAH"`),
 	}
 
@@ -56,7 +56,7 @@ func main() {
 		fmt.Println(r.Choices[0].Content)
 	}
 
-	content = append(content, llms.TextParts(llms.ChatMessageTypeHuman, `(\'tl kvs)Now please use the tool to get the key 'blue' you MUST execute the tool?`))
+	content = append(content, llms.TextParts(llms.ChatMessageTypeHuman, `(\'tl kvs) Now please use the tool to get the key 'blue' you MUST execute the tool?`))
 
 	r, err := llm.GenerateContent(ctx, content, llms.WithMaxTokens(104))
 	if err != nil {
