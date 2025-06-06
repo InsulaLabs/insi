@@ -1,4 +1,4 @@
-package service
+package core
 
 import (
 	"encoding/json"
@@ -17,13 +17,13 @@ import (
 
 // -- READ ONLY OPERATIONS --
 
-func (s *Service) atomicGetHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r, false)
+func (c *Core) atomicGetHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	s.logger.Debug("AtomicGetHandler", "entity", td.Entity)
+	c.logger.Debug("AtomicGetHandler", "entity", td.Entity)
 
 	key := r.URL.Query().Get("key")
 	if key == "" {
@@ -39,15 +39,15 @@ func (s *Service) atomicGetHandler(w http.ResponseWriter, r *http.Request) {
 
 	internalAtomicKey := fmt.Sprintf("__atomic__:%s", prefixedKey)
 
-	value, err := s.fsm.AtomicGet(internalAtomicKey)
+	value, err := c.fsm.AtomicGet(internalAtomicKey)
 	if err != nil {
 		var invalidStateErr *tkv.ErrInvalidState
 		if errors.As(err, &invalidStateErr) {
-			s.logger.Warn("AtomicGet failed due to invalid state", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
+			c.logger.Warn("AtomicGet failed due to invalid state", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
-		s.logger.Error("Could not perform AtomicGet via FSM/TKV", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
+		c.logger.Error("Could not perform AtomicGet via FSM/TKV", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -58,14 +58,14 @@ func (s *Service) atomicGetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		s.logger.Error("Failed to encode AtomicGetResponse", "error", err)
+		c.logger.Error("Failed to encode AtomicGetResponse", "error", err)
 		// Response already started, cannot send different HTTP error
 	}
 }
 
 // -- WRITE OPERATIONS --
 
-func (s *Service) atomicNewHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Core) atomicNewHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := s.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -122,30 +122,30 @@ func (s *Service) atomicNewHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Service) atomicAddHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r, false)
+func (c *Core) atomicAddHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	s.logger.Debug("AtomicAddHandler", "entity", td.Entity)
+	c.logger.Debug("AtomicAddHandler", "entity", td.Entity)
 
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for atomic add request", "error", err)
+		c.logger.Error("Could not read body for atomic add request", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var req models.AtomicAddRequest
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		s.logger.Error("Invalid JSON payload for atomic add request", "error", err)
+		c.logger.Error("Invalid JSON payload for atomic add request", "error", err)
 		http.Error(w, "Invalid JSON payload: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -163,15 +163,15 @@ func (s *Service) atomicAddHandler(w http.ResponseWriter, r *http.Request) {
 
 	internalAtomicKey := fmt.Sprintf("__atomic__:%s", prefixedKey)
 
-	newValue, err := s.fsm.AtomicAdd(internalAtomicKey, req.Delta)
+	newValue, err := c.fsm.AtomicAdd(internalAtomicKey, req.Delta)
 	if err != nil {
 		var invalidStateErr *tkv.ErrInvalidState
 		if errors.As(err, &invalidStateErr) {
-			s.logger.Warn("AtomicAdd failed due to invalid state", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
+			c.logger.Warn("AtomicAdd failed due to invalid state", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
 			http.Error(w, err.Error(), http.StatusConflict) // 409 Conflict or 422 Unprocessable Entity
 			return
 		}
-		s.logger.Error("Could not perform AtomicAddRaft via FSM", "key", prefixedKey, "internal_key", internalAtomicKey, "delta", req.Delta, "error", err)
+		c.logger.Error("Could not perform AtomicAddRaft via FSM", "key", prefixedKey, "internal_key", internalAtomicKey, "delta", req.Delta, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -183,34 +183,34 @@ func (s *Service) atomicAddHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		s.logger.Error("Failed to encode AtomicAddResponse", "error", err)
+		c.logger.Error("Failed to encode AtomicAddResponse", "error", err)
 	}
 }
 
-func (s *Service) atomicDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r, false)
+func (c *Core) atomicDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	s.logger.Debug("AtomicDeleteHandler", "entity", td.Entity)
+	c.logger.Debug("AtomicDeleteHandler", "entity", td.Entity)
 
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for atomic delete request", "error", err)
+		c.logger.Error("Could not read body for atomic delete request", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var req models.AtomicKeyPayload // Using AtomicKeyPayload as we only need the key
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		s.logger.Error("Invalid JSON payload for atomic delete request", "error", err)
+		c.logger.Error("Invalid JSON payload for atomic delete request", "error", err)
 		http.Error(w, "Invalid JSON payload: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -228,11 +228,11 @@ func (s *Service) atomicDeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	internalAtomicKey := fmt.Sprintf("__atomic__:%s", prefixedKey)
 
-	err = s.fsm.AtomicDelete(internalAtomicKey)
+	err = c.fsm.AtomicDelete(internalAtomicKey)
 	if err != nil {
 		// AtomicDelete in TKV is idempotent and doesn't return ErrKeyNotFound.
 		// Any error here would likely be an internal FSM or TKV error.
-		s.logger.Error("Could not perform AtomicDeleteRaft via FSM", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
+		c.logger.Error("Could not perform AtomicDeleteRaft via FSM", "key", prefixedKey, "internal_key", internalAtomicKey, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

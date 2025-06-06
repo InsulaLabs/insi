@@ -12,7 +12,7 @@ package slp
 	to be "processed"
 
 
-	(tl {sqlkit imgkit wekit})
+	('\tl {sqlkit imgkit wekit})
 
 */
 
@@ -26,12 +26,12 @@ const (
 )
 
 var commandMap = map[string]Command{
-	"\\tool-load":     CMD_TOOL_LOAD,
-	"\\tl":            CMD_TOOL_LOAD,
-	"\\link-resource": CMD_LINK_RESOURCE,
-	"\\lr":            CMD_LINK_RESOURCE,
-	"\\bloom-concept": CMD_BLOOM_CONCEPT,
-	"\\bc":            CMD_BLOOM_CONCEPT,
+	"tool-load":     CMD_TOOL_LOAD,
+	"tl":            CMD_TOOL_LOAD,
+	"link-resource": CMD_LINK_RESOURCE,
+	"lr":            CMD_LINK_RESOURCE,
+	"bloom-concept": CMD_BLOOM_CONCEPT,
+	"bc":            CMD_BLOOM_CONCEPT,
 }
 
 type SLP struct {

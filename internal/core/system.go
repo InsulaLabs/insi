@@ -1,4 +1,4 @@
-package service
+package core
 
 import (
 	"crypto/aes"
@@ -24,11 +24,11 @@ func sizeTooLargeForStorage(value string) bool {
 }
 
 // used by all endpoints to redirect WRITE related operations to the leader
-func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string) {
+func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string) {
 
-	leaderConnectAddress, err := s.fsm.LeaderHTTPAddress()
+	leaderConnectAddress, err := c.fsm.LeaderHTTPAddress()
 	if err != nil {
-		s.logger.Error(
+		c.logger.Error(
 			"Failed to get leader's connect address for redirection",
 			"original_path", originalPath,
 			"error", err,
@@ -47,7 +47,7 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 	}
 
 	// DBG because this is a lot of noise
-	s.logger.Debug("Issuing redirect to leader",
+	c.logger.Debug("Issuing redirect to leader",
 		"current_node_is_follower", true,
 		"leader_connect_address_from_fsm", leaderConnectAddress,
 		"final_redirect_url", redirectURL)
@@ -57,10 +57,10 @@ func (s *Service) redirectToLeader(w http.ResponseWriter, r *http.Request, origi
 	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
 }
 
-func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r, false)
+func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
-		s.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
+		c.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -70,28 +70,28 @@ func (s *Service) authedPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uptime := time.Since(s.startedAt).String()
+	uptime := time.Since(c.startedAt).String()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":        "ok",
 		"entity":        td.Entity,
-		"node-badge-id": s.identity.GetID(),
-		"leader":        s.fsm.Leader(),
+		"node-badge-id": c.identity.GetID(),
+		"leader":        c.fsm.Leader(),
 		"uptime":        uptime,
 	})
 }
 
 // -- SYSTEM OPERATIONS --
 
-func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+func (c *Core) joinHandler(w http.ResponseWriter, r *http.Request) {
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 
 	// Only admin "root" key can tell nodes to join the cluster
-	td, ok := s.ValidateToken(r, true)
+	td, ok := c.ValidateToken(r, true)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -112,8 +112,8 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.fsm.Join(followerId, followerAddr); err != nil {
-		s.logger.Error(
+	if err := c.fsm.Join(followerId, followerAddr); err != nil {
+		c.logger.Error(
 			"Failed to join follower",
 			"followerId", followerId,
 			"followerAddr", followerAddr,
@@ -128,7 +128,7 @@ func (s *Service) joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Service) normalizeKeyName(keyName string) string {
+func (c *Core) normalizeKeyName(keyName string) string {
 
 	keyName = strings.TrimSpace(keyName)
 	keyName = strings.ToLower(keyName)
@@ -143,7 +143,7 @@ func (s *Service) normalizeKeyName(keyName string) string {
 	return keyName
 }
 
-func (s *Service) decomposeKey(token string) (string, string, error) {
+func (c *Core) decomposeKey(token string) (string, string, error) {
 
 	parts := strings.TrimPrefix(token, "insi_")
 
@@ -152,7 +152,7 @@ func (s *Service) decomposeKey(token string) (string, string, error) {
 		return "", "", fmt.Errorf("could not decode base64: %w", err)
 	}
 
-	decryptedKeyData, err := s.decrypt(encryptedKeyData)
+	decryptedKeyData, err := c.decrypt(encryptedKeyData)
 	if err != nil {
 		return "", "", fmt.Errorf("could not decrypt key data: %w", err)
 	}
@@ -165,13 +165,13 @@ func (s *Service) decomposeKey(token string) (string, string, error) {
 	return td.Entity, td.UUID, nil
 }
 
-func (s *Service) spawnNewApiKey(keyName string) (string, error) {
+func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 
-	keyName = s.normalizeKeyName(keyName)
+	keyName = c.normalizeKeyName(keyName)
 	keyUUID := uuid.New().String()
 
 	// Use only the keyName (entity) for the FSM key, consistent with ValidateToken lookup
-	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", s.cfg.RootPrefix, keyName)
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, keyName)
 
 	td := models.TokenData{
 		Entity: keyName,
@@ -184,7 +184,7 @@ func (s *Service) spawnNewApiKey(keyName string) (string, error) {
 		return "", fmt.Errorf("could not marshal token data for api key string: %w", err)
 	}
 
-	encryptedKeyDataForApiKey, err := s.encrypt(tokenDataForApiKeyString)
+	encryptedKeyDataForApiKey, err := c.encrypt(tokenDataForApiKeyString)
 	if err != nil {
 		return "", fmt.Errorf("could not encrypt token data for api key string: %w", err)
 	}
@@ -200,42 +200,42 @@ func (s *Service) spawnNewApiKey(keyName string) (string, error) {
 
 	// Apply to FSM
 	// The value stored in FSM is the JSON representation of TokenData (Entity and UUID)
-	if err := s.fsm.Set(models.KVPayload{
+	if err := c.fsm.Set(models.KVPayload{
 		Key:   apiKeyFsmStorageKey,
 		Value: string(keyDataForFsm),
 	}); err != nil {
 		// Add FSM error handling if s.fsm.Set can return an error that should be propagated
-		s.logger.Error("Failed to set API key in FSM", "key", apiKeyFsmStorageKey, "error", err)
+		c.logger.Error("Failed to set API key in FSM", "key", apiKeyFsmStorageKey, "error", err)
 		return "", fmt.Errorf("failed to set API key in FSM for %s: %w", keyName, err)
 	}
 
 	return actualKey, nil
 }
 
-func (s *Service) deleteExistingApiKey(key string) error {
+func (c *Core) deleteExistingApiKey(key string) error {
 
-	entity, _, err := s.decomposeKey(key) // We only need the entity to form the FSM key
+	entity, _, err := c.decomposeKey(key) // We only need the entity to form the FSM key
 	if err != nil {
 		return fmt.Errorf("could not decompose key: %w", err)
 	}
 
 	// The FSM key is based on the entity (key name)
-	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", s.cfg.RootPrefix, entity)
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, entity)
 
 	// Apply to FSM
-	if err := s.fsm.Delete(apiKeyFsmStorageKey); err != nil {
+	if err := c.fsm.Delete(apiKeyFsmStorageKey); err != nil {
 		// Add FSM error handling if s.fsm.Delete can return an error
-		s.logger.Error("Failed to delete API key from FSM", "key", apiKeyFsmStorageKey, "error", err)
+		c.logger.Error("Failed to delete API key from FSM", "key", apiKeyFsmStorageKey, "error", err)
 		return fmt.Errorf("failed to delete API key from FSM for %s: %w", entity, err)
 	}
 
-	s.apiCache.Delete(key)
+	c.apiCache.Delete(key)
 
 	return nil
 }
 
-func (s *Service) encrypt(data []byte) ([]byte, error) {
-	hash := sha256.Sum256([]byte(s.cfg.InstanceSecret))
+func (c *Core) encrypt(data []byte) ([]byte, error) {
+	hash := sha256.Sum256([]byte(c.cfg.InstanceSecret))
 	aesKey := hash[:]
 
 	blockCipher, err := aes.NewCipher(aesKey)
@@ -254,9 +254,9 @@ func (s *Service) encrypt(data []byte) ([]byte, error) {
 	return ciphertext, nil
 }
 
-func (s *Service) decrypt(data []byte) ([]byte, error) {
+func (c *Core) decrypt(data []byte) ([]byte, error) {
 	// Derive a 32-byte key using SHA-256
-	hash := sha256.Sum256([]byte(s.cfg.InstanceSecret))
+	hash := sha256.Sum256([]byte(c.cfg.InstanceSecret))
 	aesKey := hash[:]
 
 	blockCipher, err := aes.NewCipher(aesKey)
@@ -278,7 +278,7 @@ func (s *Service) decrypt(data []byte) ([]byte, error) {
 // This is still a system level operation, but it is used by all endpoints
 // and is made public so it can be exposed to the plugin system for validation
 // of tokens.
-func (s *Service) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData, bool) {
+func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData, bool) {
 
 	authHeader := r.Header.Get("Authorization")
 	const bearerPrefix = "Bearer "
@@ -290,37 +290,37 @@ func (s *Service) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenD
 	}
 
 	if mustBeRoot {
-		if token != s.authToken {
+		if token != c.authToken {
 			return models.TokenData{
 				Entity: EntityRoot,
-				UUID:   s.cfg.RootPrefix,
+				UUID:   c.cfg.RootPrefix,
 			}, false
 		}
 	}
 
-	if token == s.authToken {
+	if token == c.authToken {
 		return models.TokenData{
 			Entity: EntityRoot,
-			UUID:   s.cfg.RootPrefix,
+			UUID:   c.cfg.RootPrefix,
 		}, true
 	}
 
-	apiCacheItem := s.apiCache.Get(token)
+	apiCacheItem := c.apiCache.Get(token)
 	if apiCacheItem != nil {
 		return apiCacheItem.Value(), true
 	}
 
-	entity, uuid, err := s.decomposeKey(token)
+	entity, uuid, err := c.decomposeKey(token)
 	if err != nil {
-		s.logger.Error("Could not decompose key", "error", err)
+		c.logger.Error("Could not decompose key", "error", err)
 		return models.TokenData{}, false
 	}
 
 	// Get the key from the fsm
-	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", s.cfg.RootPrefix, entity)
-	keyDataFromFsm, err := s.fsm.Get(fsmStorageKey)
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, entity)
+	keyDataFromFsm, err := c.fsm.Get(fsmStorageKey)
 	if err != nil {
-		s.logger.Error("Could not get key data from FSM", "key", fsmStorageKey, "error", err)
+		c.logger.Error("Could not get key data from FSM", "key", fsmStorageKey, "error", err)
 		return models.TokenData{}, false
 	}
 
@@ -328,7 +328,7 @@ func (s *Service) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenD
 	// It should be directly unmarshalled.
 	var tdFromFsm models.TokenData
 	if err := json.Unmarshal([]byte(keyDataFromFsm), &tdFromFsm); err != nil {
-		s.logger.Error(
+		c.logger.Error(
 			"Could not unmarshal token data from FSM",
 			"key", fsmStorageKey,
 			"data", keyDataFromFsm,
@@ -339,14 +339,14 @@ func (s *Service) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenD
 
 	// Compare the UUID from the decomposed token with the UUID stored in FSM for that entity.
 	if tdFromFsm.UUID != uuid || tdFromFsm.Entity != entity {
-		s.logger.Error("UUID mismatch between token and FSM record",
+		c.logger.Error("UUID mismatch between token and FSM record",
 			"entity", entity,
 			"uuid_from_token", uuid,
 			"uuid_from_fsm", tdFromFsm.UUID)
 		return models.TokenData{}, false
 	}
 
-	s.apiCache.Set(token, tdFromFsm, s.cfg.Cache.Keys)
+	c.apiCache.Set(token, tdFromFsm, c.cfg.Cache.Keys)
 
 	return tdFromFsm, true
 }

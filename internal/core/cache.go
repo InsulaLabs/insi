@@ -1,4 +1,4 @@
-package service
+package core
 
 import (
 	"encoding/json"
@@ -11,15 +11,15 @@ import (
 
 // -- READ OPERATIONS --
 
-func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
+func (c *Core) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := s.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("GetCacheHandler", "entity", td.Entity)
+	c.logger.Debug("GetCacheHandler", "entity", td.Entity)
 
 	key := r.URL.Query().Get("key")
 	if key == "" {
@@ -27,9 +27,9 @@ func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := s.fsm.GetCache(fmt.Sprintf("%s:%s", td.UUID, key))
+	value, err := c.fsm.GetCache(fmt.Sprintf("%s:%s", td.UUID, key))
 	if err != nil {
-		s.logger.Info("FSM GetCache for key returned error, treating as Not Found for now", "key", key, "error", err)
+		c.logger.Info("FSM GetCache for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -40,14 +40,14 @@ func (s *Service) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 	}{Data: value}
 
 	if errEnc := json.NewEncoder(w).Encode(rsp); errEnc != nil {
-		s.logger.Error("Could not encode response for cache", "key", key, "error", errEnc)
+		c.logger.Error("Could not encode response for cache", "key", key, "error", errEnc)
 		return
 	}
 }
 
 // -- WRITE OPERATIONS --
 
-func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
+func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 
 	/*
 
@@ -55,29 +55,29 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 			  to root-only operations
 
 	*/
-	td, ok := s.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("SetCacheHandler", "entity", td.Entity)
+	c.logger.Debug("SetCacheHandler", "entity", td.Entity)
 
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for set cache request", "error", err)
+		c.logger.Error("Could not read body for set cache request", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var p models.CachePayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
-		s.logger.Error("Invalid JSON payload for set cache request", "error", err)
+		c.logger.Error("Invalid JSON payload for set cache request", "error", err)
 		http.Error(w, "Invalid JSON payload for set cache: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -99,16 +99,16 @@ func (s *Service) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.fsm.SetCache(p)
+	err = c.fsm.SetCache(p)
 	if err != nil {
-		s.logger.Error("Could not set cache via FSM", "error", err)
+		c.logger.Error("Could not set cache via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Service) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 
 	/*
 

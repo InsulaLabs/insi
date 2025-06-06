@@ -1,4 +1,4 @@
-package service
+package core
 
 import (
 	"encoding/json"
@@ -18,15 +18,15 @@ const maxTotalBatchPayloadSize = 1 * 1024 * 1024 // 1MB limit for the entire bat
 
 // -- READ OPERATIONS --
 
-func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
+func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := s.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("GetHandler", "entity", td.Entity)
+	c.logger.Debug("GetHandler", "entity", td.Entity)
 
 	key := r.URL.Query().Get("key")
 	if key == "" {
@@ -34,14 +34,14 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := s.fsm.Get(fmt.Sprintf("%s:%s", td.UUID, key))
+	value, err := c.fsm.Get(fmt.Sprintf("%s:%s", td.UUID, key))
 	if err != nil {
-		s.logger.Info("FSM Get for key returned error, treating as Not Found for now", "key", key, "error", err)
+		c.logger.Info("FSM Get for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
 		return
 	}
 	if value == "" {
-		s.logger.Info("FSM Get for key returned empty value, treating as Not Found", "key", key)
+		c.logger.Info("FSM Get for key returned empty value, treating as Not Found", "key", key)
 		http.NotFound(w, r)
 		return
 	}
@@ -52,19 +52,19 @@ func (s *Service) getHandler(w http.ResponseWriter, r *http.Request) {
 	}{Data: value}
 
 	if err := json.NewEncoder(w).Encode(rsp); err != nil {
-		s.logger.Error("Could not encode response for key", "key", key, "error", err)
+		c.logger.Error("Could not encode response for key", "key", key, "error", err)
 	}
 }
 
-func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
+func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := s.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("IterateKeysByPrefixHandler", "entity", td.Entity)
+	c.logger.Debug("IterateKeysByPrefixHandler", "entity", td.Entity)
 
 	prefix := r.URL.Query().Get("prefix")
 	if td.Entity != EntityRoot && prefix == "" {
@@ -95,12 +95,12 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 		offsetInt = 0
 	}
 
-	value, err := s.fsm.Iterate(fmt.Sprintf("%s:%s", td.UUID, prefix), offsetInt, limitInt)
+	value, err := c.fsm.Iterate(fmt.Sprintf("%s:%s", td.UUID, prefix), offsetInt, limitInt)
 	if err == badger.ErrKeyNotFound {
 		http.NotFound(w, r)
 		return
 	} else if err != nil {
-		s.logger.Error("Could not iterate keys by prefix via FSM", "prefix", prefix, "error", err)
+		c.logger.Error("Could not iterate keys by prefix via FSM", "prefix", prefix, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -116,7 +116,7 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 	}{Data: value}
 
 	if err := json.NewEncoder(w).Encode(rsp); err != nil {
-		s.logger.Error("Could not encode response for iterate keys by prefix", "prefix", prefix, "error", err)
+		c.logger.Error("Could not encode response for iterate keys by prefix", "prefix", prefix, "error", err)
 	}
 }
 
@@ -126,30 +126,30 @@ func (s *Service) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Requ
 	Handlers that update the "VALUES" database
 */
 
-func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r, false)
+func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("SetHandler", "entity", td.Entity)
+	c.logger.Debug("SetHandler", "entity", td.Entity)
 
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for set request", "error", err)
+		c.logger.Error("Could not read body for set request", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
-		s.logger.Error("Invalid JSON payload for set request", "error", err)
+		c.logger.Error("Invalid JSON payload for set request", "error", err)
 		http.Error(w, "Invalid JSON payload for set: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -171,39 +171,39 @@ func (s *Service) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.fsm.Set(p)
+	err = c.fsm.Set(p)
 	if err != nil {
-		s.logger.Error("Could not write key-value via FSM", "error", err)
+		c.logger.Error("Could not write key-value via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r, false)
+func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("DeleteHandler", "entity", td.Entity)
+	c.logger.Debug("DeleteHandler", "entity", td.Entity)
 
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for delete request", "error", err)
+		c.logger.Error("Could not read body for delete request", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
-		s.logger.Error("Invalid JSON payload for unset request", "error", err)
+		c.logger.Error("Invalid JSON payload for unset request", "error", err)
 		http.Error(w, "Invalid JSON payload for unset: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -220,9 +220,9 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.fsm.Delete(p.Key)
+	err = c.fsm.Delete(p.Key)
 	if err != nil {
-		s.logger.Error("Could not unset value via FSM", "error", err)
+		c.logger.Error("Could not unset value via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -235,17 +235,17 @@ func (s *Service) deleteHandler(w http.ResponseWriter, r *http.Request) {
 
 // Define request structures for batch operations
 
-func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r, false)
+func (c *Core) batchSetHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("BatchSetHandler", "entity", td.Entity)
+	c.logger.Debug("BatchSetHandler", "entity", td.Entity)
 
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 
@@ -253,7 +253,7 @@ func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for batch set request", "error", err)
+		c.logger.Error("Could not read body for batch set request", "error", err)
 		if errors.As(err, new(*http.MaxBytesError)) {
 			http.Error(w, "Request payload too large for batch set", http.StatusRequestEntityTooLarge)
 			return
@@ -264,7 +264,7 @@ func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req models.BatchSetRequest
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		s.logger.Error("Invalid JSON payload for batch set request", "error", err)
+		c.logger.Error("Invalid JSON payload for batch set request", "error", err)
 		http.Error(w, "Invalid JSON payload for batch set: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -298,25 +298,25 @@ func (s *Service) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 		itemsToSet[i] = models.KVPayload{Key: prefixedKey, Value: item.Value}
 	}
 
-	if err := s.fsm.BatchSet(itemsToSet); err != nil {
-		s.logger.Error("Could not batch set values via FSM", "error", err)
+	if err := c.fsm.BatchSet(itemsToSet); err != nil {
+		c.logger.Error("Could not batch set values via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r, false)
+func (c *Core) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("BatchDeleteHandler", "entity", td.Entity)
+	c.logger.Debug("BatchDeleteHandler", "entity", td.Entity)
 
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 
@@ -324,7 +324,7 @@ func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for batch delete request", "error", err)
+		c.logger.Error("Could not read body for batch delete request", "error", err)
 		if errors.As(err, new(*http.MaxBytesError)) {
 			http.Error(w, "Request payload too large for batch delete", http.StatusRequestEntityTooLarge)
 			return
@@ -335,7 +335,7 @@ func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req models.BatchDeleteRequest
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		s.logger.Error("Invalid JSON payload for batch delete request", "error", err)
+		c.logger.Error("Invalid JSON payload for batch delete request", "error", err)
 		http.Error(w, "Invalid JSON payload for batch delete: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -364,8 +364,8 @@ func (s *Service) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		keysToDeleteFSM[i] = models.KeyPayload{Key: prefixedKey}
 	}
 
-	if err := s.fsm.BatchDelete(keysToDeleteFSM); err != nil {
-		s.logger.Error("Could not batch delete values via FSM", "error", err)
+	if err := c.fsm.BatchDelete(keysToDeleteFSM); err != nil {
+		c.logger.Error("Could not batch delete values via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

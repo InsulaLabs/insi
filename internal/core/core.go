@@ -1,4 +1,4 @@
-package service
+package core
 
 import (
 	"context"
@@ -30,7 +30,7 @@ const (
 	we actually hit the db.
 */
 
-type Service struct {
+type Core struct {
 	appCtx    context.Context
 	cfg       *config.Cluster
 	nodeCfg   *config.Node
@@ -56,11 +56,11 @@ type Service struct {
 	apiCache *ttlcache.Cache[string, models.TokenData]
 }
 
-func (s *Service) GetRootClientKey() string {
-	return s.authToken
+func (c *Core) GetRootClientKey() string {
+	return c.authToken
 }
 
-func (s *Service) AddHandler(path string, handler http.Handler) error {
+func (s *Core) AddHandler(path string, handler http.Handler) error {
 	if !s.startedAt.IsZero() {
 		return fmt.Errorf("service already started, cannot add handler after startup")
 	}
@@ -68,7 +68,7 @@ func (s *Service) AddHandler(path string, handler http.Handler) error {
 	return nil
 }
 
-func NewService(
+func New(
 	ctx context.Context,
 	logger *slog.Logger,
 	nodeSpecificCfg *config.Node,
@@ -77,7 +77,7 @@ func NewService(
 	clusterCfg *config.Cluster,
 	asNodeId string,
 	rootApiKey string,
-) (*Service, error) {
+) (*Core, error) {
 
 	// This eventCh is for the FSM to signal the service.
 	serviceEventCh := make(chan models.Event, clusterCfg.Sessions.EventChannelSize) // Buffered channel
@@ -144,7 +144,7 @@ func NewService(
 	)
 	go apiCache.Start()
 
-	service := &Service{
+	service := &Core{
 		appCtx:           ctx,
 		cfg:              clusterCfg,
 		nodeCfg:          nodeSpecificCfg,
@@ -176,20 +176,20 @@ func NewService(
 	return service, nil
 }
 
-func (s *Service) rateLimitMiddleware(next http.Handler, category string) http.Handler {
-	limiter, ok := s.rateLimiters[category]
+func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Handler {
+	limiter, ok := c.rateLimiters[category]
 	if !ok {
 		// Fallback to default limiter if category-specific one isn't found or configured
-		limiter, ok = s.rateLimiters["default"]
+		limiter, ok = c.rateLimiters["default"]
 		if !ok { // If no default limiter, then no rate limiting for this handler
-			s.logger.Warn("No rate limiter configured for category and no default limiter present", "category", category)
+			c.logger.Warn("No rate limiter configured for category and no default limiter present", "category", category)
 			return next
 		}
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !limiter.Allow() {
-			s.logger.Warn("Rate limit exceeded", "category", category, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
+			c.logger.Warn("Rate limit exceeded", "category", category, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 			return
 		}
@@ -197,9 +197,9 @@ func (s *Service) rateLimitMiddleware(next http.Handler, category string) http.H
 	})
 }
 
-func (s *Service) WithRoute(path string, handler http.Handler, limit int, burst int) {
+func (c *Core) WithRoute(path string, handler http.Handler, limit int, burst int) {
 	limiter := rate.NewLimiter(rate.Limit(limit), burst)
-	s.mux.Handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	c.mux.Handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !limiter.Allow() {
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 			return
@@ -209,89 +209,89 @@ func (s *Service) WithRoute(path string, handler http.Handler, limit int, burst 
 }
 
 // Run forever until the context is cancelled
-func (s *Service) Run() {
+func (c *Core) Run() {
 
 	// Values handlers
-	s.mux.Handle("/db/api/v1/set", s.rateLimitMiddleware(http.HandlerFunc(s.setHandler), "values"))
-	s.mux.Handle("/db/api/v1/get", s.rateLimitMiddleware(http.HandlerFunc(s.getHandler), "values"))
-	s.mux.Handle("/db/api/v1/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteHandler), "values"))
-	s.mux.Handle("/db/api/v1/iterate/prefix", s.rateLimitMiddleware(http.HandlerFunc(s.iterateKeysByPrefixHandler), "values"))
+	c.mux.Handle("/db/api/v1/set", c.rateLimitMiddleware(http.HandlerFunc(c.setHandler), "values"))
+	c.mux.Handle("/db/api/v1/get", c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values"))
+	c.mux.Handle("/db/api/v1/delete", c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values"))
+	c.mux.Handle("/db/api/v1/iterate/prefix", c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values"))
 
 	// Batch Value handlers
-	s.mux.Handle("/db/api/v1/batchset", s.rateLimitMiddleware(http.HandlerFunc(s.batchSetHandler), "values"))
-	s.mux.Handle("/db/api/v1/batchdelete", s.rateLimitMiddleware(http.HandlerFunc(s.batchDeleteHandler), "values"))
+	c.mux.Handle("/db/api/v1/batchset", c.rateLimitMiddleware(http.HandlerFunc(c.batchSetHandler), "values"))
+	c.mux.Handle("/db/api/v1/batchdelete", c.rateLimitMiddleware(http.HandlerFunc(c.batchDeleteHandler), "values"))
 
 	// Atomic Operation handlers (using "values" rate limiting category for now)
-	s.mux.Handle("/db/api/v1/atomic/new", s.rateLimitMiddleware(http.HandlerFunc(s.atomicNewHandler), "values"))
-	s.mux.Handle("/db/api/v1/atomic/get", s.rateLimitMiddleware(http.HandlerFunc(s.atomicGetHandler), "values"))
-	s.mux.Handle("/db/api/v1/atomic/add", s.rateLimitMiddleware(http.HandlerFunc(s.atomicAddHandler), "values"))
-	s.mux.Handle("/db/api/v1/atomic/delete", s.rateLimitMiddleware(http.HandlerFunc(s.atomicDeleteHandler), "values"))
+	c.mux.Handle("/db/api/v1/atomic/new", c.rateLimitMiddleware(http.HandlerFunc(c.atomicNewHandler), "values"))
+	c.mux.Handle("/db/api/v1/atomic/get", c.rateLimitMiddleware(http.HandlerFunc(c.atomicGetHandler), "values"))
+	c.mux.Handle("/db/api/v1/atomic/add", c.rateLimitMiddleware(http.HandlerFunc(c.atomicAddHandler), "values"))
+	c.mux.Handle("/db/api/v1/atomic/delete", c.rateLimitMiddleware(http.HandlerFunc(c.atomicDeleteHandler), "values"))
 
 	// Queue handlers (using "queues" rate limiting category)
-	s.mux.Handle("/db/api/v1/queue/new", s.rateLimitMiddleware(http.HandlerFunc(s.queueNewHandler), "queues"))
-	s.mux.Handle("/db/api/v1/queue/push", s.rateLimitMiddleware(http.HandlerFunc(s.queuePushHandler), "queues"))
-	s.mux.Handle("/db/api/v1/queue/pop", s.rateLimitMiddleware(http.HandlerFunc(s.queuePopHandler), "queues"))
-	s.mux.Handle("/db/api/v1/queue/delete", s.rateLimitMiddleware(http.HandlerFunc(s.queueDeleteHandler), "queues"))
+	c.mux.Handle("/db/api/v1/queue/new", c.rateLimitMiddleware(http.HandlerFunc(c.queueNewHandler), "queues"))
+	c.mux.Handle("/db/api/v1/queue/push", c.rateLimitMiddleware(http.HandlerFunc(c.queuePushHandler), "queues"))
+	c.mux.Handle("/db/api/v1/queue/pop", c.rateLimitMiddleware(http.HandlerFunc(c.queuePopHandler), "queues"))
+	c.mux.Handle("/db/api/v1/queue/delete", c.rateLimitMiddleware(http.HandlerFunc(c.queueDeleteHandler), "queues"))
 
 	// Cache handlers
-	s.mux.Handle("/db/api/v1/cache/set", s.rateLimitMiddleware(http.HandlerFunc(s.setCacheHandler), "cache"))
-	s.mux.Handle("/db/api/v1/cache/get", s.rateLimitMiddleware(http.HandlerFunc(s.getCacheHandler), "cache"))
-	s.mux.Handle("/db/api/v1/cache/delete", s.rateLimitMiddleware(http.HandlerFunc(s.deleteCacheHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/set", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/get", c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/delete", c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache"))
 
 	// Events handlers
-	s.mux.Handle("/db/api/v1/events", s.rateLimitMiddleware(http.HandlerFunc(s.eventsHandler), "events"))
-	s.mux.Handle("/db/api/v1/events/subscribe", s.rateLimitMiddleware(http.HandlerFunc(s.eventSubscribeHandler), "events"))
+	c.mux.Handle("/db/api/v1/events", c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events"))
+	c.mux.Handle("/db/api/v1/events/subscribe", c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events"))
 
 	// System handlers
-	s.mux.Handle("/db/api/v1/join", s.rateLimitMiddleware(http.HandlerFunc(s.joinHandler), "system"))
-	s.mux.Handle("/db/api/v1/ping", s.rateLimitMiddleware(http.HandlerFunc(s.authedPing), "system"))
+	c.mux.Handle("/db/api/v1/join", c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system"))
+	c.mux.Handle("/db/api/v1/ping", c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system"))
 
 	// Admin API Key Management handlers (system category for rate limiting)
-	s.mux.Handle("/db/api/v1/admin/api/create", s.rateLimitMiddleware(http.HandlerFunc(s.apiKeyCreateHandler), "system"))
-	s.mux.Handle("/db/api/v1/admin/api/delete", s.rateLimitMiddleware(http.HandlerFunc(s.apiKeyDeleteHandler), "system"))
+	c.mux.Handle("/db/api/v1/admin/api/create", c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system"))
+	c.mux.Handle("/db/api/v1/admin/api/delete", c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system"))
 
-	httpListenAddr := s.nodeCfg.HttpBinding
-	s.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != ""))
+	httpListenAddr := c.nodeCfg.HttpBinding
+	c.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != ""))
 
 	srv := &http.Server{
 		Addr:    httpListenAddr,
-		Handler: s.mux,
+		Handler: c.mux,
 	}
 
 	go func() {
-		<-s.appCtx.Done()
+		<-c.appCtx.Done()
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancelShutdown()
 
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			s.logger.Error("Server shutdown error", "error", err)
+			c.logger.Error("Server shutdown error", "error", err)
 		}
 	}()
 
-	s.startedAt = time.Now()
+	c.startedAt = time.Now()
 
-	if s.cfg.TLS.Cert != "" && s.cfg.TLS.Key != "" {
-		s.logger.Info("Starting HTTPS server", "cert", s.cfg.TLS.Cert, "key", s.cfg.TLS.Key)
+	if c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != "" {
+		c.logger.Info("Starting HTTPS server", "cert", c.cfg.TLS.Cert, "key", c.cfg.TLS.Key)
 		srv.TLSConfig = &tls.Config{}
-		if err := srv.ListenAndServeTLS(s.cfg.TLS.Cert, s.cfg.TLS.Key); err != http.ErrServerClosed {
-			s.logger.Error("HTTPS server error", "error", err)
+		if err := srv.ListenAndServeTLS(c.cfg.TLS.Cert, c.cfg.TLS.Key); err != http.ErrServerClosed {
+			c.logger.Error("HTTPS server error", "error", err)
 		}
 	} else {
-		s.logger.Info("TLS cert or key not specified in config. Starting HTTP server (insecure).")
+		c.logger.Info("TLS cert or key not specified in config. Starting HTTP server (insecure).")
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			s.logger.Error("HTTP server error", "error", err)
+			c.logger.Error("HTTP server error", "error", err)
 		}
 	}
 
-	s.apiCache.Stop()
+	c.apiCache.Stop()
 }
 
 // Whenever a cache entry expires, not from deletion, but from TTL expiration this is called
-func (s *Service) OnTTLCacheEviction(key string, value string) error {
+func (c *Core) OnTTLCacheEviction(key string, value string) error {
 
 	// Only leader should modify the counter on eviction
 	// the others can just let it die
-	if !s.fsm.IsLeader() {
+	if !c.fsm.IsLeader() {
 		fmt.Println("OnTTLCacheEviction not leader, skipping")
 		return nil
 	}

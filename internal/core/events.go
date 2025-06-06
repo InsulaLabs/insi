@@ -1,4 +1,4 @@
-package service
+package core
 
 import (
 	"encoding/json"
@@ -27,11 +27,11 @@ type eventSession struct {
 	// Buffered channel of outbound messages.
 	send chan []byte
 	// Service pointer to access logger, etc.
-	service *Service
+	service *Core
 }
 
 type eventSubsystem struct {
-	service *Service
+	service *Core
 	eventCh chan models.Event
 	// We don't need to manage subscribers directly here anymore,
 	// the Service will handle dispatch based on its eventSubscribers map.
@@ -76,17 +76,17 @@ func (es *eventSubsystem) Receive(topic string, data any) error {
 }
 
 // eventSubscribeHandler handles WebSocket requests for event subscriptions.
-func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
+func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 	// Authentication: Extract token from query parameter
 	// Example: /db/api/v1/events/subscribe?topic=MY_TOPIC&token=API_KEY
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		s.logger.Warn("WebSocket connection attempt without token")
+		c.logger.Warn("WebSocket connection attempt without token")
 		http.Error(w, "Missing token", http.StatusUnauthorized)
 		return
 	}
 
-	td, ok := s.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
@@ -94,95 +94,95 @@ func (s *Service) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) 
 
 	topic := r.URL.Query().Get("topic")
 	if topic == "" {
-		s.logger.Warn("WebSocket connection attempt without topic")
+		c.logger.Warn("WebSocket connection attempt without topic")
 		http.Error(w, "Missing topic", http.StatusBadRequest)
 		return
 	}
 
 	// Prefix the topic with the entity's UUID to scope it
 	prefixedTopic := fmt.Sprintf("%s:%s", td.UUID, topic)
-	s.logger.Debug("Subscription request for prefixed topic", "original_topic", topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.UUID)
+	c.logger.Debug("Subscription request for prefixed topic", "original_topic", topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.UUID)
 
-	s.wsConnectionLock.Lock()
-	if s.activeWsConnections >= int32(s.cfg.Sessions.MaxConnections) {
-		s.wsConnectionLock.Unlock()
-		s.logger.Warn("Max WebSocket connections reached, rejecting new connection", "current", s.activeWsConnections, "max", s.cfg.Sessions.MaxConnections)
+	c.wsConnectionLock.Lock()
+	if c.activeWsConnections >= int32(c.cfg.Sessions.MaxConnections) {
+		c.wsConnectionLock.Unlock()
+		c.logger.Warn("Max WebSocket connections reached, rejecting new connection", "current", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections)
 		http.Error(w, "Too many connections", http.StatusServiceUnavailable)
 		return
 	}
 	// Incrementing will be done in registerSubscriber after successful upgrade
-	s.wsConnectionLock.Unlock() // Unlock before upgrading, lock again in registerSubscriber
+	c.wsConnectionLock.Unlock() // Unlock before upgrading, lock again in registerSubscriber
 
-	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
+	conn, err := c.wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		s.logger.Error("Failed to upgrade WebSocket connection", "error", err, "topic", prefixedTopic)
+		c.logger.Error("Failed to upgrade WebSocket connection", "error", err, "topic", prefixedTopic)
 		return
 	}
-	s.logger.Info("WebSocket connection upgraded", "remote_addr", conn.RemoteAddr().String(), "topic", prefixedTopic)
+	c.logger.Info("WebSocket connection upgraded", "remote_addr", conn.RemoteAddr().String(), "topic", prefixedTopic)
 
 	session := &eventSession{
 		conn:    conn,
 		topic:   prefixedTopic,
 		send:    make(chan []byte, 256), // Buffered channel
-		service: s,
+		service: c,
 	}
 
-	s.registerSubscriber(session)
+	c.registerSubscriber(session)
 
 	// Launch goroutines for this session
 	go session.writePump()
 	go session.readPump()
 }
 
-func (s *Service) registerSubscriber(session *eventSession) {
-	s.eventSubscribersLock.Lock()
-	defer s.eventSubscribersLock.Unlock()
+func (c *Core) registerSubscriber(session *eventSession) {
+	c.eventSubscribersLock.Lock()
+	defer c.eventSubscribersLock.Unlock()
 
-	s.wsConnectionLock.Lock()
-	defer s.wsConnectionLock.Unlock()
+	c.wsConnectionLock.Lock()
+	defer c.wsConnectionLock.Unlock()
 
-	if s.activeWsConnections >= int32(s.cfg.Sessions.MaxConnections) {
+	if c.activeWsConnections >= int32(c.cfg.Sessions.MaxConnections) {
 		// This is a secondary check, primary check is in eventSubscribeHandler
 		// If reached here, it's a race condition or an issue. Log and don't register.
-		s.logger.Error("Attempted to register subscriber when max connections already met or exceeded", "active", s.activeWsConnections, "max", s.cfg.Sessions.MaxConnections)
+		c.logger.Error("Attempted to register subscriber when max connections already met or exceeded", "active", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections)
 		// We should not proceed to add the session if the limit is hit. Close the connection that was just upgraded.
 		go session.conn.Close() // Close it in a goroutine to avoid blocking here
 		return
 	}
-	s.activeWsConnections++
-	s.logger.Info("Incremented active WebSocket connections", "count", s.activeWsConnections)
+	c.activeWsConnections++
+	c.logger.Info("Incremented active WebSocket connections", "count", c.activeWsConnections)
 
-	if _, ok := s.eventSubscribers[session.topic]; !ok {
-		s.eventSubscribers[session.topic] = make(map[*eventSession]bool) // Inner map stores *eventSession
+	if _, ok := c.eventSubscribers[session.topic]; !ok {
+		c.eventSubscribers[session.topic] = make(map[*eventSession]bool) // Inner map stores *eventSession
 	}
-	s.eventSubscribers[session.topic][session] = true // Store the session itself
+	c.eventSubscribers[session.topic][session] = true // Store the session itself
 
-	s.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
+	c.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 }
 
-func (s *Service) unregisterSubscriber(session *eventSession) {
-	s.eventSubscribersLock.Lock()
-	defer s.eventSubscribersLock.Unlock()
+func (c *Core) unregisterSubscriber(session *eventSession) {
+	c.eventSubscribersLock.Lock()
+	defer c.eventSubscribersLock.Unlock()
 
-	s.wsConnectionLock.Lock()
-	defer s.wsConnectionLock.Unlock()
+	c.wsConnectionLock.Lock()
+	defer c.wsConnectionLock.Unlock()
 
-	if sessionsInTopic, ok := s.eventSubscribers[session.topic]; ok {
+	if sessionsInTopic, ok := c.eventSubscribers[session.topic]; ok {
 		if _, ok := sessionsInTopic[session]; ok {
-			delete(s.eventSubscribers[session.topic], session)
-			s.logger.Info("Subscriber unregistered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
+			delete(c.eventSubscribers[session.topic], session)
+			c.logger.Info("Subscriber unregistered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 
 			// Decrement connection count only if we actually found and removed the session
-			if s.activeWsConnections > 0 {
-				s.activeWsConnections--
-				s.logger.Info("Decremented active WebSocket connections", "count", s.activeWsConnections)
+			if c.activeWsConnections > 0 {
+				c.activeWsConnections--
+				c.logger.Info("Decremented active WebSocket connections", "count", c.activeWsConnections)
 			} else {
-				s.logger.Warn("Attempted to decrement active WebSocket connections below zero")
+				c.logger.Warn("Attempted to decrement active WebSocket connections below zero")
 			}
 
-			if len(s.eventSubscribers[session.topic]) == 0 {
-				delete(s.eventSubscribers, session.topic)
-				s.logger.Info("No more subscribers for topic, removing topic from map", "topic", session.topic)
+			if len(c.eventSubscribers[session.topic]) == 0 {
+				delete(c.eventSubscribers, session.topic)
+				c.logger.Info("No more subscribers for topic, removing topic from map", "topic", session.topic)
 			}
 		}
 	}
@@ -191,42 +191,42 @@ func (s *Service) unregisterSubscriber(session *eventSession) {
 
 // Central event processing loop for the service.
 // Reads from FSM-populated eventCh and dispatches to WebSocket subscribers.
-func (s *Service) eventProcessingLoop() {
-	s.logger.Info("Starting service event processing loop for WebSocket dispatch")
+func (c *Core) eventProcessingLoop() {
+	c.logger.Info("Starting service event processing loop for WebSocket dispatch")
 	for {
 		select {
-		case event := <-s.eventCh:
-			s.logger.Debug("Service event loop received event", "topic", event.Topic)
-			s.dispatchEventToSubscribersViaSessionSend(event)
+		case event := <-c.eventCh:
+			c.logger.Debug("Service event loop received event", "topic", event.Topic)
+			c.dispatchEventToSubscribersViaSessionSend(event)
 
-		case <-s.appCtx.Done():
-			s.logger.Info("Service event processing loop shutting down")
+		case <-c.appCtx.Done():
+			c.logger.Info("Service event processing loop shutting down")
 			return
 		}
 	}
 }
 
 // dispatchEventToSubscribersViaSessionSend sends an event to all relevant subscriber sessions.
-func (s *Service) dispatchEventToSubscribersViaSessionSend(event models.Event) {
-	s.eventSubscribersLock.RLock()
-	defer s.eventSubscribersLock.RUnlock()
+func (c *Core) dispatchEventToSubscribersViaSessionSend(event models.Event) {
+	c.eventSubscribersLock.RLock()
+	defer c.eventSubscribersLock.RUnlock()
 
-	sessionsForTopic, ok := s.eventSubscribers[event.Topic] // Changed variable name for clarity
+	sessionsForTopic, ok := c.eventSubscribers[event.Topic] // Changed variable name for clarity
 	if !ok {
-		s.logger.Debug("No WebSocket subscribers for topic in dispatchViaSessionSend", "topic", event.Topic)
+		c.logger.Debug("No WebSocket subscribers for topic in dispatchViaSessionSend", "topic", event.Topic)
 		return
 	}
 
 	if len(sessionsForTopic) == 0 {
-		s.logger.Debug("Zero WebSocket subscribers in map for topic (dispatchViaSessionSend)", "topic", event.Topic)
+		c.logger.Debug("Zero WebSocket subscribers in map for topic (dispatchViaSessionSend)", "topic", event.Topic)
 		return
 	}
 
-	s.logger.Debug("Dispatching event via session send channels", "topic", event.Topic, "subscriber_count", len(sessionsForTopic))
+	c.logger.Debug("Dispatching event via session send channels", "topic", event.Topic, "subscriber_count", len(sessionsForTopic))
 
 	message, err := json.Marshal(event)
 	if err != nil {
-		s.logger.Error("Failed to marshal event for WebSocket dispatch (dispatchViaSessionSend)", "topic", event.Topic, "error", err)
+		c.logger.Error("Failed to marshal event for WebSocket dispatch (dispatchViaSessionSend)", "topic", event.Topic, "error", err)
 		return
 	}
 
@@ -265,9 +265,9 @@ func (s *Service) dispatchEventToSubscribersViaSessionSend(event models.Event) {
 	for session := range sessionsForTopic { // session is now *eventSession correctly
 		select {
 		case session.send <- message:
-			s.logger.Debug("Message queued for WebSocket subscriber", "topic", event.Topic, "remote_addr", session.conn.RemoteAddr())
+			c.logger.Debug("Message queued for WebSocket subscriber", "topic", event.Topic, "remote_addr", session.conn.RemoteAddr())
 		default:
-			s.logger.Warn("Subscriber send channel full, message dropped", "topic", event.Topic, "remote_addr", session.conn.RemoteAddr())
+			c.logger.Warn("Subscriber send channel full, message dropped", "topic", event.Topic, "remote_addr", session.conn.RemoteAddr())
 			// To prevent a stuck writer, we might close the connection here.
 			// This will trigger readPump to exit and unregister.
 			// Be careful with closing from a different goroutine.
@@ -385,46 +385,46 @@ func (s *eventSession) writePump() {
 
 // -- WRITE OPERATIONS --
 
-func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
+func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	td, ok := s.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, false)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for events request", "error", err)
+		c.logger.Error("Could not read body for events request", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var p models.Event
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
-		s.logger.Error("Invalid JSON payload for events request", "error", err)
+		c.logger.Error("Invalid JSON payload for events request", "error", err)
 		http.Error(w, "Invalid JSON payload for events: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	// Prefix the topic with the entity's UUID to scope it
 	prefixedTopic := fmt.Sprintf("%s:%s", td.UUID, p.Topic)
-	s.logger.Debug("Publishing event with prefixed topic", "original_topic", p.Topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.UUID)
+	c.logger.Debug("Publishing event with prefixed topic", "original_topic", p.Topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.UUID)
 
-	err = s.fsm.Publish(prefixedTopic, p.Data)
+	err = c.fsm.Publish(prefixedTopic, p.Data)
 	if err != nil {
-		s.logger.Error("Could not publish event via FSM", "error", err)
+		c.logger.Error("Could not publish event via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

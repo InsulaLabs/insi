@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/service"
+	"github.com/InsulaLabs/insi/internal/core"
 	"github.com/InsulaLabs/insi/models"
 )
 
@@ -97,7 +97,7 @@ func (r *Runtime) RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (mode
 }
 
 func (r *Runtime) RT_IsRoot(td models.TokenData) bool {
-	return td.Entity == service.EntityRoot && td.UUID == r.clusterCfg.RootPrefix
+	return td.Entity == core.EntityRoot && td.UUID == r.clusterCfg.RootPrefix
 }
 
 func (r *Runtime) RT_GetNodeConfig() *config.Node {

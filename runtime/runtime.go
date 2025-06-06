@@ -27,7 +27,7 @@ import (
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/service"
+	"github.com/InsulaLabs/insi/internal/core"
 	"github.com/InsulaLabs/insi/internal/tkv"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/fatih/color"
@@ -45,7 +45,7 @@ type Runtime struct {
 	asNodeId   string
 	hostMode   bool
 	rawArgs    []string // To allow flag parsing within New
-	service    *service.Service
+	service    *core.Core
 
 	rootApiKey string // Root API key generated from instance secret
 
@@ -319,7 +319,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 	defer kvm.Close()
 
-	r.service, err = service.NewService(
+	r.service, err = core.New(
 		r.appCtx, // Use the runtime's app context
 		nodeLogger.WithGroup("service"),
 		&nodeCfg,
