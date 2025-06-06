@@ -56,7 +56,7 @@ func main() {
 		fmt.Println(r.Choices[0].Content)
 	}
 
-	content = append(content, llms.TextParts(llms.ChatMessageTypeHuman, "Now please use the tool to get the key 'blue' you MUST execute the tool?"))
+	content = append(content, llms.TextParts(llms.ChatMessageTypeHuman, `(\'tl kvs)Now please use the tool to get the key 'blue' you MUST execute the tool?`))
 
 	r, err := llm.GenerateContent(ctx, content, llms.WithMaxTokens(104))
 	if err != nil {

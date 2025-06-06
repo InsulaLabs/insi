@@ -10,7 +10,7 @@ import (
 
 // helper to parse a single list expression for testing
 func parse(t *testing.T, input string) *Program {
-	prog, err := ParseBlock(input)
+	prog, _, err := ParseBlock(input)
 	require.NoError(t, err)
 	require.NotNil(t, prog)
 	return prog

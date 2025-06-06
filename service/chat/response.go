@@ -143,21 +143,31 @@ func (gi *GenerativeInstance) handleResponse() ([]llms.MessageContent, error) {
 
 	// Check the last user message for macros and load tools if necessary.
 	lastUserMessage := ""
+	lastUserMessageIndex := -1 // To store the index of the last user message
 	for i := len(messageHistory) - 1; i >= 0; i-- {
 		if messageHistory[i].Role == llms.ChatMessageTypeHuman {
 			if text, ok := messageHistory[i].Parts[0].(llms.TextContent); ok {
 				lastUserMessage = text.Text
+				lastUserMessageIndex = i
 				break
 			}
 		}
 	}
 
 	if lastUserMessage != "" {
-		tools, err := gi.parseMacro(lastUserMessage)
+		tools, scrubbedMessage, err := gi.parseMacro(lastUserMessage)
 		if err != nil {
 			gi.logger.Warn("failed to parse or execute macro", "error", err)
 			gi.bsend(fmt.Sprintf("[System: Error processing command: %v]\n", err))
 		} else {
+			if scrubbedMessage != lastUserMessage && lastUserMessageIndex != -1 {
+				// The message was changed, so update it in the history
+				if text, ok := messageHistory[lastUserMessageIndex].Parts[0].(llms.TextContent); ok {
+					text.Text = scrubbedMessage
+					messageHistory[lastUserMessageIndex].Parts[0] = text
+				}
+			}
+
 			if len(tools) > 0 {
 				gi.bsend(fmt.Sprintf("[System: Loaded %d tool(s)]\n", len(tools)))
 				for _, t := range tools {
@@ -177,15 +187,15 @@ func (gi *GenerativeInstance) handleResponse() ([]llms.MessageContent, error) {
 
 // ---------------------------------------- Response Generation ----------------------------------------
 
-func (gi *GenerativeInstance) parseMacro(message string) ([]kit.Tool, error) {
+func (gi *GenerativeInstance) parseMacro(message string) ([]kit.Tool, string, error) {
 
-	program, err := slp.ParseBlock(message)
+	program, remainingMessage, err := slp.ParseBlock(message)
 	if err != nil {
-		return nil, err
+		return nil, message, err
 	}
 
 	if program == nil {
-		return nil, nil
+		return nil, message, nil
 	}
 
 	/*
@@ -258,7 +268,7 @@ func (gi *GenerativeInstance) parseMacro(message string) ([]kit.Tool, error) {
 
 	proc := slp.NewProcessor(env, program)
 
-	return tools, proc.Run()
+	return tools, remainingMessage, proc.Run()
 }
 
 func (gi *GenerativeInstance) clearContext() {

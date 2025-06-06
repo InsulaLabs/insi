@@ -266,7 +266,7 @@ func (p *parser) parseListBody() (*List, error) {
 	return list, nil
 }
 
-func ParseBlock(block string) (*Program, error) {
+func ParseBlock(block string) (*Program, string, error) {
 	/*
 		The block may or may not contain a program. Its a block of text from a user meant for an llm
 		conversation. We need to detect if they have a "(\\'" symbol to indicate the start of a program.
@@ -276,6 +276,7 @@ func ParseBlock(block string) (*Program, error) {
 	program := &Program{}
 	p := &parser{input: block, pos: 0}
 
+	var commandSpans [][2]int
 	offset := 0
 	for {
 		// We search from the current position in the block.
@@ -285,22 +286,40 @@ func ParseBlock(block string) (*Program, error) {
 			break
 		}
 
+		// Absolute start index of the command block in the original string
+		blockStart := offset + startIdx
+
 		// Set the parser position to the start of the list content.
-		p.pos = offset + startIdx + 3 // +3 for "(\\'"
+		p.pos = blockStart + 3 // +3 for "(\\'"
 
 		list, err := p.parseListBody()
 		if err != nil {
-			return nil, err
+			return nil, block, err
 		}
 		program.Lists = append(program.Lists, list)
+
+		// After parsing, p.pos is at the end of the command block
+		blockEnd := p.pos
+		commandSpans = append(commandSpans, [2]int{blockStart, blockEnd})
 
 		// Move offset for next search
 		offset = p.pos
 	}
 
 	if len(program.Lists) == 0 {
-		return nil, nil
+		return nil, block, nil
 	}
 
-	return program, nil
+	// Build the scrubbed message by removing the command spans
+	var builder strings.Builder
+	lastIndex := 0
+	for _, span := range commandSpans {
+		builder.WriteString(block[lastIndex:span[0]])
+		lastIndex = span[1]
+	}
+	builder.WriteString(block[lastIndex:])
+
+	scrubbedMessage := strings.TrimSpace(builder.String())
+
+	return program, scrubbedMessage, nil
 }

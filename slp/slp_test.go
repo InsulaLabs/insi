@@ -115,7 +115,7 @@ func TestParseBlock_SuccessCases(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			program, err := ParseBlock(tc.input)
+			program, _, err := ParseBlock(tc.input)
 			require.NoError(t, err)
 			if tc.expectedLists == 0 {
 				assert.Nil(t, program)
@@ -177,7 +177,7 @@ func TestParseBlock_ErrorCases(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ParseBlock(tc.input)
+			_, _, err := ParseBlock(tc.input)
 			require.Error(t, err)
 
 			parseErr, ok := err.(*ParseError)
