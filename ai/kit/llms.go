@@ -16,7 +16,7 @@ func GetOpenAILLM(apiKey string) (llms.Model, error) {
 
 func GetAnthropicLLM(apiKey string) (llms.Model, error) {
 	return anthropic.New(
-		anthropic.WithModel("claude-3-haiku-20240307"),
+		anthropic.WithModel("claude-opus-4-20250514"),
 		anthropic.WithBaseURL("https://api.anthropic.com/v1"),
 		anthropic.WithToken(apiKey),
 	)
