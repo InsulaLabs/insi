@@ -38,7 +38,9 @@ func main() {
 
 	content := []llms.MessageContent{
 		llms.TextParts(llms.ChatMessageTypeSystem, "You are a helpful assistant."),
-		llms.TextParts(llms.ChatMessageTypeHuman, "What would be a good company name a company that makes colorful socks?"),
+		llms.TextParts(llms.ChatMessageTypeHuman, `
+		(\'tl kvs)
+		Please use the tools provided to set the key "blue" to the value "HELL YEAH"`),
 	}
 
 	if streaming {
@@ -53,5 +55,13 @@ func main() {
 		}
 		fmt.Println(r.Choices[0].Content)
 	}
+
+	content = append(content, llms.TextParts(llms.ChatMessageTypeHuman, "Now please use the tool to get the key 'blue' you MUST execute the tool?"))
+
+	r, err := llm.GenerateContent(ctx, content, llms.WithMaxTokens(104))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(r.Choices[0].Content)
 
 }
