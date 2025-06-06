@@ -20,6 +20,10 @@ type ProviderPlugin struct {
 	prif   runtime.ServiceRuntimeIF
 }
 
+type SetPreferredProviderRequest struct {
+	ProviderUUID string `json:"provider_uuid"`
+}
+
 var _ runtime.Service = &ProviderPlugin{}
 
 func New(logger *slog.Logger) *ProviderPlugin {
@@ -72,6 +76,18 @@ func (p *ProviderPlugin) GetRoutes() []runtime.ServiceRoute {
 		{
 			Path:    "/iterate/providers",
 			Handler: http.HandlerFunc(p.handleIterateProviders),
+			Limit:   10,
+			Burst:   10,
+		},
+		{
+			Path:    "/set-preferred",
+			Handler: http.HandlerFunc(p.handleSetPreferredProvider),
+			Limit:   10,
+			Burst:   10,
+		},
+		{
+			Path:    "/get-preferred",
+			Handler: http.HandlerFunc(p.handleGetPreferredProvider),
 			Limit:   10,
 			Burst:   10,
 		},
@@ -457,4 +473,112 @@ func (p *ProviderPlugin) handleIterateProviders(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(respBytes)
+}
+
+func (p *ProviderPlugin) handleSetPreferredProvider(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	td, isValid := p.prif.RT_ValidateAuthToken(r, false)
+	if !isValid {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	var req SetPreferredProviderRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "Failed to parse request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ProviderUUID == "" {
+		http.Error(w, "Provider UUID is required", http.StatusBadRequest)
+		return
+	}
+
+	// verification that the provider belongs to the user
+	providerKey := service_models.GetProviderKey(td.UUID, req.ProviderUUID)
+	providerData, err := p.prif.RT_Get(providerKey)
+	if err != nil {
+		http.Error(w, "Failed to get provider to verify ownership", http.StatusInternalServerError)
+		return
+	}
+	if providerData == "" {
+		http.Error(w, "Provider not found", http.StatusNotFound)
+		return
+	}
+	var provider service_models.Provider
+	if err := json.Unmarshal([]byte(providerData), &provider); err != nil {
+		http.Error(w, "Failed to unmarshal provider for verification", http.StatusInternalServerError)
+		return
+	}
+
+	if provider.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+		http.Error(w, "Permission denied. Provider does not belong to you.", http.StatusForbidden)
+		return
+	}
+
+	// Now set the preferred provider
+	preferredProviderKey := service_models.GetPreferredProviderKey(td.UUID)
+	if err = p.prif.RT_Set(db_models.KVPayload{
+		Key:   preferredProviderKey,
+		Value: req.ProviderUUID,
+	}); err != nil {
+		http.Error(w, "Failed to set preferred provider", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Preferred provider set"))
+}
+
+func (p *ProviderPlugin) handleGetPreferredProvider(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	td, isValid := p.prif.RT_ValidateAuthToken(r, false)
+	if !isValid {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	preferredProviderKey := service_models.GetPreferredProviderKey(td.UUID)
+	providerUUID, err := p.prif.RT_Get(preferredProviderKey)
+	if err != nil {
+		if strings.Contains(err.Error(), "key not found") {
+			http.Error(w, "Preferred provider not set", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to get preferred provider", http.StatusInternalServerError)
+		return
+	}
+
+	providerKey := service_models.GetProviderKey(td.UUID, providerUUID)
+	providerData, err := p.prif.RT_Get(providerKey)
+	if err != nil {
+		http.Error(w, "Failed to get preferred provider details", http.StatusInternalServerError)
+		return
+	}
+
+	if providerData == "" {
+		// This case means the preferred provider UUID is stale and points to a deleted provider.
+		// I should probably delete the preferred provider key.
+		p.prif.RT_Delete(preferredProviderKey)
+		http.Error(w, "Preferred provider was set but not found, clearing setting.", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(providerData))
 }

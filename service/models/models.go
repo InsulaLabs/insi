@@ -114,3 +114,7 @@ func GetProviderKey(entityUUID, providerUUID string) string {
 func GetProviderIterationPrefix(entityUUID string) string {
 	return fmt.Sprintf("plugin:provider:%s:", entityUUID)
 }
+
+func GetPreferredProviderKey(entityUUID string) string {
+	return fmt.Sprintf("entity:%s:preferred_provider", entityUUID)
+}

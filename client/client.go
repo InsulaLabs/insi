@@ -185,6 +185,11 @@ type UpdateProviderBaseURLRequest struct {
 	BaseURL string `json:"base_url"`
 }
 
+// SetPreferredProviderRequest sets the preferred provider for the currently authenticated user.
+type SetPreferredProviderRequest struct {
+	ProviderUUID string `json:"provider_uuid"`
+}
+
 // --- Objects Structs ---
 
 // ObjectUploadResponse is the response from a successful object upload.
@@ -1118,6 +1123,21 @@ func (c *Client) IterateProviders(offset, limit int) ([]Provider, error) {
 		return nil, err
 	}
 	return providers, nil
+}
+
+// SetPreferredProvider sets the user's preferred provider.
+func (c *Client) SetPreferredProvider(req SetPreferredProviderRequest) error {
+	return c.doRequest(http.MethodPost, "provider/set-preferred", nil, req, nil)
+}
+
+// GetPreferredProvider gets the user's preferred provider.
+func (c *Client) GetPreferredProvider() (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodGet, "provider/get-preferred", nil, nil, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
 }
 
 // --- Object Operations ---

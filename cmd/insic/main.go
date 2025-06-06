@@ -246,6 +246,8 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("update-display-name"), color.CyanString("<uuid>"), color.CyanString("<new-display-name>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("update-api-key"), color.CyanString("<uuid>"), color.CyanString("<new-api-key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("update-base-url"), color.CyanString("<uuid>"), color.CyanString("<new-base-url>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("provider"), color.CyanString("set-preferred"), color.CyanString("<uuid>"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("provider"), color.CyanString("get-preferred"))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -1405,6 +1407,10 @@ func handleProvider(c *client.Client, args []string) {
 		handleProviderUpdateAPIKey(c, subArgs)
 	case "update-base-url":
 		handleProviderUpdateBaseURL(c, subArgs)
+	case "set-preferred":
+		handleProviderSetPreferred(c, subArgs)
+	case "get-preferred":
+		handleProviderGetPreferred(c, subArgs)
 	default:
 		logger.Error("provider: unknown sub-command", "sub_command", subCommand)
 		printUsage()
@@ -1582,4 +1588,46 @@ func handleProviderUpdateBaseURL(c *client.Client, args []string) {
 		os.Exit(1)
 	}
 	color.HiGreen("OK")
+}
+
+func handleProviderSetPreferred(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("provider set-preferred: requires <uuid>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	req := client.SetPreferredProviderRequest{ProviderUUID: uuid}
+	err := c.SetPreferredProvider(req)
+	if err != nil {
+		logger.Error("Provider set preferred failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleProviderGetPreferred(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("provider get-preferred: does not take any arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	provider, err := c.GetPreferredProvider()
+	if err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
+			fmt.Println("No preferred provider set.")
+			os.Exit(0)
+		}
+		logger.Error("Get preferred provider failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Preferred Provider:")
+	fmt.Printf("  UUID:         %s\n", color.CyanString(provider.UUID))
+	fmt.Printf("  Display Name: %s\n", provider.DisplayName)
+	fmt.Printf("  Provider:     %s\n", provider.Provider)
+	fmt.Printf("  Base URL:     %s\n", provider.BaseURL)
 }

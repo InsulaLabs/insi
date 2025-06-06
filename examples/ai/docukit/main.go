@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"toolin/docukit"
-	"toolin/kit"
+
+	"github.com/InsulaLabs/insi/ai/docukit"
+	"github.com/InsulaLabs/insi/ai/kit"
 
 	"github.com/tmc/langchaingo/llms"
 )

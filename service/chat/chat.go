@@ -14,7 +14,9 @@ import (
 	"github.com/InsulaLabs/insi/client"
 	db_models "github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/runtime"
+	service_models "github.com/InsulaLabs/insi/service/models"
 	"github.com/google/uuid" // For generating unique IDs
+	"github.com/jellydator/ttlcache/v3"
 )
 
 /*
@@ -30,21 +32,31 @@ type ChatPlugin struct {
 	logger    *slog.Logger
 	prif      runtime.ServiceRuntimeIF
 	startedAt time.Time
+
+	providerCache *ttlcache.Cache[string, service_models.Provider]
 }
 
 var _ runtime.Service = &ChatPlugin{}
 
 func New(logger *slog.Logger) *ChatPlugin {
+	cache := ttlcache.New[string, service_models.Provider](
+		ttlcache.WithTTL[string, service_models.Provider](1*time.Minute),
+		ttlcache.WithDisableTouchOnHit[string, service_models.Provider](),
+	)
+	go cache.Start()
 	return &ChatPlugin{
-		logger: logger,
+		logger:        logger,
+		providerCache: cache,
 	}
 }
 
 func (p *ChatPlugin) GetName() string {
+	fmt.Println("GetName")
 	return "chat"
 }
 
 func (p *ChatPlugin) Init(prif runtime.ServiceRuntimeIF) *runtime.ServiceImplError {
+	fmt.Println("Init")
 	p.prif = prif
 	p.startedAt = time.Now()
 
@@ -53,6 +65,7 @@ func (p *ChatPlugin) Init(prif runtime.ServiceRuntimeIF) *runtime.ServiceImplErr
 }
 
 func (p *ChatPlugin) GetRoutes() []runtime.ServiceRoute {
+	fmt.Println("GetRoutes")
 	return []runtime.ServiceRoute{
 		{
 			Path:    "completions",
@@ -121,7 +134,7 @@ func (p *ChatPlugin) handleChatCompletions(w http.ResponseWriter, r *http.Reques
 	completionID := "chatcmpl-" + uuid.New().String()
 	createdTimestamp := nowTimestamp()
 
-	output := make(chan string, 10) // Buffered channel for response parts
+	output := make(chan string, 100) // Buffered channel for response parts
 
 	// Goroutine to run handleResponse and close the output channel
 	go func() {
@@ -195,6 +208,7 @@ func (p *ChatPlugin) handleChatCompletions(w http.ResponseWriter, r *http.Reques
 			apiLogger.Debug("Sent stream chunk", "chunk_index", chunkIndex, "content_length", len(contentPart))
 			chunkIndex++
 		}
+		flusher.Flush()
 
 		// Final chunk with finish reason
 		finishReason := "stop"
@@ -367,6 +381,8 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, td *db_models.TokenData
 	responseLogger := p.logger.WithGroup("response_handler")
 	responseLogger.Info("Starting response generation", "num_messages", len(messages))
 
+	fmt.Println("handleResponse", td.UUID)
+
 	if len(messages) == 0 {
 		select {
 		case output <- "I am a helpful assistant. How can I help you today?":
@@ -378,31 +394,74 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, td *db_models.TokenData
 		return nil
 	}
 
+	var preferredProvider service_models.Provider
+	preferredCache := p.providerCache.Get(td.UUID)
+	if preferredCache != nil {
+		preferredProvider = preferredCache.Value()
+		responseLogger.Info("Using preferred provider from cache", "provider", preferredProvider)
+	} else {
+		preferredProviderKey := service_models.GetPreferredProviderKey(td.UUID)
+		preferredProviderUUID, err := p.prif.RT_Get(preferredProviderKey)
+		if err != nil {
+			p.logger.Error("Error getting preferred provider", "error", err, "key", preferredProviderKey)
+			return err
+		}
+
+		if preferredProviderUUID == "" {
+			p.logger.Error("No preferred provider found", "key", preferredProviderKey)
+			return fmt.Errorf("no preferred provider found")
+		}
+
+		providerKey := service_models.GetProviderKey(td.UUID, preferredProviderUUID)
+		preferredProviderRaw, err := p.prif.RT_Get(providerKey)
+		if err != nil {
+			p.logger.Error("Error getting provider details", "error", err, "key", providerKey)
+			return err
+		}
+
+		if preferredProviderRaw == "" {
+			p.logger.Error("No provider details found", "key", providerKey)
+			return fmt.Errorf("no provider details found for key %s", providerKey)
+		}
+
+		err = json.Unmarshal([]byte(preferredProviderRaw), &preferredProvider)
+		if err != nil {
+			p.logger.Error("Error unmarshalling preferred provider", "error", err, "key", providerKey, "value", preferredProviderRaw)
+			return err
+		}
+
+		go func() {
+			p.providerCache.Set(td.UUID, preferredProvider, 1*time.Minute)
+		}()
+	}
+
 	/*
 		Create a context that can be cancelled to stop the response generation.
 	*/
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	giCtx, cancel := context.WithCancel(ctx)
 
 	/*
 		Start the generative instance, it will die off when context is cancelled.
 	*/
 	gi := &GenerativeInstance{
 		logger:         responseLogger.With("instance_id", uuid.New().String()),
-		ctx:            ctx,
+		ctx:            giCtx,
 		td:             td,
 		messageHistory: messages,
 		output:         output,
-		outputbuffer:   make(chan string),
+		outputbuffer:   make(chan string, 100),
 		err:            nil,
 		errMu:          sync.Mutex{},
+		provider:       preferredProvider,
 	}
 
 	// Start the send routine that handles all text output to the user
 	go gi.handleSendRoutine()
 
 	// Handle the response generation
-	if err := gi.handleResponse(); err != nil {
+	_, err := gi.handleResponse()
+	if err != nil {
+		cancel() // ensure context is cancelled
 		if err == ErrContextCancelled {
 			responseLogger.Warn("Context cancelled during response generation", "error", err)
 			return nil
@@ -411,19 +470,15 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, td *db_models.TokenData
 		return err
 	}
 
-	// Wait for the sending routine to finish
-	for gi.sending.Load() {
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	// Cancel the context
-	cancel()
-
-	// Wait for the response generation to finish
+	// Wait for the sending routine to finish. It will finish when the outputbuffer
+	// is closed by gi.handleResponse and fully drained.
 	gi.wg.Wait()
 
+	// Now that all goroutines are done, we can cancel the context.
+	cancel()
+
 	if gi.err != nil {
-		responseLogger.Error("Error during response generation", "error", gi.err)
+		responseLogger.Error("Error from handleSendRoutine", "error", gi.err)
 		return gi.err
 	}
 

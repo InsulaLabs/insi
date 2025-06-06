@@ -3,13 +3,16 @@ package chat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
+	"github.com/InsulaLabs/insi/ai/kit"
 	db_models "github.com/InsulaLabs/insi/db/models"
+	service_models "github.com/InsulaLabs/insi/service/models"
+	"github.com/tmc/langchaingo/llms"
 )
 
 var ErrContextCancelled = errors.New("context cancelled")
@@ -19,6 +22,7 @@ type GenerativeInstance struct {
 	ctx            context.Context
 	td             *db_models.TokenData
 	messageHistory []ChatMessage
+	provider       service_models.Provider
 	output         chan<- string
 	outputbuffer   chan string
 
@@ -71,8 +75,7 @@ func (gi *GenerativeInstance) handleSendRoutine() {
 				return ErrContextCancelled
 			case gi.output <- chunk:
 				gi.logger.Debug("Sent chunk to output channel", "chunk", chunk)
-				// Simulate work / delay between chunks
-				time.Sleep(50 * time.Millisecond)
+
 			}
 		}
 		return nil
@@ -83,7 +86,10 @@ func (gi *GenerativeInstance) handleSendRoutine() {
 		select {
 		case <-gi.ctx.Done():
 			return
-		case data := <-gi.outputbuffer:
+		case data, ok := <-gi.outputbuffer:
+			if !ok {
+				return
+			}
 			if err := sendData(data); err != nil {
 				gi.errMu.Lock()
 				gi.err = err
@@ -97,14 +103,63 @@ func (gi *GenerativeInstance) handleSendRoutine() {
 
 // ---------------------------------------- Response Generation ----------------------------------------
 
-func (gi *GenerativeInstance) handleResponse() error {
+func (gi *GenerativeInstance) handleResponse() ([]llms.MessageContent, error) {
+	defer close(gi.outputbuffer)
 
-	gi.bsend("Hello, world!")
-	time.Sleep(1 * time.Second)
-	gi.bsend("Hello, world!")
-	time.Sleep(1 * time.Second)
+	var llm llms.Model
+	var err error
+	switch gi.provider.Provider {
+	case service_models.SupportedProviderOpenAI:
+		llm, err = kit.GetOpenAILLM(gi.provider.APIKey)
+		if err != nil {
+			return nil, err
+		}
+	case service_models.SupportedProviderAnthropic:
+		llm, err = kit.GetAnthropicLLM(gi.provider.APIKey)
+		if err != nil {
+			return nil, err
+		}
+	case service_models.SupportedProviderXAI:
+		llm, err = kit.GetGrokLLM(gi.provider.APIKey)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unsupported provider: %s", gi.provider.Provider)
+	}
 
-	return nil
+	k := kit.NewKit(gi.ctx, llm, gi.logger)
+
+	messageHistory := make([]llms.MessageContent, len(gi.messageHistory))
+	for i, message := range gi.messageHistory {
+		var llmRole llms.ChatMessageType
+
+		switch message.Role {
+		case "user":
+			llmRole = llms.ChatMessageTypeHuman
+		case "assistant":
+			llmRole = llms.ChatMessageTypeAI
+		default:
+			// Default to attempt direct mapping
+			llmRole = llms.ChatMessageType(message.Role)
+		}
+
+		messageHistory[i] = llms.MessageContent{
+			Role: llmRole,
+			Parts: []llms.ContentPart{
+				llms.TextContent{
+					Text: message.Content,
+				},
+			},
+		}
+	}
+
+	response := k.Complete(gi.ctx, messageHistory, kit.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
+		gi.bsend(string(chunk))
+		return nil
+	}))
+
+	return response, nil
 }
 
 // ---------------------------------------- Response Generation ----------------------------------------
