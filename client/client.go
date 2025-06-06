@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/InsulaLabs/insi/models" // Assuming models.Event is defined here
+	"github.com/InsulaLabs/insi/db/models" // Assuming models.Event is defined here
 	"github.com/gorilla/websocket"
 
 	"crypto/sha256"

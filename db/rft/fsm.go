@@ -24,12 +24,12 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/tkv"
+	"github.com/InsulaLabs/insi/db/tkv"
 	"github.com/dgraph-io/badger/v3"
 
 	"github.com/hashicorp/raft"
 
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
 )
 
 /*

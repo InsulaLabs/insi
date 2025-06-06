@@ -1,6 +1,6 @@
 package island
 
-import "github.com/InsulaLabs/insi/plugins"
+import "github.com/InsulaLabs/insi/service/models"
 
 type NewIslandRequest struct {
 	Name        string `json:"name"`
@@ -28,8 +28,8 @@ type UpdateIslandModelSlugRequest struct {
 }
 
 type UpdateIslandAddResourcesRequest struct {
-	IslandUUID string             `json:"island_uuid"`
-	Resources  []plugins.Resource `json:"resources"`
+	IslandUUID string            `json:"island_uuid"`
+	Resources  []models.Resource `json:"resources"`
 }
 
 type UpdateIslandRemoveResourcesRequest struct {

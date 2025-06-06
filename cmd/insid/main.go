@@ -7,12 +7,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/InsulaLabs/insi/plugins/chat"
-	"github.com/InsulaLabs/insi/plugins/island"
-	"github.com/InsulaLabs/insi/plugins/objects"
-	"github.com/InsulaLabs/insi/plugins/static"
-	"github.com/InsulaLabs/insi/plugins/status"
 	"github.com/InsulaLabs/insi/runtime"
+	"github.com/InsulaLabs/insi/service/chat"
+	"github.com/InsulaLabs/insi/service/island"
+	"github.com/InsulaLabs/insi/service/objects"
+	"github.com/InsulaLabs/insi/service/static"
+	"github.com/InsulaLabs/insi/service/status"
 )
 
 func main() {

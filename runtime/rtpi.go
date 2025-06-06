@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/core"
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/core"
+	db_models "github.com/InsulaLabs/insi/db/models"
 )
 
 // ------------------------------------------------------------
@@ -40,7 +40,7 @@ func (r *Runtime) RT_IsRunning() bool {
 	return r.appCtx.Err() == nil
 }
 
-func (r *Runtime) RT_Set(kvp models.KVPayload) error {
+func (r *Runtime) RT_Set(kvp db_models.KVPayload) error {
 	return r.rtClients["set"].Set(kvp.Key, kvp.Value)
 }
 
@@ -92,11 +92,11 @@ func (r *Runtime) RT_MountStatic(caller Plugin, fs http.Handler) error {
 	return r.service.AddHandler(mountPathPrefix, strippedHandler)
 }
 
-func (r *Runtime) RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (models.TokenData, bool) {
+func (r *Runtime) RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (db_models.TokenData, bool) {
 	return r.service.ValidateToken(req, mustBeRoot)
 }
 
-func (r *Runtime) RT_IsRoot(td models.TokenData) bool {
+func (r *Runtime) RT_IsRoot(td db_models.TokenData) bool {
 	return td.Entity == core.EntityRoot && td.UUID == r.clusterCfg.RootPrefix
 }
 

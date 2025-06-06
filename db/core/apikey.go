@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
 )
 
 func (c *Core) apiKeyCreateHandler(w http.ResponseWriter, r *http.Request) {

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/rft"
-	"github.com/InsulaLabs/insi/internal/tkv"
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/db/rft"
+	"github.com/InsulaLabs/insi/db/tkv"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/gorilla/websocket"
 	"github.com/jellydator/ttlcache/v3"

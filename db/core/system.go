@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
 	"github.com/google/uuid"
 )
 

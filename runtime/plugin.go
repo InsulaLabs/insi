@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/models"
+	db_models "github.com/InsulaLabs/insi/db/models"
 )
 
 type ValueStoreIF interface {
-	RT_Set(kvp models.KVPayload) error
+	RT_Set(kvp db_models.KVPayload) error
 	RT_Get(key string) (string, error)
 	RT_Delete(key string) error
 	RT_Iterate(prefix string, offset int, limit int) ([]string, error)
@@ -27,8 +27,8 @@ type EventStoreIF interface {
 
 type WebServerIF interface {
 	RT_MountStatic(caller Plugin, fs http.Handler) error
-	RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (models.TokenData, bool)
-	RT_IsRoot(models.TokenData) bool
+	RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (db_models.TokenData, bool)
+	RT_IsRoot(db_models.TokenData) bool
 }
 
 // The restricted interfaces that permit the plugin

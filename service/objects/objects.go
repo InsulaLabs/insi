@@ -13,7 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/InsulaLabs/insi/models"
+	db_models "github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/runtime"
 	"github.com/google/uuid"
 )
@@ -257,7 +257,7 @@ func (p *ObjectsPlugin) uploadBinaryHandler(w http.ResponseWriter, r *http.Reque
 
 	// Store record in database (UUID -> Meta)
 	metaKey := fmt.Sprintf("plugin:objects:%s", objectFileUUID)
-	if err := p.prif.RT_Set(models.KVPayload{
+	if err := p.prif.RT_Set(db_models.KVPayload{
 		Key:   metaKey,
 		Value: string(metaBytes),
 	}); err != nil {
@@ -269,7 +269,7 @@ func (p *ObjectsPlugin) uploadBinaryHandler(w http.ResponseWriter, r *http.Reque
 
 	// Store the SHA256 -> ObjectFileUUID mapping in the database
 	// This uses the already defined sha256Key
-	if err := p.prif.RT_Set(models.KVPayload{
+	if err := p.prif.RT_Set(db_models.KVPayload{
 		Key:   sha256Key, // Key was defined earlier: plugin:objects:sha256:<calculatedSha256>
 		Value: objectFileUUID,
 	}); err != nil {

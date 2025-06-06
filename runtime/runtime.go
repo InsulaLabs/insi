@@ -27,8 +27,8 @@ import (
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/core"
-	"github.com/InsulaLabs/insi/internal/tkv"
+	"github.com/InsulaLabs/insi/db/core"
+	"github.com/InsulaLabs/insi/db/tkv"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"

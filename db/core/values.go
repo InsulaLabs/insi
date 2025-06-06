@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
 	"github.com/dgraph-io/badger/v3"
 )
 

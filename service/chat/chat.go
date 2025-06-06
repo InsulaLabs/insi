@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
-	"github.com/InsulaLabs/insi/models"
+	db_models "github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/runtime"
 	"github.com/google/uuid" // For generating unique IDs
 )
@@ -272,12 +272,12 @@ type RateLimit struct {
 	LastReq time.Time
 }
 
-func (p *ChatPlugin) getRateLimitKey(td *models.TokenData) string {
+func (p *ChatPlugin) getRateLimitKey(td *db_models.TokenData) string {
 	return fmt.Sprintf("chat:completions:limit:%s", td.UUID)
 }
 
 // return if can continue, and then time to wait if failure 0 means no wait for retry
-func (p *ChatPlugin) checkApiKeyRateLimit(td *models.TokenData) (bool, int) {
+func (p *ChatPlugin) checkApiKeyRateLimit(td *db_models.TokenData) (bool, int) {
 
 	// Note: Witht he RT_Set and RT_Get cache calls there is the real possibility of a race condition
 	// where the cache is set and the request is processed before the cache is updated.
@@ -359,7 +359,7 @@ func (p *ChatPlugin) checkApiKeyRateLimit(td *models.TokenData) (bool, int) {
 	return true, 0
 }
 
-func (p *ChatPlugin) handleResponse(ctx context.Context, td *models.TokenData, messages []ChatMessage, output chan<- string) error {
+func (p *ChatPlugin) handleResponse(ctx context.Context, td *db_models.TokenData, messages []ChatMessage, output chan<- string) error {
 	responseLogger := p.logger.WithGroup("response_handler")
 	responseLogger.Info("Starting response generation", "num_messages", len(messages))
 

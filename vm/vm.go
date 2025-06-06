@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/InsulaLabs/insi/plugins"
+	service_models "github.com/InsulaLabs/insi/service/models"
 )
 
 type Locator struct {
@@ -60,7 +60,7 @@ var (
 type Config struct {
 	VMInstanceUUID string // unique id for the vm instance
 	Logger         *slog.Logger
-	TargetedIsland *plugins.Island
+	TargetedIsland *service_models.Island
 	AvailableTools []string // list of AI mountable tools that the user can invoke (e.g. "sqlkit", "imgkit", "wekit")
 }
 
@@ -81,7 +81,7 @@ type VM struct {
 
 	availableTools map[string]bool
 
-	targetedIsland *plugins.Island
+	targetedIsland *service_models.Island
 }
 
 type VMMode string

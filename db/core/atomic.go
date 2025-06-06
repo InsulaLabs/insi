@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/InsulaLabs/insi/internal/tkv"
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/db/tkv"
 )
 
 /*

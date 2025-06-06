@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/InsulaLabs/insi/models"
-	"github.com/InsulaLabs/insi/plugins"
+	db_models "github.com/InsulaLabs/insi/db/models"
+	service_models "github.com/InsulaLabs/insi/service/models"
+
 	"github.com/InsulaLabs/insi/runtime"
 	"github.com/google/uuid"
 )
@@ -145,7 +146,7 @@ func (p *IslandPlugin) handleNewIsland(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// See if slug is already taken
-	slugKey := plugins.GetIslandSlugKey(td.UUID, req.ModelSlug)
+	slugKey := service_models.GetIslandSlugKey(td.UUID, req.ModelSlug)
 	_, err = p.prif.RT_Get(slugKey)
 	if err == nil {
 		http.Error(w, "Slug already taken - must be unique", http.StatusBadRequest)
@@ -158,7 +159,7 @@ func (p *IslandPlugin) handleNewIsland(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create island
-	island := plugins.Island{
+	island := service_models.Island{
 		Entity:      td.Entity,
 		EntityUUID:  td.UUID,
 		UUID:        uuid.New().String(),
@@ -175,9 +176,9 @@ func (p *IslandPlugin) handleNewIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	islandKey := plugins.GetIslandKey(td.UUID, island.UUID)
+	islandKey := service_models.GetIslandKey(td.UUID, island.UUID)
 
-	if err = p.prif.RT_Set(models.KVPayload{
+	if err = p.prif.RT_Set(db_models.KVPayload{
 		Key:   islandKey,
 		Value: string(islandBytes),
 	}); err != nil {
@@ -185,7 +186,7 @@ func (p *IslandPlugin) handleNewIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err = p.prif.RT_Set(models.KVPayload{
+	if err = p.prif.RT_Set(db_models.KVPayload{
 		Key:   slugKey,
 		Value: island.UUID,
 	}); err != nil {
@@ -229,7 +230,7 @@ func (p *IslandPlugin) handleDeleteIsland(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	islandKey := plugins.GetIslandKey(td.UUID, req.UUID)
+	islandKey := service_models.GetIslandKey(td.UUID, req.UUID)
 
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
@@ -237,13 +238,13 @@ func (p *IslandPlugin) handleDeleteIsland(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var island plugins.Island
+	var island service_models.Island
 	if err := json.Unmarshal([]byte(islandData), &island); err != nil {
 		http.Error(w, "Failed to unmarshal island", http.StatusInternalServerError)
 		return
 	}
 
-	slugKey := plugins.GetIslandSlugKey(td.UUID, island.ModelSlug)
+	slugKey := service_models.GetIslandSlugKey(td.UUID, island.ModelSlug)
 
 	if island.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied. Island does not belong to you.", http.StatusForbidden)
@@ -298,14 +299,14 @@ func (p *IslandPlugin) handleUpdateIslandName(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	islandKey := plugins.GetIslandKey(td.UUID, req.UUID)
+	islandKey := service_models.GetIslandKey(td.UUID, req.UUID)
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
 		http.Error(w, "Failed to get island", http.StatusInternalServerError)
 		return
 	}
 
-	var island plugins.Island
+	var island service_models.Island
 	if err := json.Unmarshal([]byte(islandData), &island); err != nil {
 		http.Error(w, "Failed to unmarshal island", http.StatusInternalServerError)
 		return
@@ -325,7 +326,7 @@ func (p *IslandPlugin) handleUpdateIslandName(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := p.prif.RT_Set(models.KVPayload{Key: islandKey, Value: string(updatedIslandBytes)}); err != nil {
+	if err := p.prif.RT_Set(db_models.KVPayload{Key: islandKey, Value: string(updatedIslandBytes)}); err != nil {
 		http.Error(w, "Failed to update island", http.StatusInternalServerError)
 		return
 	}
@@ -367,14 +368,14 @@ func (p *IslandPlugin) handleUpdateIslandDescription(w http.ResponseWriter, r *h
 		return
 	}
 
-	islandKey := plugins.GetIslandKey(td.UUID, req.UUID)
+	islandKey := service_models.GetIslandKey(td.UUID, req.UUID)
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
 		http.Error(w, "Failed to get island", http.StatusInternalServerError)
 		return
 	}
 
-	var island plugins.Island
+	var island service_models.Island
 	if err := json.Unmarshal([]byte(islandData), &island); err != nil {
 		http.Error(w, "Failed to unmarshal island", http.StatusInternalServerError)
 		return
@@ -394,7 +395,7 @@ func (p *IslandPlugin) handleUpdateIslandDescription(w http.ResponseWriter, r *h
 		return
 	}
 
-	if err := p.prif.RT_Set(models.KVPayload{Key: islandKey, Value: string(updatedIslandBytes)}); err != nil {
+	if err := p.prif.RT_Set(db_models.KVPayload{Key: islandKey, Value: string(updatedIslandBytes)}); err != nil {
 		http.Error(w, "Failed to update island", http.StatusInternalServerError)
 		return
 	}
@@ -436,20 +437,20 @@ func (p *IslandPlugin) handleUpdateIslandModelSlug(w http.ResponseWriter, r *htt
 		return
 	}
 
-	newSlugKey := plugins.GetIslandSlugKey(td.UUID, req.ModelSlug)
+	newSlugKey := service_models.GetIslandSlugKey(td.UUID, req.ModelSlug)
 	if _, err := p.prif.RT_Get(newSlugKey); err == nil {
 		http.Error(w, "Model slug already taken", http.StatusBadRequest)
 		return
 	}
 
-	islandKey := plugins.GetIslandKey(td.UUID, req.UUID)
+	islandKey := service_models.GetIslandKey(td.UUID, req.UUID)
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
 		http.Error(w, "Failed to get island", http.StatusInternalServerError)
 		return
 	}
 
-	var island plugins.Island
+	var island service_models.Island
 	if err := json.Unmarshal([]byte(islandData), &island); err != nil {
 		http.Error(w, "Failed to unmarshal island", http.StatusInternalServerError)
 		return
@@ -461,7 +462,7 @@ func (p *IslandPlugin) handleUpdateIslandModelSlug(w http.ResponseWriter, r *htt
 	}
 
 	oldSlug := island.ModelSlug
-	oldSlugKey := plugins.GetIslandSlugKey(td.UUID, island.ModelSlug)
+	oldSlugKey := service_models.GetIslandSlugKey(td.UUID, island.ModelSlug)
 	island.ModelSlug = req.ModelSlug
 	island.UpdatedAt = time.Now()
 
@@ -471,17 +472,17 @@ func (p *IslandPlugin) handleUpdateIslandModelSlug(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if err := p.prif.RT_Set(models.KVPayload{Key: islandKey, Value: string(updatedIslandBytes)}); err != nil {
+	if err := p.prif.RT_Set(db_models.KVPayload{Key: islandKey, Value: string(updatedIslandBytes)}); err != nil {
 		http.Error(w, "Failed to update island", http.StatusInternalServerError)
 		return
 	}
 
-	if err := p.prif.RT_Set(models.KVPayload{Key: newSlugKey, Value: island.UUID}); err != nil {
+	if err := p.prif.RT_Set(db_models.KVPayload{Key: newSlugKey, Value: island.UUID}); err != nil {
 		http.Error(w, "Failed to set new island slug", http.StatusInternalServerError)
 		// Attempt to rollback island update
 		island.ModelSlug = oldSlug
 		originalIslandBytes, _ := json.Marshal(island)
-		p.prif.RT_Set(models.KVPayload{Key: islandKey, Value: string(originalIslandBytes)})
+		p.prif.RT_Set(db_models.KVPayload{Key: islandKey, Value: string(originalIslandBytes)})
 		return
 	}
 
@@ -517,13 +518,13 @@ func (p *IslandPlugin) handleUpdateIslandAddResources(w http.ResponseWriter, r *
 		return
 	}
 
-	islandKey := plugins.GetIslandKey(td.UUID, req.IslandUUID)
+	islandKey := service_models.GetIslandKey(td.UUID, req.IslandUUID)
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
 		http.Error(w, "Failed to get island", http.StatusInternalServerError)
 		return
 	}
-	var island plugins.Island
+	var island service_models.Island
 	if err := json.Unmarshal([]byte(islandData), &island); err != nil {
 		http.Error(w, "Failed to unmarshal island", http.StatusInternalServerError)
 		return
@@ -548,8 +549,8 @@ func (p *IslandPlugin) handleUpdateIslandAddResources(w http.ResponseWriter, r *
 			return // continuing would be ambiguous
 		}
 
-		resourceKey := plugins.GetIslandResourceKey(td.UUID, req.IslandUUID, resource.UUID)
-		if err := p.prif.RT_Set(models.KVPayload{Key: resourceKey, Value: string(resourceBytes)}); err != nil {
+		resourceKey := service_models.GetIslandResourceKey(td.UUID, req.IslandUUID, resource.UUID)
+		if err := p.prif.RT_Set(db_models.KVPayload{Key: resourceKey, Value: string(resourceBytes)}); err != nil {
 			http.Error(w, "Failed to set resource", http.StatusInternalServerError)
 			return // continuing would be ambiguous
 		}
@@ -583,14 +584,14 @@ func (p *IslandPlugin) handleUpdateIslandRemoveResources(w http.ResponseWriter, 
 	}
 
 	// Optional: Check if the island exists and the user has permission.
-	islandKey := plugins.GetIslandKey(td.UUID, req.IslandUUID)
+	islandKey := service_models.GetIslandKey(td.UUID, req.IslandUUID)
 	if _, err := p.prif.RT_Get(islandKey); err != nil {
 		http.Error(w, "Island not found or permission denied", http.StatusNotFound)
 		return
 	}
 
 	for _, resourceUUID := range req.ResourceUUIDs {
-		resourceKey := plugins.GetIslandResourceKey(td.UUID, req.IslandUUID, resourceUUID)
+		resourceKey := service_models.GetIslandResourceKey(td.UUID, req.IslandUUID, resourceUUID)
 		if err := p.prif.RT_Delete(resourceKey); err != nil {
 			p.logger.Error("Failed to delete resource, may not exist", "error", err, "uuid", resourceUUID)
 		}
@@ -643,13 +644,13 @@ func (p *IslandPlugin) handleIterateIslandResources(w http.ResponseWriter, r *ht
 	}
 
 	// Verify the user owns the island they are trying to iterate resources from.
-	islandKey := plugins.GetIslandKey(td.UUID, req.IslandUUID)
+	islandKey := service_models.GetIslandKey(td.UUID, req.IslandUUID)
 	if _, err := p.prif.RT_Get(islandKey); err != nil {
 		http.Error(w, "Island not found or permission denied", http.StatusNotFound)
 		return
 	}
 
-	prefix := plugins.GetIslandResourceIterationPrefix(td.UUID, req.IslandUUID)
+	prefix := service_models.GetIslandResourceIterationPrefix(td.UUID, req.IslandUUID)
 	keys, err := p.prif.RT_Iterate(prefix, req.Offset, req.Limit)
 	if err != nil {
 		// If no keys are found for the prefix, the runtime returns an error.
@@ -664,7 +665,7 @@ func (p *IslandPlugin) handleIterateIslandResources(w http.ResponseWriter, r *ht
 		return
 	}
 
-	resources := []plugins.Resource{}
+	resources := []service_models.Resource{}
 	for _, key := range keys {
 		value, err := p.prif.RT_Get(key)
 		if err != nil {
@@ -672,7 +673,7 @@ func (p *IslandPlugin) handleIterateIslandResources(w http.ResponseWriter, r *ht
 			continue
 		}
 
-		var resource plugins.Resource
+		var resource service_models.Resource
 		if err := json.Unmarshal([]byte(value), &resource); err != nil {
 			p.logger.Debug("Failed to unmarshal as resource, skipping", "key", key, "error", err)
 			continue
@@ -722,7 +723,7 @@ func (p *IslandPlugin) handleIterateIslands(w http.ResponseWriter, r *http.Reque
 		offset = 0
 	}
 
-	prefix := plugins.GetIslandIterationPrefix(td.UUID)
+	prefix := service_models.GetIslandIterationPrefix(td.UUID)
 	keys, err := p.prif.RT_Iterate(prefix, offset, limit)
 	if err != nil {
 		// If no keys are found for the prefix, the runtime returns an error.
@@ -737,7 +738,7 @@ func (p *IslandPlugin) handleIterateIslands(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	islands := []plugins.Island{}
+	islands := []service_models.Island{}
 	for _, key := range keys {
 		// Ensure we're not picking up slug or resource keys by checking structure
 		if strings.Contains(key, ":resource:") || strings.Count(key, ":") != 3 {
@@ -750,7 +751,7 @@ func (p *IslandPlugin) handleIterateIslands(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		var island plugins.Island
+		var island service_models.Island
 		if err := json.Unmarshal([]byte(value), &island); err != nil {
 			p.logger.Error("Failed to unmarshal island, skipping", "key", key, "error", err)
 			continue

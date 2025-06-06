@@ -19,7 +19,7 @@ import (
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )

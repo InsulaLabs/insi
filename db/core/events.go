@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/InsulaLabs/insi/internal/rft"
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/db/rft"
 	"github.com/gorilla/websocket"
 )
 
