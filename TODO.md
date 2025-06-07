@@ -7,3 +7,5 @@
    Once we add those rules, we need to modiy every model's key gen routine to strictly use the entity id when
    storing/ retrieving things rather than the uuid
 
+- Make an insic but running otto so we can make js scripts
+
