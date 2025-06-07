@@ -1,0 +1,161 @@
+# INSI
+
+Insi is my take at a distributed system. I made it to simplify common-case scenarios
+of rapid "small site" deployments and because I wanted to explore the topic more.
+
+# Core 
+
+The core of insi is a distributed k/v store. We use badger and raft to keep it in sync.
+
+Riding on the raft log we also do:
+    events
+    atomics
+    queues
+    ttl cache
+
+These are just simple abstractions around the notion of the k/v but with different concerns.
+Meaning that, when the event comes to the server in the finite state machine off the raft log
+instead of directing the k/v to badger for storage we pipe it through a pubsub filter or we
+throw it in a cache. It's pretty straightforward and laid out rather directly in `db/core`.
+
+I've segmented insi into two distinct parts the aforementioned `db` and `service`. I had made
+the service with the idea of them being active `plugins` but ditched that notion because it
+implies configurability beyond the scope of my intentions so there may be code relics mentioning
+plugins. If any exist, consider it synonymous with services.
+
+In addition to the `core` there is `rft` `models` and `tkv` in `db`. Rft is the raft segment of
+the codebase that handles snapshots, implements the finite state machine, and contains logic
+for joining clusters. The tkv library is the implementation that works with badger, ttlcache,
+and some implemented structures to support the node's role in the events, queues, cache, and other
+functionality.
+
+## ApiKeys
+
+The configuration of the site contains a secret that when hashed a particular way represents the
+server's "root" key. This key is the ultimate authority. From this key other api keys can be generated
+with the apikey endpoints.
+
+When any command is issued to a web endpoint to execute on the system, a unique identifier for the key
+is utilized to scope the key to the identity of the key holder. This is how various accounts all share
+the distributed system without being able to access/interfere with others.
+
+See `db/core/apikey` for more information on this.
+
+# Service
+
+The services that I have at the time of writing are a series of endpoints that can be easily added or
+removed from hosting, but doing so my affect whatever data model you are working with as paths may
+become unreachable if a client is expecting a service to be running.
+
+Each service is mounted on `/` and has its first path be the given `name` fromt he `GetName` function in
+the service interface.
+
+The services are:
+    1. status
+    2. objects
+    3. islands
+    4. provider
+    5. static
+    6. chat
+
+## Status
+
+The status service just gives an uptime, so `/status/uptime` will return how long the server has been up.
+
+## Objects
+
+Objects are just the notion of large files that someone wants to keep on the cluster. In the event that we want to
+have a place to store large user data and NOT use amazon s3. When the client hits a node in the cluster to upload,
+the object service will store the object in the configured directory under a UUID. This UUID is associated with the
+api key that made it and a record is stored (in the root context) of the file's existence. Then, if a request to download
+the object by this id is made to any node in the cluster, if the node isn't the host of the data it will forward the request
+to the correct node to facilitate retrieval.
+
+## Islands
+
+Islands are a "user" (api context) defined grouping of "resources" in-terms if "objects." For instance, if I want to segregate
+some notion of a grouping of objects that are at least loosly conceptually related, I can do so in an island. I chose this
+terminology as opposed-to "workspace" or "context" as I think "context" is too nebulous and "workspace" has some implications
+of behavior/purpose that don't align with my ultimate goals. 
+
+Island resources are under construction and the "supported types" of resources is bound to change but know that this is essentially
+just a way to categorize existing resources within some potentially ephemeral context.
+
+## Provider
+
+Provider is a service to contextually store api connection information for various LLM providers. At time of writing
+I have support for XAI, OpenAI, and Anthropic. A default provider can, and should be set for each user context if they
+want to use the chat service (below)
+
+## Static
+
+This service is currently in a holding pattern, but is currently setup to be used if `--host` is given to the main server
+executable with a path so that a static set of files can be served. I am contemplating changing the core behavior of this
+or removing it in the future.
+
+## Chat
+
+Chat is an LLM chat service that hosts a `chat/completions` OpenAI compatible chat api. This permits the acceptance of chat
+completion requests from any existing compatible tooling like `langchain` et. al or for use in UIs that permit their user
+to set the "base url" "model" and "api token" for an LLM chat.
+
+The chat endpoint accepts these completion requests and utilizes the `model` field of the completion request to identify
+a user "island." This means, that an island must exist to utilize the chat interface. When a message is sent to the interface
+1 of 2 primary sets of functionality can be initiated:
+
+1. Direct pass-through to provider
+   The most boring and uninspired possibility is that the text of the request is just sent to the provider as-configured and
+   the request is serviced. 
+
+2. The existence of one or more `command` identifiers is detected in the "newest" message to the chat system.
+   A "command" is identified as a start symbol `(\'` and runs until its matching `)` these commands, once ingested by the system
+   are removed from the content of the message, and begin execution.
+   The commands provide a means to quickly define a context and instruct the endpoint to add "tools" to the conversation.
+   This means that each "new" message can explicitly spawn the required tools that the user needs at time of message submission.
+   These commands are removed from the message to ensure that the llm context isn't polluted and the llm isn't actually aware of
+   this layer at all. Only after the commands are executed and the tools added will the llm "know" about the tools, and since the
+   providers make us shove ALL THE MESSAGES OF AN ENTIRE CHAT into the endpoints for EACH completion we might as well leverage
+   this by spinning up "just in time tooling."
+
+# Commands
+
+So why the weird start char and the lispy syntax? Its easy to write as if you're trying to add subtext. For instance:
+
+```
+
+Please look through my most recent photos (\'tl object-store "my-photo-bucket")  and find the photos of my dogs and
+(\'tl email) send it to my wife's email (\tl contacts)
+
+```
+
+What the LLM sees:
+
+```
+Please look through my most recent photos and find the photos of my dogs and send it to my wife's email 
+```
+
+The messages are formed to ensure the provider is aware of the tools it can use to service the request that it sees, the
+tool call's execution and subsequent explanitory messages may or may not be added to the message-set depending on the tool
+and how is used, but when we follow up with something like:
+
+```
+How many photos were emailed?
+```
+
+The llm sees the history (in the chat) that X emails were sent, but at the time of responding to the inquiry, the tools used
+at the time are no longer present.
+
+# TOOLS
+
+Its all about the tools. I'm currently working on diffrent tools and trying to figure out the most useful for the context that I'm
+designing the sytem for. Right now though the system can interact with the core database just by asking it:
+
+```
+
+I'm trying to find a set of logs from an internal system called "digigamoflip", please (\'tl kvs) iterate over
+my data store and see if there are any records pertaining to it
+
+```
+   
+
+
