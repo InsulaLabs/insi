@@ -146,7 +146,7 @@ func (p *IslandPlugin) handleNewIsland(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// See if slug is already taken
-	slugKey := service_models.GetIslandSlugKey(td.UUID, req.ModelSlug)
+	slugKey := service_models.GetIslandSlugKey(td.DataScopeUUID, req.ModelSlug)
 	_, err = p.prif.RT_Get(slugKey)
 	if err == nil {
 		http.Error(w, "Slug already taken - must be unique", http.StatusBadRequest)
@@ -161,7 +161,7 @@ func (p *IslandPlugin) handleNewIsland(w http.ResponseWriter, r *http.Request) {
 	// Create island
 	island := service_models.Island{
 		Entity:      td.Entity,
-		EntityUUID:  td.UUID,
+		EntityUUID:  td.DataScopeUUID,
 		UUID:        uuid.New().String(),
 		Name:        req.Name,
 		ModelSlug:   req.ModelSlug,
@@ -176,7 +176,7 @@ func (p *IslandPlugin) handleNewIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	islandKey := service_models.GetIslandKey(td.UUID, island.UUID)
+	islandKey := service_models.GetIslandKey(td.DataScopeUUID, island.UUID)
 
 	if err = p.prif.RT_Set(db_models.KVPayload{
 		Key:   islandKey,
@@ -230,7 +230,7 @@ func (p *IslandPlugin) handleDeleteIsland(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	islandKey := service_models.GetIslandKey(td.UUID, req.UUID)
+	islandKey := service_models.GetIslandKey(td.DataScopeUUID, req.UUID)
 
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
@@ -244,9 +244,9 @@ func (p *IslandPlugin) handleDeleteIsland(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	slugKey := service_models.GetIslandSlugKey(td.UUID, island.ModelSlug)
+	slugKey := service_models.GetIslandSlugKey(td.DataScopeUUID, island.ModelSlug)
 
-	if island.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if island.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied. Island does not belong to you.", http.StatusForbidden)
 		return
 	}
@@ -299,7 +299,7 @@ func (p *IslandPlugin) handleUpdateIslandName(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	islandKey := service_models.GetIslandKey(td.UUID, req.UUID)
+	islandKey := service_models.GetIslandKey(td.DataScopeUUID, req.UUID)
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
 		http.Error(w, "Failed to get island", http.StatusInternalServerError)
@@ -312,7 +312,7 @@ func (p *IslandPlugin) handleUpdateIslandName(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if island.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if island.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied", http.StatusForbidden)
 		return
 	}
@@ -368,7 +368,7 @@ func (p *IslandPlugin) handleUpdateIslandDescription(w http.ResponseWriter, r *h
 		return
 	}
 
-	islandKey := service_models.GetIslandKey(td.UUID, req.UUID)
+	islandKey := service_models.GetIslandKey(td.DataScopeUUID, req.UUID)
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
 		http.Error(w, "Failed to get island", http.StatusInternalServerError)
@@ -381,7 +381,7 @@ func (p *IslandPlugin) handleUpdateIslandDescription(w http.ResponseWriter, r *h
 		return
 	}
 
-	if island.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if island.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied", http.StatusForbidden)
 		return
 	}
@@ -437,13 +437,13 @@ func (p *IslandPlugin) handleUpdateIslandModelSlug(w http.ResponseWriter, r *htt
 		return
 	}
 
-	newSlugKey := service_models.GetIslandSlugKey(td.UUID, req.ModelSlug)
+	newSlugKey := service_models.GetIslandSlugKey(td.DataScopeUUID, req.ModelSlug)
 	if _, err := p.prif.RT_Get(newSlugKey); err == nil {
 		http.Error(w, "Model slug already taken", http.StatusBadRequest)
 		return
 	}
 
-	islandKey := service_models.GetIslandKey(td.UUID, req.UUID)
+	islandKey := service_models.GetIslandKey(td.DataScopeUUID, req.UUID)
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
 		http.Error(w, "Failed to get island", http.StatusInternalServerError)
@@ -456,13 +456,13 @@ func (p *IslandPlugin) handleUpdateIslandModelSlug(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if island.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if island.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied", http.StatusForbidden)
 		return
 	}
 
 	oldSlug := island.ModelSlug
-	oldSlugKey := service_models.GetIslandSlugKey(td.UUID, island.ModelSlug)
+	oldSlugKey := service_models.GetIslandSlugKey(td.DataScopeUUID, island.ModelSlug)
 	island.ModelSlug = req.ModelSlug
 	island.UpdatedAt = time.Now()
 
@@ -518,7 +518,7 @@ func (p *IslandPlugin) handleUpdateIslandAddResources(w http.ResponseWriter, r *
 		return
 	}
 
-	islandKey := service_models.GetIslandKey(td.UUID, req.IslandUUID)
+	islandKey := service_models.GetIslandKey(td.DataScopeUUID, req.IslandUUID)
 	islandData, err := p.prif.RT_Get(islandKey)
 	if err != nil {
 		http.Error(w, "Failed to get island", http.StatusInternalServerError)
@@ -529,7 +529,7 @@ func (p *IslandPlugin) handleUpdateIslandAddResources(w http.ResponseWriter, r *
 		http.Error(w, "Failed to unmarshal island", http.StatusInternalServerError)
 		return
 	}
-	if island.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if island.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied", http.StatusForbidden)
 		return
 	}
@@ -539,7 +539,7 @@ func (p *IslandPlugin) handleUpdateIslandAddResources(w http.ResponseWriter, r *
 			resource.UUID = uuid.New().String()
 		}
 		resource.Entity = td.Entity
-		resource.EntityUUID = td.UUID
+		resource.EntityUUID = td.DataScopeUUID
 		resource.CreatedAt = time.Now()
 		resource.UpdatedAt = time.Now()
 
@@ -549,7 +549,7 @@ func (p *IslandPlugin) handleUpdateIslandAddResources(w http.ResponseWriter, r *
 			return // continuing would be ambiguous
 		}
 
-		resourceKey := service_models.GetIslandResourceKey(td.UUID, req.IslandUUID, resource.UUID)
+		resourceKey := service_models.GetIslandResourceKey(td.DataScopeUUID, req.IslandUUID, resource.UUID)
 		if err := p.prif.RT_Set(db_models.KVPayload{Key: resourceKey, Value: string(resourceBytes)}); err != nil {
 			http.Error(w, "Failed to set resource", http.StatusInternalServerError)
 			return // continuing would be ambiguous
@@ -584,14 +584,14 @@ func (p *IslandPlugin) handleUpdateIslandRemoveResources(w http.ResponseWriter, 
 	}
 
 	// Optional: Check if the island exists and the user has permission.
-	islandKey := service_models.GetIslandKey(td.UUID, req.IslandUUID)
+	islandKey := service_models.GetIslandKey(td.DataScopeUUID, req.IslandUUID)
 	if _, err := p.prif.RT_Get(islandKey); err != nil {
 		http.Error(w, "Island not found or permission denied", http.StatusNotFound)
 		return
 	}
 
 	for _, resourceUUID := range req.ResourceUUIDs {
-		resourceKey := service_models.GetIslandResourceKey(td.UUID, req.IslandUUID, resourceUUID)
+		resourceKey := service_models.GetIslandResourceKey(td.DataScopeUUID, req.IslandUUID, resourceUUID)
 		if err := p.prif.RT_Delete(resourceKey); err != nil {
 			p.logger.Error("Failed to delete resource, may not exist", "error", err, "uuid", resourceUUID)
 		}
@@ -644,13 +644,13 @@ func (p *IslandPlugin) handleIterateIslandResources(w http.ResponseWriter, r *ht
 	}
 
 	// Verify the user owns the island they are trying to iterate resources from.
-	islandKey := service_models.GetIslandKey(td.UUID, req.IslandUUID)
+	islandKey := service_models.GetIslandKey(td.DataScopeUUID, req.IslandUUID)
 	if _, err := p.prif.RT_Get(islandKey); err != nil {
 		http.Error(w, "Island not found or permission denied", http.StatusNotFound)
 		return
 	}
 
-	prefix := service_models.GetIslandResourceIterationPrefix(td.UUID, req.IslandUUID)
+	prefix := service_models.GetIslandResourceIterationPrefix(td.DataScopeUUID, req.IslandUUID)
 	keys, err := p.prif.RT_Iterate(prefix, req.Offset, req.Limit)
 	if err != nil {
 		// If no keys are found for the prefix, the runtime returns an error.
@@ -723,7 +723,7 @@ func (p *IslandPlugin) handleIterateIslands(w http.ResponseWriter, r *http.Reque
 		offset = 0
 	}
 
-	prefix := service_models.GetIslandIterationPrefix(td.UUID)
+	prefix := service_models.GetIslandIterationPrefix(td.DataScopeUUID)
 	keys, err := p.prif.RT_Iterate(prefix, offset, limit)
 	if err != nil {
 		// If no keys are found for the prefix, the runtime returns an error.

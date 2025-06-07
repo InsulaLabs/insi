@@ -20,7 +20,7 @@ const maxTotalBatchPayloadSize = 1 * 1024 * 1024 // 1MB limit for the entire bat
 
 func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -34,7 +34,7 @@ func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := c.fsm.Get(fmt.Sprintf("%s:%s", td.UUID, key))
+	value, err := c.fsm.Get(fmt.Sprintf("%s:%s", td.DataScopeUUID, key))
 	if err != nil {
 		c.logger.Info("FSM Get for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
@@ -58,7 +58,7 @@ func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -95,7 +95,7 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 		offsetInt = 0
 	}
 
-	value, err := c.fsm.Iterate(fmt.Sprintf("%s:%s", td.UUID, prefix), offsetInt, limitInt)
+	value, err := c.fsm.Iterate(fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix), offsetInt, limitInt)
 	if err == badger.ErrKeyNotFound {
 		http.NotFound(w, r)
 		return
@@ -107,7 +107,7 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 
 	// All keys come back with the api key unique prefix so we need to remove it
 	for i, key := range value {
-		value[i] = strings.TrimPrefix(key, fmt.Sprintf("%s:", td.UUID))
+		value[i] = strings.TrimPrefix(key, fmt.Sprintf("%s:", td.DataScopeUUID))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -127,7 +127,7 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 */
 
 func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -159,7 +159,7 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	p.Key = fmt.Sprintf("%s:%s", td.UUID, p.Key)
+	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Value) {
 		http.Error(w, "Value is too large", http.StatusBadRequest)
@@ -181,7 +181,7 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -213,7 +213,7 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	p.Key = fmt.Sprintf("%s:%s", td.UUID, p.Key)
+	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Key) {
 		http.Error(w, "Key is too large", http.StatusBadRequest)
@@ -236,7 +236,7 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 // Define request structures for batch operations
 
 func (c *Core) batchSetHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -286,7 +286,7 @@ func (c *Core) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Item at index %d has an empty key", i), http.StatusBadRequest)
 			return
 		}
-		prefixedKey := fmt.Sprintf("%s:%s", td.UUID, item.Key)
+		prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, item.Key)
 		if sizeTooLargeForStorage(prefixedKey) {
 			http.Error(w, fmt.Sprintf("Prefixed key '%s' (from item at index %d) is too large", prefixedKey, i), http.StatusBadRequest)
 			return
@@ -307,7 +307,7 @@ func (c *Core) batchSetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -356,7 +356,7 @@ func (c *Core) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Key at index %d is empty", i), http.StatusBadRequest)
 			return
 		}
-		prefixedKey := fmt.Sprintf("%s:%s", td.UUID, key)
+		prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, key)
 		if sizeTooLargeForStorage(prefixedKey) {
 			http.Error(w, fmt.Sprintf("Prefixed key '%s' (from key at index %d) is too large", prefixedKey, i), http.StatusBadRequest)
 			return

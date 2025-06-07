@@ -58,7 +58,7 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 }
 
 func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		c.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
@@ -91,7 +91,7 @@ func (c *Core) joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only admin "root" key can tell nodes to join the cluster
-	td, ok := c.ValidateToken(r, true)
+	td, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -143,27 +143,39 @@ func (c *Core) normalizeKeyName(keyName string) string {
 	return keyName
 }
 
-func (c *Core) decomposeKey(token string) (string, string, error) {
+func (c *Core) decomposeKey(token string) (models.TokenData, error) {
 
 	parts := strings.TrimPrefix(token, "insi_")
 
 	encryptedKeyData, err := base64.StdEncoding.DecodeString(parts)
 	if err != nil {
-		return "", "", fmt.Errorf("could not decode base64: %w", err)
+		return models.TokenData{}, fmt.Errorf("could not decode base64: %w", err)
 	}
 
-	decryptedKeyData, err := c.decrypt(encryptedKeyData)
+	decryptedKeyData, err := c.decrypt([]byte(encryptedKeyData))
 	if err != nil {
-		return "", "", fmt.Errorf("could not decrypt key data: %w", err)
+		return models.TokenData{}, fmt.Errorf("could not decrypt key data: %w", err)
 	}
 
 	var td models.TokenData
 	if err := json.Unmarshal(decryptedKeyData, &td); err != nil {
-		return "", "", fmt.Errorf("could not unmarshal token data: %w", err)
+		return models.TokenData{}, fmt.Errorf("could not unmarshal token data: %w", err)
 	}
 
-	return td.Entity, td.UUID, nil
+	return td, nil
 }
+
+/*
+
+	TODO:
+
+	 Right now we base off of entity for storage but they might not be unique
+
+	 We need to do UUID-focused storage for the api key -> token data mapping
+
+
+
+*/
 
 func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 
@@ -171,11 +183,11 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 	keyUUID := uuid.New().String()
 
 	// Use only the keyName (entity) for the FSM key, consistent with ValidateToken lookup
-	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, keyName)
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, keyUUID)
 
 	td := models.TokenData{
-		Entity: keyName,
-		UUID:   keyUUID,
+		DataScopeUUID: keyUUID,
+		KeyUUID:       keyUUID,
 	}
 
 	// Data to be encrypted and base64 encoded for the actual API key string
@@ -188,8 +200,12 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("could not encrypt token data for api key string: %w", err)
 	}
+
 	b64KeyData := base64.StdEncoding.EncodeToString(encryptedKeyDataForApiKey)
 	actualKey := fmt.Sprintf("insi_%s", b64KeyData)
+
+	// NOW we set the entity to the keyName so we dont encode it into the actual key
+	td.Entity = keyName
 
 	// Data to be stored in FSM (this is what ValidateToken retrieves and checks)
 	// This should be the same TokenData structure.
@@ -214,19 +230,27 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 
 func (c *Core) deleteExistingApiKey(key string) error {
 
-	entity, _, err := c.decomposeKey(key) // We only need the entity to form the FSM key
+	// WARNING: This must only be called by the LEADER NODE
+	if !c.fsm.IsLeader() {
+		return fmt.Errorf("this operation must be performed by the leader node")
+	}
+
+	td, err := c.decomposeKey(key) // We only need the entity to form the FSM key
 	if err != nil {
 		return fmt.Errorf("could not decompose key: %w", err)
 	}
 
 	// The FSM key is based on the entity (key name)
-	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, entity)
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
+
+	// TODO: Add the UUID to some preserved structure that we can have run delete iterations on
+	// to clean out old keys in a non-demending way
 
 	// Apply to FSM
 	if err := c.fsm.Delete(apiKeyFsmStorageKey); err != nil {
 		// Add FSM error handling if s.fsm.Delete can return an error
 		c.logger.Error("Failed to delete API key from FSM", "key", apiKeyFsmStorageKey, "error", err)
-		return fmt.Errorf("failed to delete API key from FSM for %s: %w", entity, err)
+		return fmt.Errorf("failed to delete API key from FSM for %s: %w", td.Entity, err)
 	}
 
 	c.apiCache.Delete(key)
@@ -275,6 +299,39 @@ func (c *Core) decrypt(data []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+/*
+// DO NOT DELETE THIS CODE
+func (c *Core) compressFlate(data []byte) ([]byte, error) {
+	var b bytes.Buffer
+	fw, err := flate.NewWriter(&b, flate.BestCompression)
+	if err != nil {
+		return nil, err
+	}
+	_, err = fw.Write(data)
+	if err != nil {
+		return nil, err
+	}
+	err = fw.Close()
+	if err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+// DO NOT DELETE THIS CODE
+func (c *Core) decompressFlate(data []byte) (string, error) {
+	b := bytes.NewReader(data)
+	fr := flate.NewReader(b)
+	defer fr.Close()
+	var buf bytes.Buffer
+	_, err := io.Copy(&buf, fr)
+	if err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+*/
+
 // This is still a system level operation, but it is used by all endpoints
 // and is made public so it can be exposed to the plugin system for validation
 // of tokens.
@@ -292,16 +349,16 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 	if mustBeRoot {
 		if token != c.authToken {
 			return models.TokenData{
-				Entity: EntityRoot,
-				UUID:   c.cfg.RootPrefix,
+				Entity:        EntityRoot,
+				DataScopeUUID: c.cfg.RootPrefix,
 			}, false
 		}
 	}
 
 	if token == c.authToken {
 		return models.TokenData{
-			Entity: EntityRoot,
-			UUID:   c.cfg.RootPrefix,
+			Entity:        EntityRoot,
+			DataScopeUUID: c.cfg.RootPrefix,
 		}, true
 	}
 
@@ -310,14 +367,14 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 		return apiCacheItem.Value(), true
 	}
 
-	entity, uuid, err := c.decomposeKey(token)
+	td, err := c.decomposeKey(token)
 	if err != nil {
 		c.logger.Error("Could not decompose key", "error", err)
 		return models.TokenData{}, false
 	}
 
 	// Get the key from the fsm
-	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, entity)
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
 	keyDataFromFsm, err := c.fsm.Get(fsmStorageKey)
 	if err != nil {
 		c.logger.Error("Could not get key data from FSM", "key", fsmStorageKey, "error", err)
@@ -338,11 +395,16 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 	}
 
 	// Compare the UUID from the decomposed token with the UUID stored in FSM for that entity.
-	if tdFromFsm.UUID != uuid || tdFromFsm.Entity != entity {
+	if tdFromFsm.DataScopeUUID != td.DataScopeUUID ||
+		tdFromFsm.KeyUUID != td.KeyUUID {
 		c.logger.Error("UUID mismatch between token and FSM record",
-			"entity", entity,
-			"uuid_from_token", uuid,
-			"uuid_from_fsm", tdFromFsm.UUID)
+			"entity", td.Entity,
+			"data_scope_uuid_from_token", td.DataScopeUUID,
+			"key_uuid_from_token", td.KeyUUID,
+			"entity_from_fsm", tdFromFsm.Entity,
+			"data_scope_uuid_from_fsm", tdFromFsm.DataScopeUUID,
+			"key_uuid_from_fsm", tdFromFsm.KeyUUID,
+		)
 		return models.TokenData{}, false
 	}
 

@@ -288,7 +288,7 @@ type RateLimit struct {
 }
 
 func (p *ChatPlugin) getRateLimitKey(td *db_models.TokenData) string {
-	return fmt.Sprintf("chat:completions:limit:%s", td.UUID)
+	return fmt.Sprintf("chat:completions:limit:%s", td.DataScopeUUID)
 }
 
 // return if can continue, and then time to wait if failure 0 means no wait for retry
@@ -381,7 +381,7 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, apiKey string, td *db_m
 	responseLogger := p.logger.WithGroup("response_handler")
 	responseLogger.Info("Starting response generation", "num_messages", len(ccr.Messages))
 
-	fmt.Println("handleResponse", td.UUID)
+	fmt.Println("handleResponse", td.DataScopeUUID)
 
 	if len(ccr.Messages) == 0 {
 		select {
@@ -395,12 +395,12 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, apiKey string, td *db_m
 	}
 
 	var preferredProvider service_models.Provider
-	preferredCache := p.providerCache.Get(td.UUID)
+	preferredCache := p.providerCache.Get(td.DataScopeUUID)
 	if preferredCache != nil {
 		preferredProvider = preferredCache.Value()
 		responseLogger.Info("Using preferred provider from cache", "provider", preferredProvider)
 	} else {
-		preferredProviderKey := service_models.GetPreferredProviderKey(td.UUID)
+		preferredProviderKey := service_models.GetPreferredProviderKey(td.DataScopeUUID)
 		preferredProviderUUID, err := p.prif.RT_Get(preferredProviderKey)
 		if err != nil {
 			p.logger.Error("Error getting preferred provider", "error", err, "key", preferredProviderKey)
@@ -412,7 +412,7 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, apiKey string, td *db_m
 			return fmt.Errorf("no preferred provider found")
 		}
 
-		providerKey := service_models.GetProviderKey(td.UUID, preferredProviderUUID)
+		providerKey := service_models.GetProviderKey(td.DataScopeUUID, preferredProviderUUID)
 		preferredProviderRaw, err := p.prif.RT_Get(providerKey)
 		if err != nil {
 			p.logger.Error("Error getting provider details", "error", err, "key", providerKey)
@@ -431,7 +431,7 @@ func (p *ChatPlugin) handleResponse(ctx context.Context, apiKey string, td *db_m
 		}
 
 		go func() {
-			p.providerCache.Set(td.UUID, preferredProvider, 1*time.Minute)
+			p.providerCache.Set(td.DataScopeUUID, preferredProvider, 1*time.Minute)
 		}()
 	}
 

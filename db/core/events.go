@@ -86,7 +86,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
@@ -100,8 +100,8 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prefix the topic with the entity's UUID to scope it
-	prefixedTopic := fmt.Sprintf("%s:%s", td.UUID, topic)
-	c.logger.Debug("Subscription request for prefixed topic", "original_topic", topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.UUID)
+	prefixedTopic := fmt.Sprintf("%s:%s", td.DataScopeUUID, topic)
+	c.logger.Debug("Subscription request for prefixed topic", "original_topic", topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.DataScopeUUID)
 
 	c.wsConnectionLock.Lock()
 	if c.activeWsConnections >= int32(c.cfg.Sessions.MaxConnections) {
@@ -392,7 +392,7 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -419,8 +419,8 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prefix the topic with the entity's UUID to scope it
-	prefixedTopic := fmt.Sprintf("%s:%s", td.UUID, p.Topic)
-	c.logger.Debug("Publishing event with prefixed topic", "original_topic", p.Topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.UUID)
+	prefixedTopic := fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Topic)
+	c.logger.Debug("Publishing event with prefixed topic", "original_topic", p.Topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.DataScopeUUID)
 
 	err = c.fsm.Publish(prefixedTopic, p.Data)
 	if err != nil {

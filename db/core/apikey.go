@@ -8,8 +8,19 @@ import (
 	"github.com/InsulaLabs/insi/db/models"
 )
 
+// These functions are meant to be used with ValidateToken. they seem silly but it helps
+// clarify the point of call when reasoning about the code
+
+func RootOnly() bool {
+	return true
+}
+
+func AnyUser() bool {
+	return false
+}
+
 func (c *Core) apiKeyCreateHandler(w http.ResponseWriter, r *http.Request) {
-	_, ok := c.ValidateToken(r, true)
+	_, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -56,7 +67,7 @@ func (c *Core) apiKeyCreateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) apiKeyDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	_, ok := c.ValidateToken(r, true)
+	_, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

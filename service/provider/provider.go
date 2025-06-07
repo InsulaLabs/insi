@@ -119,7 +119,7 @@ func (p *ProviderPlugin) handleNewProvider(w http.ResponseWriter, r *http.Reques
 	}
 
 	provider := service_models.Provider{
-		EntityUUID:  td.UUID,
+		EntityUUID:  td.DataScopeUUID,
 		UUID:        uuid.New().String(),
 		DisplayName: req.DisplayName,
 		Provider:    service_models.SupportedProvider(req.Provider),
@@ -135,7 +135,7 @@ func (p *ProviderPlugin) handleNewProvider(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	providerKey := service_models.GetProviderKey(td.UUID, provider.UUID)
+	providerKey := service_models.GetProviderKey(td.DataScopeUUID, provider.UUID)
 
 	if err = p.prif.RT_Set(db_models.KVPayload{
 		Key:   providerKey,
@@ -178,7 +178,7 @@ func (p *ProviderPlugin) handleDeleteProvider(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	providerKey := service_models.GetProviderKey(td.UUID, req.UUID)
+	providerKey := service_models.GetProviderKey(td.DataScopeUUID, req.UUID)
 
 	providerData, err := p.prif.RT_Get(providerKey)
 	if err != nil {
@@ -192,7 +192,7 @@ func (p *ProviderPlugin) handleDeleteProvider(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if provider.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if provider.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied. Provider does not belong to you.", http.StatusForbidden)
 		return
 	}
@@ -240,7 +240,7 @@ func (p *ProviderPlugin) handleUpdateProviderDisplayName(w http.ResponseWriter, 
 		return
 	}
 
-	providerKey := service_models.GetProviderKey(td.UUID, req.UUID)
+	providerKey := service_models.GetProviderKey(td.DataScopeUUID, req.UUID)
 	providerData, err := p.prif.RT_Get(providerKey)
 	if err != nil {
 		http.Error(w, "Failed to get provider", http.StatusInternalServerError)
@@ -253,7 +253,7 @@ func (p *ProviderPlugin) handleUpdateProviderDisplayName(w http.ResponseWriter, 
 		return
 	}
 
-	if provider.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if provider.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied", http.StatusForbidden)
 		return
 	}
@@ -309,7 +309,7 @@ func (p *ProviderPlugin) handleUpdateProviderAPIKey(w http.ResponseWriter, r *ht
 		return
 	}
 
-	providerKey := service_models.GetProviderKey(td.UUID, req.UUID)
+	providerKey := service_models.GetProviderKey(td.DataScopeUUID, req.UUID)
 	providerData, err := p.prif.RT_Get(providerKey)
 	if err != nil {
 		http.Error(w, "Failed to get provider", http.StatusInternalServerError)
@@ -322,7 +322,7 @@ func (p *ProviderPlugin) handleUpdateProviderAPIKey(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if provider.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if provider.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied", http.StatusForbidden)
 		return
 	}
@@ -374,7 +374,7 @@ func (p *ProviderPlugin) handleUpdateProviderBaseURL(w http.ResponseWriter, r *h
 		return
 	}
 
-	providerKey := service_models.GetProviderKey(td.UUID, req.UUID)
+	providerKey := service_models.GetProviderKey(td.DataScopeUUID, req.UUID)
 	providerData, err := p.prif.RT_Get(providerKey)
 	if err != nil {
 		http.Error(w, "Failed to get provider", http.StatusInternalServerError)
@@ -387,7 +387,7 @@ func (p *ProviderPlugin) handleUpdateProviderBaseURL(w http.ResponseWriter, r *h
 		return
 	}
 
-	if provider.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if provider.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied", http.StatusForbidden)
 		return
 	}
@@ -435,7 +435,7 @@ func (p *ProviderPlugin) handleIterateProviders(w http.ResponseWriter, r *http.R
 		offset = 0
 	}
 
-	prefix := service_models.GetProviderIterationPrefix(td.UUID)
+	prefix := service_models.GetProviderIterationPrefix(td.DataScopeUUID)
 	keys, err := p.prif.RT_Iterate(prefix, offset, limit)
 	if err != nil {
 		if strings.Contains(err.Error(), "key not found") {
@@ -505,7 +505,7 @@ func (p *ProviderPlugin) handleSetPreferredProvider(w http.ResponseWriter, r *ht
 	}
 
 	// verification that the provider belongs to the user
-	providerKey := service_models.GetProviderKey(td.UUID, req.ProviderUUID)
+	providerKey := service_models.GetProviderKey(td.DataScopeUUID, req.ProviderUUID)
 	providerData, err := p.prif.RT_Get(providerKey)
 	if err != nil {
 		http.Error(w, "Failed to get provider to verify ownership", http.StatusInternalServerError)
@@ -521,13 +521,13 @@ func (p *ProviderPlugin) handleSetPreferredProvider(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if provider.EntityUUID != td.UUID && !p.prif.RT_IsRoot(td) {
+	if provider.EntityUUID != td.DataScopeUUID && !p.prif.RT_IsRoot(td) {
 		http.Error(w, "Permission denied. Provider does not belong to you.", http.StatusForbidden)
 		return
 	}
 
 	// Now set the preferred provider
-	preferredProviderKey := service_models.GetPreferredProviderKey(td.UUID)
+	preferredProviderKey := service_models.GetPreferredProviderKey(td.DataScopeUUID)
 	if err = p.prif.RT_Set(db_models.KVPayload{
 		Key:   preferredProviderKey,
 		Value: req.ProviderUUID,
@@ -552,7 +552,7 @@ func (p *ProviderPlugin) handleGetPreferredProvider(w http.ResponseWriter, r *ht
 		return
 	}
 
-	preferredProviderKey := service_models.GetPreferredProviderKey(td.UUID)
+	preferredProviderKey := service_models.GetPreferredProviderKey(td.DataScopeUUID)
 	providerUUID, err := p.prif.RT_Get(preferredProviderKey)
 	if err != nil {
 		if strings.Contains(err.Error(), "key not found") {
@@ -563,7 +563,7 @@ func (p *ProviderPlugin) handleGetPreferredProvider(w http.ResponseWriter, r *ht
 		return
 	}
 
-	providerKey := service_models.GetProviderKey(td.UUID, providerUUID)
+	providerKey := service_models.GetProviderKey(td.DataScopeUUID, providerUUID)
 	providerData, err := p.prif.RT_Get(providerKey)
 	if err != nil {
 		http.Error(w, "Failed to get preferred provider details", http.StatusInternalServerError)

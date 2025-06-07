@@ -171,7 +171,7 @@ func (p *ObjectsPlugin) uploadBinaryHandler(w http.ResponseWriter, r *http.Reque
 	originalFilename := handler.Filename
 	contentType := handler.Header.Get("Content-Type")
 
-	userUUID := td.UUID
+	userUUID := td.DataScopeUUID
 	objectFileUUID := uuid.New().String()
 	newObjectName := fmt.Sprintf("%s:%s", userUUID, objectFileUUID) // This is the ID for the object, and also the directory name.
 	objectDir := filepath.Join(p.uploadDir, newObjectName)
@@ -312,7 +312,7 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Reconstruct the full object name for path resolution using userUUID from token and objectFileUUID from client
-	fullObjectNameForPath := fmt.Sprintf("%s:%s", td.UUID, objectFileUUID)
+	fullObjectNameForPath := fmt.Sprintf("%s:%s", td.DataScopeUUID, objectFileUUID)
 	objectDir := filepath.Join(p.uploadDir, fullObjectNameForPath)
 	dataFile := filepath.Join(objectDir, "file.data")
 	// metaFile := filepath.Join(objectDir, "meta.json") // This is no longer used as we rely on metaDataFromDB
@@ -378,8 +378,8 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 	// If the object is hosted at the same node, serve the file from the local node
 	// The metadata is already available in metaDataFromDB, no need to read local meta.json again.
 
-	if td.UUID != metaDataFromDB.UserUUID {
-		p.logger.Warn("User UUID mismatch for object access", "tokenUserUUID", td.UUID, "objectUserUUID", metaDataFromDB.UserUUID, "objectID", objectFileUUID)
+	if td.DataScopeUUID != metaDataFromDB.UserUUID {
+		p.logger.Warn("User UUID mismatch for object access", "tokenUserUUID", td.DataScopeUUID, "objectUserUUID", metaDataFromDB.UserUUID, "objectID", objectFileUUID)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -443,8 +443,8 @@ func (p *ObjectsPlugin) getObjectHashHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if td.UUID != metaDataFromDB.UserUUID {
-		p.logger.Warn("User UUID mismatch for object hash access", "tokenUserUUID", td.UUID, "objectUserUUID", metaDataFromDB.UserUUID, "objectID", objectFileUUID)
+	if td.DataScopeUUID != metaDataFromDB.UserUUID {
+		p.logger.Warn("User UUID mismatch for object hash access", "tokenUserUUID", td.DataScopeUUID, "objectUserUUID", metaDataFromDB.UserUUID, "objectID", objectFileUUID)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}

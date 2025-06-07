@@ -18,7 +18,7 @@ import (
 // -- READ ONLY OPERATIONS --
 
 func (c *Core) atomicGetHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -31,7 +31,7 @@ func (c *Core) atomicGetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, key)
+	prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, key)
 	if sizeTooLargeForStorage(prefixedKey) {
 		http.Error(w, "Prefixed key is too large", http.StatusBadRequest)
 		return
@@ -66,7 +66,7 @@ func (c *Core) atomicGetHandler(w http.ResponseWriter, r *http.Request) {
 // -- WRITE OPERATIONS --
 
 func (s *Core) atomicNewHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := s.ValidateToken(r, false)
+	td, ok := s.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -98,7 +98,7 @@ func (s *Core) atomicNewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, req.Key)
 	if sizeTooLargeForStorage(prefixedKey) {
 		http.Error(w, "Prefixed key is too large", http.StatusBadRequest)
 		return
@@ -123,7 +123,7 @@ func (s *Core) atomicNewHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) atomicAddHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -155,7 +155,7 @@ func (c *Core) atomicAddHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, req.Key)
 	if sizeTooLargeForStorage(prefixedKey) {
 		http.Error(w, "Prefixed key is too large", http.StatusBadRequest)
 		return
@@ -188,7 +188,7 @@ func (c *Core) atomicAddHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) atomicDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -220,7 +220,7 @@ func (c *Core) atomicDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, req.Key)
 	if sizeTooLargeForStorage(prefixedKey) {
 		http.Error(w, "Prefixed key is too large", http.StatusBadRequest)
 		return

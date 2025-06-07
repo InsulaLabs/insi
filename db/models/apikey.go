@@ -17,6 +17,7 @@ type ApiKeyDeleteRequest struct {
 
 // Internal storage of the token data for the api key
 type TokenData struct {
-	Entity string `json:"entity"`
-	UUID   string `json:"uuid"`
+	Entity        string `json:"e,omitempty"` // note: fields kept short intentionally
+	DataScopeUUID string `json:"ds"`
+	KeyUUID       string `json:"k"`
 }

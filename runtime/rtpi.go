@@ -102,7 +102,7 @@ func (r *Runtime) RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (db_m
 }
 
 func (r *Runtime) RT_IsRoot(td db_models.TokenData) bool {
-	return td.Entity == core.EntityRoot && td.UUID == r.clusterCfg.RootPrefix
+	return td.Entity == core.EntityRoot && td.DataScopeUUID == r.clusterCfg.RootPrefix
 }
 
 func (r *Runtime) RT_GetNodeConfig() *config.Node {

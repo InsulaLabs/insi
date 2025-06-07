@@ -13,7 +13,7 @@ import (
 
 func (c *Core) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -27,7 +27,7 @@ func (c *Core) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := c.fsm.GetCache(fmt.Sprintf("%s:%s", td.UUID, key))
+	value, err := c.fsm.GetCache(fmt.Sprintf("%s:%s", td.DataScopeUUID, key))
 	if err != nil {
 		c.logger.Info("FSM GetCache for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
@@ -55,7 +55,7 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 			  to root-only operations
 
 	*/
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -87,7 +87,7 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	p.Key = fmt.Sprintf("%s:%s", td.UUID, p.Key)
+	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Key) {
 		http.Error(w, "Key is too large", http.StatusBadRequest)
@@ -116,7 +116,7 @@ func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 			  to root-only operations
 
 	*/
-	td, ok := s.ValidateToken(r, false)
+	td, ok := s.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -148,7 +148,7 @@ func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prefix to lock to the api key holding entity
-	p.Key = fmt.Sprintf("%s:%s", td.UUID, p.Key)
+	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Key) {
 		http.Error(w, "Key is too large", http.StatusBadRequest)

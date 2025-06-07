@@ -16,7 +16,7 @@ import (
 // -- WRITE OPERATIONS --
 
 func (c *Core) queueNewHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -48,7 +48,7 @@ func (c *Core) queueNewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, req.Key)
 	// Consider if sizeTooLargeForStorage is relevant for queue keys, though they are in-memory.
 	// For now, we assume key length constraints are less critical than for Badger stored keys.
 
@@ -63,7 +63,7 @@ func (c *Core) queueNewHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) queuePushHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -96,7 +96,7 @@ func (c *Core) queuePushHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// req.Value can be empty, that's a valid item to push.
 
-	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, req.Key)
 	// Value size for in-memory queues might also have practical limits, but not enforced via sizeTooLargeForStorage yet.
 
 	newLength, err := c.fsm.QueuePush(prefixedKey, req.Value)
@@ -125,7 +125,7 @@ func (c *Core) queuePushHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) queuePopHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -157,7 +157,7 @@ func (c *Core) queuePopHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, req.Key)
 
 	poppedValue, err := c.fsm.QueuePop(prefixedKey)
 	if err != nil {
@@ -191,7 +191,7 @@ func (c *Core) queuePopHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) queueDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	td, ok := c.ValidateToken(r, false)
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -223,7 +223,7 @@ func (c *Core) queueDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefixedKey := fmt.Sprintf("%s:%s", td.UUID, req.Key)
+	prefixedKey := fmt.Sprintf("%s:%s", td.DataScopeUUID, req.Key)
 
 	if err := c.fsm.QueueDelete(prefixedKey); err != nil {
 		// QueueDelete in TKV is idempotent, so specific errors like ErrKeyNotFound are not expected from TKV layer.
