@@ -4,12 +4,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/models"
+	db_models "github.com/InsulaLabs/insi/db/models"
 )
 
 type ValueStoreIF interface {
-	RT_Set(kvp models.KVPayload) error
+	RT_Set(kvp db_models.KVPayload) error
 	RT_Get(key string) (string, error)
 	RT_Delete(key string) error
 	RT_Iterate(prefix string, offset int, limit int) ([]string, error)
@@ -26,18 +27,19 @@ type EventStoreIF interface {
 }
 
 type WebServerIF interface {
-	RT_MountStatic(caller Plugin, fs http.Handler) error
-	RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (models.TokenData, bool)
-	RT_IsRoot(models.TokenData) bool
+	RT_MountStatic(caller Service, fs http.Handler) error
+	RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (db_models.TokenData, bool)
+	RT_IsRoot(db_models.TokenData) bool
 }
 
 // The restricted interfaces that permit the plugin
 // implementation to interact with the runtime.
-type PluginRuntimeIF interface {
+type ServiceRuntimeIF interface {
 	RT_IsRunning() bool
 	RT_GetClusterConfig() *config.Cluster
 	RT_GetNodeConfig() *config.Node
 	RT_GetNodeID() string
+	RT_GetClientForToken(token string) (*client.Client, error)
 
 	ValueStoreIF
 	CacheStoreIF
@@ -50,15 +52,15 @@ Set of errors that the plugin implementation can return
 to calls into the Plugin interface to inform the runtime
 of specfic failures and hint towards possible recovery.
 */
-type PluginImplError struct {
+type ServiceImplError struct {
 	Err error
 }
 
-func (e *PluginImplError) Error() string {
+func (e *ServiceImplError) Error() string {
 	return e.Err.Error()
 }
 
-func (e *PluginImplError) Unwrap() error {
+func (e *ServiceImplError) Unwrap() error {
 	return e.Err
 }
 
@@ -72,7 +74,7 @@ this interface.
 Plugins are expected to be loaded from the plugin directory.
 */
 
-type PluginRoute struct {
+type ServiceRoute struct {
 	Path    string
 	Limit   int // Rate limit for the route
 	Burst   int // Burst limit for the route
@@ -80,20 +82,20 @@ type PluginRoute struct {
 }
 
 /*
-Plugins are mounted to:
-	/plugin-name
+Services are mounted to:
+	/service-name
 
-Plugin paths are then mounted to
+Service paths are then mounted to
 
-    /plugin-name/route-name
+    /service-name/route-name
 
 	   and the Handler is the http.Handler that will be used to handle the request.
 
-Using the prif interface the route internals can interface with the runtime
+Using the sif interface the route internals can interface with the runtime
 to perform runtime operations upon request.
 */
 
-type Plugin interface {
+type Service interface {
 
 	// Used to mount the plugin to the runtime.
 	// and must be unique to the mounted plugins.
@@ -101,11 +103,11 @@ type Plugin interface {
 
 	// Inform the plugin that the runtime is about to start
 	// and to be ready to handle requests.
-	Init(prif PluginRuntimeIF) *PluginImplError
+	Init(sif ServiceRuntimeIF) *ServiceImplError
 
 	// Get all of the http routes and their rate limit specifications
 	// for the plugin.
 	// We _could_ allow them to limit themselves but if we force
 	// them to specify we know they will defintely be limited (good.)
-	GetRoutes() []PluginRoute
+	GetRoutes() []ServiceRoute
 }

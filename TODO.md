@@ -1,4 +1,11 @@
-1) make custom raft commands for atomically modifying value to track bytes-stored-per-api key and enforce limits
-2) Add tracking caches for each api key on each node on startup to rate limit their reads and writes per-node
-3) clean interfaces between web and fsm - see about ironing out conversions/re-mappings for speed/ clarity
-4) create otto js runtime wrapper to run cluster setups/ host events/ test framework for scripted integration tests
+- Add unique entity id to api keys so we can have multiple api keys resolve to the same entity in the entire system
+   this way users can delete api keys and have multiple resolve to same pool. 
+
+   Do this my forcing a "uniqueness" constraint on the existing entity name along with some string sanitization
+   so we can ensure that its unique
+
+   Once we add those rules, we need to modiy every model's key gen routine to strictly use the entity id when
+   storing/ retrieving things rather than the uuid
+
+- Make an insic but running otto so we can make js scripts
+

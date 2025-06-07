@@ -7,13 +7,14 @@ cp test-cluster.yaml /tmp/insi-test-cluster/cluster.yaml
 cp tkv-event-tests/* /tmp/insi-test-cluster/
 cp tkv-data-tests/* /tmp/insi-test-cluster/
 cp tkv-cache-tests/* /tmp/insi-test-cluster/
+cp plugins/* /tmp/insi-test-cluster/
 cd /tmp/insi-test-cluster
 
 function start_insid() {
     ./insid --host --config cluster.yaml &
     insid_pid=$!
     echo "insid pid: $insid_pid"
-    sleep 10
+    sleep 15
 }
 
 function stop_insid() {
@@ -63,7 +64,19 @@ echo "🚀 Running get-set-delete.sh..."
 run_test_script /tmp/insi-test-cluster/get-set-delete.sh
 echo "✅ Success: get-set-delete.sh completed."
 
-sleep 2 # wait for insid to finish stopping and logging out
+echo "🚀 Running objects.sh..."
+run_test_script /tmp/insi-test-cluster/objects.sh
+echo "✅ Success: objects.sh completed."
+
+echo "🚀 Running islands.sh..."
+run_test_script /tmp/insi-test-cluster/islands.sh
+echo "✅ Success: islands.sh completed."
+
+echo "🚀 Running provider.sh..."
+run_test_script /tmp/insi-test-cluster/provider.sh
+echo "✅ Success: provider.sh completed."
+
+sleep 5 # wait for insid to finish stopping and logging out
 
 cd $cwd
 

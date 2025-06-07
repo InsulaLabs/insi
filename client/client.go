@@ -17,8 +17,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/InsulaLabs/insi/models" // Assuming models.Event is defined here
+	"github.com/InsulaLabs/insi/db/models" // Assuming models.Event is defined here
 	"github.com/gorilla/websocket"
+
+	"crypto/sha256"
+	"encoding/hex"
+	"mime/multipart"
+	"os"
+	"path/filepath"
 )
 
 const (
@@ -38,6 +44,168 @@ var (
 	ErrTokenInvalid   = errors.New("token invalid")
 	ErrAPIKeyNotFound = errors.New("api key not found") // New distinct error
 )
+
+// --- Island Structs ---
+
+// Island is a struct that represents a collection of resources
+type Island struct {
+	Entity      string    `json:"entity"`
+	EntityUUID  string    `json:"entity_uuid"`
+	UUID        string    `json:"uuid"` // wwe generate
+	Name        string    `json:"name"`
+	ModelSlug   string    `json:"model_slug"`  // unique to entity must be valid URL
+	Description string    `json:"description"` // max 1024 chars
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// ResourceType is the type of resource
+type ResourceType string
+
+const (
+	ResourceTypeTextFile     ResourceType = "text_file"
+	ResourceTypeMarkdownFile ResourceType = "markdown_file"
+	ResourceTypePDFFile      ResourceType = "pdf_file"
+	ResourceTypeImage        ResourceType = "image"
+	ResourceTypeSqliteDB     ResourceType = "sqlite-db"
+	ResourceTypePostgresDB   ResourceType = "postgres-db"
+)
+
+// Resource is a struct that represents a resource that can be added to an island
+type Resource struct {
+	Entity      string       `json:"entity"`
+	EntityUUID  string       `json:"entity_uuid"`
+	UUID        string       `json:"uuid"` // uuid of the object stored in the object endpoint
+	Type        ResourceType `json:"type"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+	Description string       `json:"description,omitempty"`
+}
+
+// NewIslandRequest is the request to create a new island
+type NewIslandRequest struct {
+	Name        string `json:"name"`
+	ModelSlug   string `json:"model_slug"`
+	Description string `json:"description"`
+}
+
+// DeleteIslandRequest is the request to delete an island
+type DeleteIslandRequest struct {
+	UUID string `json:"uuid"`
+}
+
+// UpdateIslandNameRequest is the request to update the name of an island
+type UpdateIslandNameRequest struct {
+	UUID string `json:"uuid"`
+	Name string `json:"name"`
+}
+
+// UpdateIslandDescriptionRequest is the request to update the description of an island
+type UpdateIslandDescriptionRequest struct {
+	UUID        string `json:"uuid"`
+	Description string `json:"description"`
+}
+
+// UpdateIslandModelSlugRequest is the request to update the model slug of an island
+type UpdateIslandModelSlugRequest struct {
+	UUID      string `json:"uuid"`
+	ModelSlug string `json:"model_slug"`
+}
+
+// UpdateIslandAddResourcesRequest is the request to add resources to an island
+type UpdateIslandAddResourcesRequest struct {
+	IslandUUID string     `json:"island_uuid"`
+	Resources  []Resource `json:"resources"`
+}
+
+// UpdateIslandRemoveResourcesRequest is the request to remove resources from an island
+type UpdateIslandRemoveResourcesRequest struct {
+	IslandUUID    string   `json:"island_uuid"`
+	ResourceUUIDs []string `json:"resource_uuids"`
+}
+
+// IterateIslandResourcesRequest is the request to iterate over the resources of an island
+type IterateIslandResourcesRequest struct {
+	IslandUUID string `json:"island_uuid"`
+	Offset     int    `json:"offset,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+}
+
+// --- Provider Structs ---
+
+// SupportedProvider is the type of provider
+type SupportedProvider string
+
+const (
+	SupportedProviderOpenAI    SupportedProvider = "openai"
+	SupportedProviderAnthropic SupportedProvider = "anthropic"
+	SupportedProviderXAI       SupportedProvider = "xai"
+)
+
+// Provider is a struct that represents a provider configuration
+type Provider struct {
+	EntityUUID  string            `json:"entity_uuid"`
+	UUID        string            `json:"uuid"`
+	DisplayName string            `json:"display_name"`
+	Provider    SupportedProvider `json:"provider"`
+	APIKey      string            `json:"api_key"`
+	BaseURL     string            `json:"base_url"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+// NewProviderRequest is the request to create a new provider
+type NewProviderRequest struct {
+	DisplayName string `json:"display_name"`
+	Provider    string `json:"provider"`
+	APIKey      string `json:"api_key"`
+	BaseURL     string `json:"base_url"`
+}
+
+// DeleteProviderRequest is the request to delete a provider
+type DeleteProviderRequest struct {
+	UUID string `json:"uuid"`
+}
+
+// UpdateProviderDisplayNameRequest is the request to update the display name of a provider
+type UpdateProviderDisplayNameRequest struct {
+	UUID        string `json:"uuid"`
+	DisplayName string `json:"display_name"`
+}
+
+// UpdateProviderAPIKeyRequest is the request to update the API key of a provider
+type UpdateProviderAPIKeyRequest struct {
+	UUID   string `json:"uuid"`
+	APIKey string `json:"api_key"`
+}
+
+// UpdateProviderBaseURLRequest is the request to update the base URL of a provider
+type UpdateProviderBaseURLRequest struct {
+	UUID    string `json:"uuid"`
+	BaseURL string `json:"base_url"`
+}
+
+// SetPreferredProviderRequest sets the preferred provider for the currently authenticated user.
+type SetPreferredProviderRequest struct {
+	ProviderUUID string `json:"provider_uuid"`
+}
+
+// --- Objects Structs ---
+
+// ObjectUploadResponse is the response from a successful object upload.
+type ObjectUploadResponse struct {
+	Status           string `json:"status,omitempty"`
+	ObjectID         string `json:"objectID,omitempty"`
+	Message          string `json:"message,omitempty"`
+	ClientSha256     string `json:"clientSha256,omitempty"`
+	CalculatedSha256 string `json:"calculatedSha256,omitempty"`
+}
+
+// ObjectHashResponse is the response from an object hash request.
+type ObjectHashResponse struct {
+	ObjectID string `json:"objectID"`
+	Sha256   string `json:"sha256"`
+}
 
 type Endpoint struct {
 	HostPort     string
@@ -255,7 +423,20 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 		defer resp.Body.Close() // Ensure this final response body is closed when function returns
 
 		if resp.StatusCode == http.StatusNotFound {
-			return ErrKeyNotFound
+			// For specific GET operations, a 404 is a semantic "not found" for the resource.
+			isDataGetOperation := method == http.MethodGet &&
+				(strings.HasPrefix(path, "db/api/v1/get") ||
+					strings.HasPrefix(path, "db/api/v1/cache/get") ||
+					strings.HasPrefix(path, "db/api/v1/atomic/get") ||
+					strings.HasPrefix(path, "db/api/v1/iterate"))
+
+			if isDataGetOperation {
+				return ErrKeyNotFound
+			}
+
+			// For all other operations (POST, DELETE, other GETs), a 404 implies the endpoint itself was not found.
+			bodyBytes, _ := io.ReadAll(resp.Body) // Read body for context
+			return fmt.Errorf("endpoint not found (404) at %s: %s", currentReqURL.String(), string(bodyBytes))
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -360,8 +541,7 @@ func (c *Client) IterateByPrefix(prefix string, offset, limit int) ([]string, er
 	}
 	err := c.doRequest(http.MethodGet, "db/api/v1/iterate/prefix", params, nil, &response)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") ||
-			strings.Contains(err.Error(), "key not found") {
+		if errors.Is(err, ErrKeyNotFound) {
 			return nil, ErrKeyNotFound
 		}
 		return nil, err
@@ -813,4 +993,401 @@ func (c *Client) QueueDelete(key string) error {
 	payload := models.QueueDeleteRequest{Key: key}
 	// Server endpoint: /db/api/v1/queue/delete
 	return c.doRequest(http.MethodPost, "db/api/v1/queue/delete", nil, payload, nil)
+}
+
+// --- Island Operations ---
+
+func (c *Client) NewIsland(req NewIslandRequest) (*Island, error) {
+	var island Island
+	err := c.doRequest(http.MethodPost, "island/new", nil, req, &island)
+	if err != nil {
+		return nil, err
+	}
+	return &island, nil
+}
+
+func (c *Client) DeleteIsland(req DeleteIslandRequest) error {
+	return c.doRequest(http.MethodPost, "island/delete", nil, req, nil)
+}
+
+func (c *Client) UpdateIslandName(req UpdateIslandNameRequest) (*Island, error) {
+	var island Island
+	err := c.doRequest(http.MethodPost, "island/update/name", nil, req, &island)
+	if err != nil {
+		return nil, err
+	}
+	return &island, nil
+}
+
+func (c *Client) UpdateIslandDescription(req UpdateIslandDescriptionRequest) (*Island, error) {
+	var island Island
+	err := c.doRequest(http.MethodPost, "island/update/description", nil, req, &island)
+	if err != nil {
+		return nil, err
+	}
+	return &island, nil
+}
+
+func (c *Client) UpdateIslandModelSlug(req UpdateIslandModelSlugRequest) (*Island, error) {
+	var island Island
+	err := c.doRequest(http.MethodPost, "island/update/model-slug", nil, req, &island)
+	if err != nil {
+		return nil, err
+	}
+	return &island, nil
+}
+
+func (c *Client) UpdateIslandAddResources(req UpdateIslandAddResourcesRequest) error {
+	return c.doRequest(http.MethodPost, "island/update/add/resources", nil, req, nil)
+}
+
+func (c *Client) UpdateIslandRemoveResources(req UpdateIslandRemoveResourcesRequest) error {
+	return c.doRequest(http.MethodPost, "island/update/remove/resources", nil, req, nil)
+}
+
+func (c *Client) IterateIslandResources(req IterateIslandResourcesRequest) ([]Resource, error) {
+	var resources []Resource
+	err := c.doRequest(http.MethodPost, "island/iterate/resources", nil, req, &resources)
+	if err != nil {
+		if errors.Is(err, ErrKeyNotFound) || strings.Contains(err.Error(), "not found") {
+			return []Resource{}, nil
+		}
+		return nil, err
+	}
+	return resources, nil
+}
+
+func (c *Client) IterateIslands(offset, limit int) ([]Island, error) {
+	params := map[string]string{
+		"offset": strconv.Itoa(offset),
+		"limit":  strconv.Itoa(limit),
+	}
+	var islands []Island
+	err := c.doRequest(http.MethodGet, "island/iterate/islands", params, nil, &islands)
+	if err != nil {
+		return nil, err
+	}
+	return islands, nil
+}
+
+// --- Provider Operations ---
+
+func (c *Client) NewProvider(req NewProviderRequest) (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodPost, "provider/new", nil, req, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
+}
+
+func (c *Client) DeleteProvider(req DeleteProviderRequest) error {
+	return c.doRequest(http.MethodPost, "provider/delete", nil, req, nil)
+}
+
+func (c *Client) UpdateProviderDisplayName(req UpdateProviderDisplayNameRequest) (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodPost, "provider/update/display-name", nil, req, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
+}
+
+func (c *Client) UpdateProviderAPIKey(req UpdateProviderAPIKeyRequest) (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodPost, "provider/update/api-key", nil, req, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
+}
+
+func (c *Client) UpdateProviderBaseURL(req UpdateProviderBaseURLRequest) (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodPost, "provider/update/base-url", nil, req, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
+}
+
+func (c *Client) IterateProviders(offset, limit int) ([]Provider, error) {
+	params := map[string]string{
+		"offset": strconv.Itoa(offset),
+		"limit":  strconv.Itoa(limit),
+	}
+	var providers []Provider
+	err := c.doRequest(http.MethodGet, "provider/iterate/providers", params, nil, &providers)
+	if err != nil {
+		return nil, err
+	}
+	return providers, nil
+}
+
+// SetPreferredProvider sets the user's preferred provider.
+func (c *Client) SetPreferredProvider(req SetPreferredProviderRequest) error {
+	return c.doRequest(http.MethodPost, "provider/set-preferred", nil, req, nil)
+}
+
+// GetPreferredProvider gets the user's preferred provider.
+func (c *Client) GetPreferredProvider() (*Provider, error) {
+	var provider Provider
+	err := c.doRequest(http.MethodGet, "provider/get-preferred", nil, nil, &provider)
+	if err != nil {
+		return nil, err
+	}
+	return &provider, nil
+}
+
+// --- Object Operations ---
+
+// ObjectUpload uploads a file to the object storage.
+func (c *Client) ObjectUpload(filePath string) (*ObjectUploadResponse, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("error opening file %s: %w", filePath, err)
+	}
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("error getting file info for %s: %w", filePath, err)
+	}
+	fileSize := fileInfo.Size()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("error calculating SHA256 hash for %s: %w", filePath, err)
+	}
+	clientCalculatedSha256 := hex.EncodeToString(hasher.Sum(nil))
+	c.logger.Info("Calculated SHA256", "file", filepath.Base(filePath), "sha256", clientCalculatedSha256)
+
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("error seeking to start of file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	pipeReader, pipeWriter := io.Pipe()
+	mpWriter := multipart.NewWriter(pipeWriter)
+
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer pipeWriter.Close()
+		defer mpWriter.Close()
+
+		if err := mpWriter.WriteField("clientSha256", clientCalculatedSha256); err != nil {
+			errChan <- fmt.Errorf("error writing clientSha256 field: %w", err)
+			return
+		}
+
+		part, err := mpWriter.CreateFormFile("file", filepath.Base(filePath))
+		if err != nil {
+			errChan <- fmt.Errorf("error creating form file: %w", err)
+			return
+		}
+
+		progressReader := newProgressReader(file, fileSize, "Uploading", filePath)
+		if _, err = io.Copy(part, progressReader); err != nil {
+			errChan <- fmt.Errorf("error copying file content to form: %w", err)
+			return
+		}
+		errChan <- nil
+	}()
+
+	uploadURL := c.baseURL.ResolveReference(&url.URL{Path: "objects/upload"})
+	req, err := http.NewRequest(http.MethodPost, uploadURL.String(), pipeReader)
+	if err != nil {
+		pipeWriter.CloseWithError(err)
+		return nil, fmt.Errorf("error creating POST request: %w", err)
+	}
+
+	req.Header.Set("Authorization", c.apiKey)
+	req.Header.Set("Content-Type", mpWriter.FormDataContentType())
+
+	// Use a client with a longer timeout for uploads.
+	uploadClient := *c.httpClient
+	uploadClient.Timeout = 30 * time.Minute
+
+	resp, err := uploadClient.Do(req)
+
+	goroutineErr := <-errChan
+	if goroutineErr != nil {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		return nil, fmt.Errorf("error during upload processing: %w", goroutineErr)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("error sending request to %s: %w", uploadURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("error uploading file. Server responded with %s: %s", resp.Status, string(bodyBytes))
+	}
+
+	var result ObjectUploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("error decoding response: %w. Body: %s", err, string(bodyBytes))
+	}
+
+	return &result, nil
+}
+
+// ObjectDownload downloads a file from the object storage.
+func (c *Client) ObjectDownload(objectUUID, outputPath string) error {
+	downloadURL := c.baseURL.ResolveReference(&url.URL{
+		Path:     "objects/download",
+		RawQuery: "id=" + objectUUID,
+	})
+
+	req, err := http.NewRequest(http.MethodGet, downloadURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("error creating GET request: %w", err)
+	}
+	req.Header.Set("Authorization", c.apiKey)
+
+	c.logger.Info("Attempting to download object", "uuid", objectUUID, "url", downloadURL.String())
+
+	// Use a client with a longer timeout for downloads.
+	downloadClient := *c.httpClient
+	downloadClient.Timeout = 30 * time.Minute
+
+	resp, err := downloadClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("error sending request to %s: %w", downloadURL.String(), err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("error downloading file from %s. Server responded with %s: %s", downloadURL.String(), resp.Status, string(bodyBytes))
+	}
+
+	if filepath.Dir(outputPath) != "." && filepath.Dir(outputPath) != "" {
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+			return fmt.Errorf("error creating output directory %s: %w", filepath.Dir(outputPath), err)
+		}
+	}
+
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("error creating output file %s: %w", outputPath, err)
+	}
+	defer outFile.Close()
+
+	contentLength, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+
+	progressReader := newProgressReader(resp.Body, contentLength, "Downloading", outputPath)
+	bytesCopied, err := io.Copy(outFile, progressReader)
+	if err != nil {
+		return fmt.Errorf("error writing downloaded content to file %s: %w", outputPath, err)
+	}
+
+	// Final newline is handled by progress reader's EOF condition
+	c.logger.Info("File downloaded successfully", "path", outputPath, "size", formatBytes(bytesCopied))
+	return nil
+}
+
+// ObjectGetHash retrieves the SHA256 hash of an object.
+func (c *Client) ObjectGetHash(objectUUID string) (*ObjectHashResponse, error) {
+	if objectUUID == "" {
+		return nil, fmt.Errorf("objectUUID cannot be empty")
+	}
+	params := map[string]string{"id": objectUUID}
+	var response ObjectHashResponse
+	err := c.doRequest(http.MethodGet, "objects/hash", params, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// --- Progress Reader ---
+
+// progressReader is an io.Reader that reports progress.
+type progressReader struct {
+	reader         io.Reader
+	total          int64
+	current        int64
+	lastReportTime time.Time
+	operation      string // e.g., "Uploading" or "Downloading"
+	fileName       string // Name of the file being processed
+	isEOF          bool   // Flag to indicate if EOF has been reached
+}
+
+// newProgressReader creates a new progressReader.
+func newProgressReader(reader io.Reader, total int64, operation, fileName string) *progressReader {
+	return &progressReader{
+		reader:         reader,
+		total:          total,
+		operation:      operation,
+		fileName:       filepath.Base(fileName), // Use only the base name for display
+		lastReportTime: time.Now(),
+	}
+}
+
+// Read implements the io.Reader interface.
+func (pr *progressReader) Read(p []byte) (n int, err error) {
+	n, err = pr.reader.Read(p)
+	pr.current += int64(n)
+
+	if err == io.EOF {
+		pr.isEOF = true
+	}
+
+	// Report progress every 500ms or on EOF
+	if time.Since(pr.lastReportTime) > 500*time.Millisecond || err == io.EOF {
+		pr.printProgress()
+		pr.lastReportTime = time.Now()
+	}
+
+	return
+}
+
+func (pr *progressReader) printProgress() {
+	var percentage float64
+	var progressString string
+
+	if pr.total > 0 {
+		percentage = float64(pr.current) * 100 / float64(pr.total)
+		progressString = fmt.Sprintf("%s %s: %s / %s (%.2f%%)",
+			pr.operation,
+			pr.fileName,
+			formatBytes(pr.current),
+			formatBytes(pr.total),
+			percentage)
+	} else {
+		// If total size is unknown, just show current bytes
+		progressString = fmt.Sprintf("%s %s: %s processed",
+			pr.operation,
+			pr.fileName,
+			formatBytes(pr.current))
+	}
+
+	fmt.Fprintf(os.Stderr, "\r\033[K%s", progressString)
+
+	if pr.isEOF {
+		fmt.Fprintln(os.Stderr)
+	}
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
