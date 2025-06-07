@@ -6,9 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/service"
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/core"
+	db_models "github.com/InsulaLabs/insi/db/models"
 )
 
 // ------------------------------------------------------------
@@ -40,7 +41,7 @@ func (r *Runtime) RT_IsRunning() bool {
 	return r.appCtx.Err() == nil
 }
 
-func (r *Runtime) RT_Set(kvp models.KVPayload) error {
+func (r *Runtime) RT_Set(kvp db_models.KVPayload) error {
 	return r.rtClients["set"].Set(kvp.Key, kvp.Value)
 }
 
@@ -72,6 +73,10 @@ func (r *Runtime) RT_PublishEvent(topic string, data any) error {
 	return r.rtClients["publishEvent"].PublishEvent(topic, data)
 }
 
+func (r *Runtime) RT_GetClientForToken(token string) (*client.Client, error) {
+	return r.GetClientForToken(token)
+}
+
 // ------------------------------------------------------------
 // PluginRuntimeIF implementation
 // ------------------------------------------------------------
@@ -81,7 +86,7 @@ func (r *Runtime) RT_GetClusterConfig() *config.Cluster {
 }
 
 // A Special case command made for static plugin (no better way - only exception)
-func (r *Runtime) RT_MountStatic(caller Plugin, fs http.Handler) error {
+func (r *Runtime) RT_MountStatic(caller Service, fs http.Handler) error {
 	pluginName := strings.Trim(caller.GetName(), "/")
 	if pluginName == "" {
 		return fmt.Errorf("plugin name cannot be empty for mounting static files")
@@ -92,12 +97,12 @@ func (r *Runtime) RT_MountStatic(caller Plugin, fs http.Handler) error {
 	return r.service.AddHandler(mountPathPrefix, strippedHandler)
 }
 
-func (r *Runtime) RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (models.TokenData, bool) {
+func (r *Runtime) RT_ValidateAuthToken(req *http.Request, mustBeRoot bool) (db_models.TokenData, bool) {
 	return r.service.ValidateToken(req, mustBeRoot)
 }
 
-func (r *Runtime) RT_IsRoot(td models.TokenData) bool {
-	return td.Entity == service.EntityRoot && td.UUID == r.clusterCfg.RootPrefix
+func (r *Runtime) RT_IsRoot(td db_models.TokenData) bool {
+	return td.Entity == core.EntityRoot && td.DataScopeUUID == r.clusterCfg.RootPrefix
 }
 
 func (r *Runtime) RT_GetNodeConfig() *config.Node {

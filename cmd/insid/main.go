@@ -7,10 +7,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/InsulaLabs/insi/plugins/objects"
-	"github.com/InsulaLabs/insi/plugins/static"
-	"github.com/InsulaLabs/insi/plugins/status"
 	"github.com/InsulaLabs/insi/runtime"
+	"github.com/InsulaLabs/insi/service/chat"
+	"github.com/InsulaLabs/insi/service/island"
+	"github.com/InsulaLabs/insi/service/objects"
+	"github.com/InsulaLabs/insi/service/provider"
+	"github.com/InsulaLabs/insi/service/static"
+	"github.com/InsulaLabs/insi/service/status"
 )
 
 func main() {
@@ -48,7 +51,17 @@ func main() {
 
 	// ------------------- Add Plugins -------------------
 
-	rt.WithPlugin(status.New(slog.Default().WithGroup("status-plugin")))
+	rt.WithService(status.New(slog.Default().WithGroup("status-plugin")))
+
+	rt.WithService(provider.New(slog.Default().WithGroup("provider-plugin")))
+
+	rt.WithService(chat.New(
+		slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		}).WithGroup("chat-plugin")),
+	))
+
+	rt.WithService(island.New(slog.Default().WithGroup("island-plugin")))
 
 	objectsDir := filepath.Join(rt.GetHomeDir(), "plugins", "objects")
 	if err := os.MkdirAll(objectsDir, 0755); err != nil {
@@ -56,11 +69,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	rt.WithPlugin(objects.New(slog.Default().WithGroup("objects-plugin"), objectsDir))
+	rt.WithService(objects.New(slog.Default().WithGroup("objects-plugin"), objectsDir))
 
 	if staticPath != "" {
 		staticPlugin := static.New(slog.Default().WithGroup("static-plugin"), staticPath)
-		rt.WithPlugin(staticPlugin)
+		rt.WithService(staticPlugin)
 		slog.Info("Static plugin enabled", "path", staticPath)
 	}
 

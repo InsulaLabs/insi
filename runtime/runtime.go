@@ -27,8 +27,8 @@ import (
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/service"
-	"github.com/InsulaLabs/insi/internal/tkv"
+	"github.com/InsulaLabs/insi/db/core"
+	"github.com/InsulaLabs/insi/db/tkv"
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
@@ -45,18 +45,18 @@ type Runtime struct {
 	asNodeId   string
 	hostMode   bool
 	rawArgs    []string // To allow flag parsing within New
-	service    *service.Service
+	service    *core.Core
 
 	rootApiKey string // Root API key generated from instance secret
 
 	rtClients map[string]*client.Client
 
-	plugins map[string]Plugin
+	services map[string]Service
 
 	currentLogLevel slog.Level
 }
 
-var _ PluginRuntimeIF = &Runtime{}
+var _ ServiceRuntimeIF = &Runtime{}
 
 // New creates a new Runtime instance.
 // It initializes the application context, sets up signal handling,
@@ -65,7 +65,7 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r := &Runtime{
 		rawArgs:   args,
-		plugins:   make(map[string]Plugin),
+		services:  make(map[string]Service),
 		rtClients: make(map[string]*client.Client),
 	}
 
@@ -162,9 +162,27 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r.rootApiKey = base64.StdEncoding.EncodeToString([]byte(r.rootApiKey))
 
-	// Convert the cluster config into a list of endpoints
-	// for the client to use when utilizing a client for the backend
-	// of a runtime request
+	/*
+		Create a series of clients for the runtime to isolate operations
+		to single-use clients.
+	*/
+	for _, useCase := range []string{
+		"set", "get", "delete", "iterate",
+		"setObject", "getObject", "deleteObject", "iterateObject", "getObjectList",
+		"setCache", "getCache", "deleteCache",
+		"publishEvent",
+	} {
+		rtClient, err := r.GetClientForToken(r.rootApiKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create insi client: %w", err)
+		}
+		r.rtClients[useCase] = rtClient
+	}
+
+	return r, nil
+}
+
+func (r *Runtime) GetClientForToken(token string) (*client.Client, error) {
 	getEndpoints := func() []client.Endpoint {
 		eps := make([]client.Endpoint, 0, len(r.clusterCfg.Nodes))
 		for nodeId, node := range r.clusterCfg.Nodes {
@@ -177,35 +195,21 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 		}
 		return eps
 	}
-
-	/*
-		Create a series of clients for the runtime to isolate operations
-		to single-use clients.
-	*/
-	for _, useCase := range []string{
-		"set", "get", "delete", "iterate",
-		"setObject", "getObject", "deleteObject", "iterateObject", "getObjectList",
-		"setCache", "getCache", "deleteCache",
-		"publishEvent",
-	} {
-		rtClient, err := client.NewClient(&client.Config{
-			ConnectionType: client.ConnectionTypeRandom,
-			Logger:         r.logger.With("service", "insiClient").With("useCase", useCase),
-			ApiKey:         r.rootApiKey, // Use the runtime's generated root API key
-			Endpoints:      getEndpoints(),
-			SkipVerify:     r.clusterCfg.ClientSkipVerify,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create insi client: %w", err)
-		}
-		r.rtClients[useCase] = rtClient
+	rtClient, err := client.NewClient(&client.Config{
+		ConnectionType: client.ConnectionTypeRandom,
+		Logger:         r.logger.With("service", "insiClient"),
+		ApiKey:         token,
+		Endpoints:      getEndpoints(),
+		SkipVerify:     r.clusterCfg.ClientSkipVerify,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create insi client: %w", err)
 	}
-
-	return r, nil
+	return rtClient, nil
 }
 
-func (r *Runtime) WithPlugin(plugin Plugin) *Runtime {
-	r.plugins[plugin.GetName()] = plugin
+func (r *Runtime) WithService(service Service) *Runtime {
+	r.services[service.GetName()] = service
 	return r
 }
 
@@ -319,7 +323,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 	defer kvm.Close()
 
-	r.service, err = service.NewService(
+	r.service, err = core.New(
 		r.appCtx, // Use the runtime's app context
 		nodeLogger.WithGroup("service"),
 		&nodeCfg,
@@ -335,11 +339,11 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 
 	// Mount the plugins
-	nodeLogger.Info("Mounting plugins", "count", len(r.plugins))
+	nodeLogger.Info("Mounting services", "count", len(r.services))
 
-	createRoute := func(plugin Plugin, route PluginRoute) string {
-		nodeLogger.Info("Mounting plugin route", "plugin", plugin.GetName(), "path", route.Path)
-		pName := strings.Trim(plugin.GetName(), "/")
+	createRoute := func(service Service, route ServiceRoute) string {
+		nodeLogger.Info("Mounting service route", "service", service.GetName(), "path", route.Path)
+		pName := strings.Trim(service.GetName(), "/")
 		rPath := strings.Trim(route.Path, "/")
 		mountPath := "/" // Always start with a slash for the root
 		if pName != "" {
@@ -355,24 +359,24 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		Setup the routes for the plugin and init it so it has
 		a means to access the runtime.
 	*/
-	for _, plugin := range r.plugins {
+	for _, service := range r.services {
 
 		r.logger.Info(
-			"Mounting routes for plugin",
-			"plugin", plugin.GetName(),
-			"count", len(plugin.GetRoutes()),
+			"Mounting routes for service",
+			"service", service.GetName(),
+			"count", len(service.GetRoutes()),
 		)
 
-		for _, route := range plugin.GetRoutes() {
+		for _, route := range service.GetRoutes() {
 			r.service.WithRoute(
-				createRoute(plugin, route),
+				createRoute(service, route),
 				route.Handler,
 				route.Limit,
 				route.Burst,
 			)
 		}
 
-		plugin.Init(r)
+		service.Init(r)
 	}
 
 	// Run the service. This should block until the service is done or context is cancelled.

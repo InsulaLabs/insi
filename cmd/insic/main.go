@@ -13,12 +13,13 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
@@ -175,6 +176,12 @@ func main() {
 		handleQueue(cli, cmdArgs)
 	case "api":
 		handleApi(cli, cmdArgs)
+	case "object":
+		handleObject(cli, cmdArgs)
+	case "island":
+		handleIsland(cli, cmdArgs)
+	case "provider":
+		handleProvider(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -218,6 +225,29 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<key_name>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
+	// Object Commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("upload"), color.CyanString("<filepath>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("download"), color.CyanString("<uuid>"), color.CyanString("<output_path>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("hash"), color.CyanString("<uuid>"))
+	// Island Commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("island"), color.CyanString("new"), color.CyanString("<name>"), color.CyanString("<model_slug>"), color.CyanString("[description]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("island"), color.CyanString("delete"), color.CyanString("<uuid>"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("island"), color.CyanString("list"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("island"), color.CyanString("update-name"), color.CyanString("<uuid>"), color.CyanString("<name>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("island"), color.CyanString("update-description"), color.CyanString("<uuid>"), color.CyanString("<description>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("island"), color.CyanString("update-slug"), color.CyanString("<uuid>"), color.CyanString("<new-slug>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("island"), color.CyanString("add-resource"), color.CyanString("<island-uuid>"), color.CyanString("<object-uuid>"), color.CyanString("<type>"), color.CyanString("[description]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("island"), color.CyanString("remove-resources"), color.CyanString("<island-uuid>"), color.CyanString("<resource-uuid>..."))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("island"), color.CyanString("list-resources"), color.CyanString("<island-uuid>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+	// Provider Commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("provider"), color.CyanString("new"), color.CyanString("<display-name>"), color.CyanString("<provider-type>"), color.CyanString("<api-key>"), color.CyanString("[base-url]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("provider"), color.CyanString("delete"), color.CyanString("<uuid>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("list"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("update-display-name"), color.CyanString("<uuid>"), color.CyanString("<new-display-name>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("update-api-key"), color.CyanString("<uuid>"), color.CyanString("<new-api-key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("provider"), color.CyanString("update-base-url"), color.CyanString("<uuid>"), color.CyanString("<new-base-url>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("provider"), color.CyanString("set-preferred"), color.CyanString("<uuid>"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("provider"), color.CyanString("get-preferred"))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -949,4 +979,655 @@ func handleApiVerify(args []string) {
 	for k, v := range pingResp {
 		fmt.Printf("  %s: %s\n", color.CyanString(k), v)
 	}
+}
+
+// --- Object Command Handlers ---
+func handleObject(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("object: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "upload":
+		handleObjectUpload(c, subArgs)
+	case "download":
+		handleObjectDownload(c, subArgs)
+	case "hash":
+		handleObjectHash(c, subArgs)
+	default:
+		logger.Error("object: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleObjectUpload(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("object upload: requires <filepath>")
+		printUsage()
+		os.Exit(1)
+	}
+	filePath := args[0]
+	resp, err := c.ObjectUpload(filePath)
+	if err != nil {
+		logger.Error("Object upload failed", "file", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("Object uploaded successfully:\n")
+	fmt.Printf("  ObjectID: %s\n", color.CyanString(resp.ObjectID))
+	if resp.Message != "" {
+		fmt.Printf("  Message: %s\n", resp.Message)
+	}
+}
+
+func handleObjectDownload(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("object download: requires <uuid> <output_path>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	outputPath := args[1]
+	err := c.ObjectDownload(uuid, outputPath)
+	if err != nil {
+		logger.Error("Object download failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+}
+
+func handleObjectHash(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("object hash: requires <uuid>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	resp, err := c.ObjectGetHash(uuid)
+	if err != nil {
+		logger.Error("Object hash failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("Object Hash:\n")
+	fmt.Printf("  ObjectID: %s\n", color.CyanString(resp.ObjectID))
+	fmt.Printf("  SHA256:   %s\n", color.GreenString(resp.Sha256))
+}
+
+// --- Island Command Handlers ---
+
+func handleIsland(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("island: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "new":
+		handleIslandNew(c, subArgs)
+	case "delete":
+		handleIslandDelete(c, subArgs)
+	case "list":
+		handleIslandList(c, subArgs)
+	case "update-name":
+		handleIslandUpdateName(c, subArgs)
+	case "update-description":
+		handleIslandUpdateDescription(c, subArgs)
+	case "update-slug":
+		handleIslandUpdateModelSlug(c, subArgs)
+	case "add-resource":
+		handleIslandAddResource(c, subArgs)
+	case "remove-resources":
+		handleIslandRemoveResources(c, subArgs)
+	case "list-resources":
+		handleIslandListResources(c, subArgs)
+	default:
+		logger.Error("island: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleIslandNew(c *client.Client, args []string) {
+	if len(args) < 2 || len(args) > 3 {
+		logger.Error("island new: requires <name> <model_slug> [description]")
+		printUsage()
+		os.Exit(1)
+	}
+	name := args[0]
+	modelSlug := args[1]
+	description := ""
+	if len(args) == 3 {
+		description = args[2]
+	}
+
+	req := client.NewIslandRequest{
+		Name:        name,
+		ModelSlug:   modelSlug,
+		Description: description,
+	}
+	island, err := c.NewIsland(req)
+	if err != nil {
+		logger.Error("Island creation failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("Island created successfully:\n")
+	fmt.Printf("  UUID: %s\n", color.CyanString(island.UUID))
+	fmt.Printf("  Name: %s\n", island.Name)
+	fmt.Printf("  Slug: %s\n", island.ModelSlug)
+}
+
+func handleIslandDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("island delete: requires <uuid>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	req := client.DeleteIslandRequest{UUID: uuid}
+	err := c.DeleteIsland(req)
+	if err != nil {
+		logger.Error("Island deletion failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleIslandList(c *client.Client, args []string) {
+	if len(args) > 2 {
+		logger.Error("island list: takes optional [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	offset, limit := 0, 100 // Defaults
+	var err error
+	if len(args) > 0 {
+		offset, err = strconv.Atoi(args[0])
+		if err != nil {
+			logger.Error("island list: invalid offset", "offset_str", args[0], "error", err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 1 {
+		limit, err = strconv.Atoi(args[1])
+		if err != nil {
+			logger.Error("island list: invalid limit", "limit_str", args[1], "error", err)
+			os.Exit(1)
+		}
+	}
+
+	islands, err := c.IterateIslands(offset, limit)
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) || strings.Contains(err.Error(), "key not found") {
+			fmt.Println("No islands found.")
+			os.Exit(0)
+		}
+		logger.Error("Island list failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(islands) == 0 {
+		fmt.Println("No islands found.")
+		return
+	}
+
+	for _, island := range islands {
+		fmt.Printf("UUID: %s, Name: %s, Slug: %s\n", color.CyanString(island.UUID), island.Name, island.ModelSlug)
+	}
+}
+
+func handleIslandUpdateName(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("island update-name: requires <uuid> <name>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	name := args[1]
+	req := client.UpdateIslandNameRequest{UUID: uuid, Name: name}
+	_, err := c.UpdateIslandName(req)
+	if err != nil {
+		logger.Error("Island name update failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleIslandUpdateDescription(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("island update-description: requires <uuid> <description>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	description := args[1]
+	req := client.UpdateIslandDescriptionRequest{UUID: uuid, Description: description}
+	island, err := c.UpdateIslandDescription(req)
+	if err != nil {
+		logger.Error("Island description update failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("Island description updated successfully:\n")
+	fmt.Printf("  UUID: %s\n", color.CyanString(island.UUID))
+	fmt.Printf("  Name: %s\n", island.Name)
+	fmt.Printf("  Description: %s\n", island.Description)
+}
+
+func handleIslandUpdateModelSlug(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("island update-slug: requires <uuid> <new-slug>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	slug := args[1]
+	req := client.UpdateIslandModelSlugRequest{UUID: uuid, ModelSlug: slug}
+	island, err := c.UpdateIslandModelSlug(req)
+	if err != nil {
+		logger.Error("Island model slug update failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("Island slug updated successfully:\n")
+	fmt.Printf("  UUID: %s\n", color.CyanString(island.UUID))
+	fmt.Printf("  Name: %s\n", island.Name)
+	fmt.Printf("  New Slug: %s\n", island.ModelSlug)
+}
+
+func handleIslandAddResource(c *client.Client, args []string) {
+	if len(args) < 3 || len(args) > 4 {
+		logger.Error("island add-resource: requires <island-uuid> <object-uuid> <type> [description]")
+		printUsage()
+		os.Exit(1)
+	}
+	islandUUID := args[0]
+	objectUUID := args[1]
+	resourceType := args[2]
+	description := ""
+	if len(args) == 4 {
+		description = args[3]
+	}
+
+	validTypes := []client.ResourceType{
+		client.ResourceTypeTextFile,
+		client.ResourceTypeMarkdownFile,
+		client.ResourceTypePDFFile,
+		client.ResourceTypeImage,
+		client.ResourceTypeSqliteDB,
+		client.ResourceTypePostgresDB,
+	}
+	isValidType := false
+	for _, t := range validTypes {
+		if client.ResourceType(resourceType) == t {
+			isValidType = true
+			break
+		}
+	}
+	if !isValidType {
+		logger.Error("island add-resource: invalid resource type", "type", resourceType)
+		types := []string{}
+		for _, t := range validTypes {
+			types = append(types, string(t))
+		}
+		fmt.Fprintf(os.Stderr, "%s Invalid resource type: %s\nValid types are: %s\n", color.RedString("Error:"), resourceType, strings.Join(types, ", "))
+		os.Exit(1)
+	}
+
+	resource := client.Resource{
+		UUID:        objectUUID,
+		Type:        client.ResourceType(resourceType),
+		Description: description,
+	}
+
+	req := client.UpdateIslandAddResourcesRequest{
+		IslandUUID: islandUUID,
+		Resources:  []client.Resource{resource},
+	}
+
+	err := c.UpdateIslandAddResources(req)
+	if err != nil {
+		logger.Error("Failed to add resource to island", "island_uuid", islandUUID, "object_uuid", objectUUID, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleIslandRemoveResources(c *client.Client, args []string) {
+	if len(args) < 2 {
+		logger.Error("island remove-resources: requires <island-uuid> <resource-uuid>...")
+		printUsage()
+		os.Exit(1)
+	}
+	islandUUID := args[0]
+	resourceUUIDs := args[1:]
+
+	req := client.UpdateIslandRemoveResourcesRequest{
+		IslandUUID:    islandUUID,
+		ResourceUUIDs: resourceUUIDs,
+	}
+
+	err := c.UpdateIslandRemoveResources(req)
+	if err != nil {
+		logger.Error("Failed to remove resources from island", "island_uuid", islandUUID, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleIslandListResources(c *client.Client, args []string) {
+	if len(args) < 1 || len(args) > 3 {
+		logger.Error("island list-resources: requires <island-uuid> [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	islandUUID := args[0]
+	offset, limit := 0, 100 // Defaults
+	var err error
+	if len(args) > 1 {
+		offset, err = strconv.Atoi(args[1])
+		if err != nil {
+			logger.Error("island list-resources: invalid offset", "offset_str", args[1], "error", err)
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[1], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 2 {
+		limit, err = strconv.Atoi(args[2])
+		if err != nil {
+			logger.Error("island list-resources: invalid limit", "limit_str", args[2], "error", err)
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[2], err)
+			os.Exit(1)
+		}
+	}
+
+	req := client.IterateIslandResourcesRequest{
+		IslandUUID: islandUUID,
+		Offset:     offset,
+		Limit:      limit,
+	}
+
+	resources, err := c.IterateIslandResources(req)
+	if err != nil {
+		logger.Error("Island list resources failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(resources) == 0 {
+		fmt.Println("No resources found for this island.")
+		return
+	}
+
+	fmt.Println("Island Resources:")
+	for _, resource := range resources {
+		fmt.Printf("  UUID: %s, Type: %s, Description: %q, Created: %s\n",
+			color.CyanString(resource.UUID),
+			resource.Type,
+			resource.Description,
+			resource.CreatedAt.Format(time.RFC3339))
+	}
+}
+
+// --- Provider Command Handlers ---
+
+func handleProvider(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("provider: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "new":
+		handleProviderNew(c, subArgs)
+	case "delete":
+		handleProviderDelete(c, subArgs)
+	case "list":
+		handleProviderList(c, subArgs)
+	case "update-display-name":
+		handleProviderUpdateDisplayName(c, subArgs)
+	case "update-api-key":
+		handleProviderUpdateAPIKey(c, subArgs)
+	case "update-base-url":
+		handleProviderUpdateBaseURL(c, subArgs)
+	case "set-preferred":
+		handleProviderSetPreferred(c, subArgs)
+	case "get-preferred":
+		handleProviderGetPreferred(c, subArgs)
+	default:
+		logger.Error("provider: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleProviderNew(c *client.Client, args []string) {
+	if len(args) < 3 || len(args) > 4 {
+		logger.Error("provider new: requires <display-name> <provider-type> <api-key> [base-url]")
+		printUsage()
+		os.Exit(1)
+	}
+	displayName := args[0]
+	providerType := args[1]
+	apiKey := args[2]
+	baseURL := ""
+	if len(args) == 4 {
+		baseURL = args[3]
+	}
+
+	validTypes := []client.SupportedProvider{
+		client.SupportedProviderOpenAI,
+		client.SupportedProviderAnthropic,
+		client.SupportedProviderXAI,
+	}
+	isValidType := false
+	for _, t := range validTypes {
+		if client.SupportedProvider(providerType) == t {
+			isValidType = true
+			break
+		}
+	}
+	if !isValidType {
+		logger.Error("provider new: invalid provider type", "type", providerType)
+		types := []string{}
+		for _, t := range validTypes {
+			types = append(types, string(t))
+		}
+		fmt.Fprintf(os.Stderr, "%s Invalid provider type: %s\nValid types are: %s\n", color.RedString("Error:"), providerType, strings.Join(types, ", "))
+		os.Exit(1)
+	}
+
+	req := client.NewProviderRequest{
+		DisplayName: displayName,
+		Provider:    providerType,
+		APIKey:      apiKey,
+		BaseURL:     baseURL,
+	}
+	provider, err := c.NewProvider(req)
+	if err != nil {
+		logger.Error("Provider creation failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("Provider created successfully:\n")
+	fmt.Printf("  UUID:         %s\n", color.CyanString(provider.UUID))
+	fmt.Printf("  Display Name: %s\n", provider.DisplayName)
+	fmt.Printf("  Provider:     %s\n", provider.Provider)
+	fmt.Printf("  Base URL:     %s\n", provider.BaseURL)
+}
+
+func handleProviderDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("provider delete: requires <uuid>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	req := client.DeleteProviderRequest{UUID: uuid}
+	err := c.DeleteProvider(req)
+	if err != nil {
+		logger.Error("Provider deletion failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleProviderList(c *client.Client, args []string) {
+	if len(args) > 2 {
+		logger.Error("provider list: takes optional [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	offset, limit := 0, 100 // Defaults
+	var err error
+	if len(args) > 0 {
+		offset, err = strconv.Atoi(args[0])
+		if err != nil {
+			logger.Error("provider list: invalid offset", "offset_str", args[0], "error", err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 1 {
+		limit, err = strconv.Atoi(args[1])
+		if err != nil {
+			logger.Error("provider list: invalid limit", "limit_str", args[1], "error", err)
+			os.Exit(1)
+		}
+	}
+
+	providers, err := c.IterateProviders(offset, limit)
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) || strings.Contains(err.Error(), "key not found") {
+			fmt.Println("No providers found.")
+			os.Exit(0)
+		}
+		logger.Error("Provider list failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(providers) == 0 {
+		fmt.Println("No providers found.")
+		return
+	}
+
+	fmt.Println("Providers:")
+	for _, p := range providers {
+		fmt.Printf("  UUID: %s, Name: %s, Provider: %s, BaseURL: %s\n",
+			color.CyanString(p.UUID),
+			p.DisplayName,
+			p.Provider,
+			p.BaseURL)
+	}
+}
+
+func handleProviderUpdateDisplayName(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("provider update-display-name: requires <uuid> <new-display-name>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid, displayName := args[0], args[1]
+	req := client.UpdateProviderDisplayNameRequest{UUID: uuid, DisplayName: displayName}
+	_, err := c.UpdateProviderDisplayName(req)
+	if err != nil {
+		logger.Error("Provider display name update failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleProviderUpdateAPIKey(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("provider update-api-key: requires <uuid> <new-api-key>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid, apiKey := args[0], args[1]
+	req := client.UpdateProviderAPIKeyRequest{UUID: uuid, APIKey: apiKey}
+	_, err := c.UpdateProviderAPIKey(req)
+	if err != nil {
+		logger.Error("Provider API key update failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleProviderUpdateBaseURL(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("provider update-base-url: requires <uuid> <new-base-url>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid, baseURL := args[0], args[1]
+	req := client.UpdateProviderBaseURLRequest{UUID: uuid, BaseURL: baseURL}
+	_, err := c.UpdateProviderBaseURL(req)
+	if err != nil {
+		logger.Error("Provider base URL update failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleProviderSetPreferred(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("provider set-preferred: requires <uuid>")
+		printUsage()
+		os.Exit(1)
+	}
+	uuid := args[0]
+	req := client.SetPreferredProviderRequest{ProviderUUID: uuid}
+	err := c.SetPreferredProvider(req)
+	if err != nil {
+		logger.Error("Provider set preferred failed", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleProviderGetPreferred(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("provider get-preferred: does not take any arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	provider, err := c.GetPreferredProvider()
+	if err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
+			fmt.Println("No preferred provider set.")
+			os.Exit(0)
+		}
+		logger.Error("Get preferred provider failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Preferred Provider:")
+	fmt.Printf("  UUID:         %s\n", color.CyanString(provider.UUID))
+	fmt.Printf("  Display Name: %s\n", provider.DisplayName)
+	fmt.Printf("  Provider:     %s\n", provider.Provider)
+	fmt.Printf("  Base URL:     %s\n", provider.BaseURL)
 }
