@@ -75,7 +75,7 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p models.CachePayload
+	var p models.KVPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		c.logger.Error("Invalid JSON payload for set cache request", "error", err)
 		http.Error(w, "Invalid JSON payload for set cache: "+err.Error(), http.StatusBadRequest)

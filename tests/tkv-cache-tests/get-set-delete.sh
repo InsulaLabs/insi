@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script to test TKV cache operations (set, get, delete, TTL) of insic CLI
+# Script to test TKV cache operations (set, get, delete) of insic CLI
 
 # --- Configuration ---
 INSIC_PATH=""
@@ -113,15 +113,14 @@ test_cache_set_get_basic() {
     print_header "Test: Cache Set and Get Basic"
     local key="cachekey_sg_$(date +%s)"
     local value="cachevalue_sg_$(date +%s)"
-    local ttl="60s"
     local output_set output_get
     local exit_code_set exit_code_get
 
     # Set
-    output_set=$(run_insic "cache" "set" "$key" "$value" "$ttl")
+    output_set=$(run_insic "cache" "set" "$key" "$value")
     exit_code_set=$?
     if [ "$exit_code_set" -eq 0 ] && [[ "$output_set" == "OK" ]]; then
-        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Cache set key '$key' to '$value' with TTL '$ttl', received 'OK'.${NC}"
+        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Cache set key '$key' to '$value', received 'OK'.${NC}"
         SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
     else
         echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Cache set key '$key'. Expected exit 0 and 'OK'. Got exit $exit_code_set, output: '$output_set'${NC}"
@@ -162,52 +161,15 @@ ${LAST_RAW_CMD_OUTPUT}
     fi
 }
 
-test_cache_ttl_expiry() {
-    print_header "Test: Cache TTL Expiry"
-    local key="cachekey_ttl_exp_$(date +%s)"
-    local value="cachevalue_ttl_exp_$(date +%s)"
-    local ttl_seconds=2 # Use a short TTL
-    local ttl="${ttl_seconds}s"
-    local output_set output_get
-    local exit_code_set exit_code_get
-
-    # Set
-    output_set=$(run_insic "cache" "set" "$key" "$value" "$ttl")
-    exit_code_set=$?
-    if [ "$exit_code_set" -eq 0 ] && [[ "$output_set" == "OK" ]]; then
-        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Cache set key '$key' for TTL expiry test (TTL: $ttl), received 'OK'.${NC}"
-        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
-    else
-        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Cache set key '$key' for TTL test. Expected exit 0 and 'OK'. Got exit $exit_code_set, output: '$output_set'${NC}"
-        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
-        echo -e "   Full Raw Output:
---START RAW OUTPUT--
-${LAST_RAW_CMD_OUTPUT}
---END RAW OUTPUT--"
-        return # If set fails, no point in proceeding
-    fi
-
-    # Wait for TTL to expire + a small buffer
-    local wait_time=$((ttl_seconds + 1))
-    echo -e "${INFO_EMOJI} Waiting ${wait_time}s for TTL to expire..."
-    sleep "$wait_time"
-
-    # Get (should fail or return empty/error)
-    output_get=$(run_insic "cache" "get" "$key")
-    exit_code_get=$?
-    expect_error "Cache get key '$key' after TTL expiry" "$exit_code_get" "$output_get"
-}
-
 test_cache_delete() {
     print_header "Test: Cache Delete"
     local key="cachekey_del_$(date +%s)"
     local value="cachevalue_del_$(date +%s)"
-    local ttl="60s"
     local output_set output_delete output_get
     local exit_code_set exit_code_delete exit_code_get
 
     # Set
-    output_set=$(run_insic "cache" "set" "$key" "$value" "$ttl")
+    output_set=$(run_insic "cache" "set" "$key" "$value")
     exit_code_set=$?
     if [ "$exit_code_set" -eq 0 ] && [[ "$output_set" == "OK" ]]; then
         echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Cache set key '$key' for delete test, received 'OK'.${NC}"
@@ -259,97 +221,20 @@ test_cache_get_non_existent() {
     expect_error "Cache get non-existent key '$key'" "$exit_code_get" "$output_get"
 }
 
-test_cache_ttl_non_bumping() {
-    print_header "Test: Cache TTL Non-Bumping Behavior"
-    local key="cachekey_nonbump_$(date +%s)"
-    local value="cachevalue_nonbump_$(date +%s)"
-    local ttl_seconds=3 # Short TTL
-    local ttl="${ttl_seconds}s"
-    local output_set output_get
-    local exit_code_set exit_code_get
-
-    # Set
-    output_set=$(run_insic "cache" "set" "$key" "$value" "$ttl")
-    exit_code_set=$?
-    if [ "$exit_code_set" -eq 0 ] && [[ "$output_set" == "OK" ]]; then
-        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Cache set key '$key' for non-bumping TTL test (TTL: $ttl), received 'OK'.${NC}"
-        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
-    else
-        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Cache set key '$key' for non-bumping TTL test. Expected exit 0 and 'OK'. Got exit $exit_code_set, output: '$output_set'${NC}"
-        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
-        echo -e "   Full Raw Output:
---START RAW OUTPUT--
-${LAST_RAW_CMD_OUTPUT}
---END RAW OUTPUT--"
-        return # If set fails, no point in proceeding
-    fi
-
-    echo -e "${INFO_EMOJI} Brief pause after set before first get..."
-    sleep 0.2 # Diagnostic delay
-
-    # Get multiple times within TTL
-    echo -e "${INFO_EMOJI} Accessing key '$key' multiple times within TTL..."
-    for i in {1..2}; do
-        output_get=$(run_insic "cache" "get" "$key")
-        exit_code_get=$?
-        if [ "$exit_code_get" -ne 0 ] || [[ "$output_get" != "$value" ]]; then
-            echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Cache get key '$key' (pre-expiry access $i) failed or value mismatch. Got: '$output_get' (code: $exit_code_get)${NC}"
-            FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
-            # Early exit this test if setup fails
-            return
-        else
-            echo -e "${SUCCESS_EMOJI} ${GREEN}Successfully retrieved key '$key' (access $i within TTL).${NC}"
-        fi
-        sleep 0.5 # Small delay between gets, still within TTL
-    done
-
-    # Wait for the *original* TTL to expire (from time of set)
-    # Total time elapsed since set needs to be > ttl_seconds
-    # We've spent 2 * 0.5s = 1s in gets approx.
-    # So wait for (ttl_seconds - 1s + 1s buffer)
-    local wait_time=$((ttl_seconds)) # Wait for the remaining original TTL + buffer
-    echo -e "${INFO_EMOJI} Waiting an additional ${wait_time}s for original TTL to expire..."
-    sleep "$wait_time"
-
-    # Get (should fail as original TTL should have expired)
-    output_get=$(run_insic "cache" "get" "$key")
-    exit_code_get=$?
-    expect_error "Cache get key '$key' after original TTL expiry (non-bumping check)" "$exit_code_get" "$output_get"
-}
-
-test_cache_invalid_ttl_format() {
-    print_header "Test: Cache Set with Invalid TTL Format"
-    local key="cachekey_badttl_$(date +%s)"
-    local value="cachevalue_badttl"
-    local invalid_ttl="badttl"
-    local output_set
-    local exit_code_set
-
-    output_set=$(run_insic "cache" "set" "$key" "$value" "$invalid_ttl")
-    exit_code_set=$?
-    expect_error "Cache set with invalid TTL format '$invalid_ttl'" "$exit_code_set" "$output_set"
-}
-
 test_cache_cli_arg_validation() {
     print_header "Test: Cache CLI Argument Validation"
     local key="argtest_key_$(date +%s)"
     local val="argtest_val"
-    local ttl="10s"
     local output exit_code
 
     # cache set
-    output=$(run_insic "cache" "set" "$key" "$val") # Missing TTL
+    output=$(run_insic "cache" "set" "$key") # Missing value
     exit_code=$?
-    expect_error "cache set: missing TTL argument" "$exit_code" "$output"
+    expect_error "cache set: missing value argument" "$exit_code" "$output"
 
-    output=$(run_insic "cache" "set" "$key") # Missing value and TTL
-    exit_code=$?
-    expect_error "cache set: missing value and TTL arguments" "$exit_code" "$output"
-
-    output=$(run_insic "cache" "set" "$key" "$val" "$ttl" "extra_arg") # Too many args
+    output=$(run_insic "cache" "set" "$key" "$val" "extra_arg") # Too many args
     exit_code=$?
     expect_error "cache set: too many arguments" "$exit_code" "$output"
-
 
     # cache get
     output=$(run_insic "cache" "get") # Missing key
@@ -359,7 +244,6 @@ test_cache_cli_arg_validation() {
     output=$(run_insic "cache" "get" "$key" "extra_arg") # Too many args
     exit_code=$?
     expect_error "cache get: too many arguments" "$exit_code" "$output"
-
 
     # cache delete
     output=$(run_insic "cache" "delete") # Missing key
@@ -415,11 +299,8 @@ main() {
     echo -e "${INFO_EMOJI} Starting TKV cache tests with insic: ${INSIC_PATH}"
 
     test_cache_set_get_basic
-    test_cache_ttl_expiry
     test_cache_delete
     test_cache_get_non_existent
-    test_cache_ttl_non_bumping
-    test_cache_invalid_ttl_format
     test_cache_cli_arg_validation
 
     echo -e "\n${GREEN}All TKV cache tests completed.${NC}"
