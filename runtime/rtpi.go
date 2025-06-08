@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
@@ -57,8 +56,8 @@ func (r *Runtime) RT_Iterate(prefix string, offset int, limit int) ([]string, er
 	return r.rtClients["iterate"].IterateByPrefix(prefix, offset, limit)
 }
 
-func (r *Runtime) RT_SetCache(key string, value string, ttl time.Duration) error {
-	return r.rtClients["setCache"].SetCache(key, value, ttl)
+func (r *Runtime) RT_SetCache(key string, value string) error {
+	return r.rtClients["setCache"].SetCache(key, value)
 }
 
 func (r *Runtime) RT_GetCache(key string) (string, error) {

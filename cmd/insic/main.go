@@ -14,7 +14,6 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
@@ -189,7 +188,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<value>"), color.CyanString("<ttl (e.g., 60s, 5m, 1h)>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("join"), color.CyanString("<leaderNodeID>"), color.CyanString("<followerNodeID>"))
@@ -202,16 +201,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("object"), color.CyanString("list"), color.CyanString("[prefix]"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchset"), color.CyanString("<filepath.json>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchdelete"), color.CyanString("<filepath.json>"))
-	// Atomic Commands
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("atomic"), color.CyanString("new"), color.CyanString("<key>"), color.CyanString("[overwrite (true|false)]"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("atomic"), color.CyanString("get"), color.CyanString("<key>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("atomic"), color.CyanString("add"), color.CyanString("<key>"), color.CyanString("<delta>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("atomic"), color.CyanString("delete"), color.CyanString("<key>"))
-	// Queue Commands
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("new"), color.CyanString("<key>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("queue"), color.CyanString("push"), color.CyanString("<key>"), color.CyanString("<value>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("pop"), color.CyanString("<key>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("delete"), color.CyanString("<key>"))
+
 	// API Key Commands (Note: These typically require the --root flag)
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<key_name>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
@@ -405,25 +395,18 @@ func handleCache(c *client.Client, args []string) {
 
 	switch subCommand {
 	case "set":
-		if len(subArgs) != 3 {
-			logger.Error("cache set: requires <key> <value> <ttl>")
+		if len(subArgs) != 2 {
+			logger.Error("cache set: requires <key> <value>")
 			printUsage()
 			os.Exit(1)
 		}
-		key, valStr, ttlStr := subArgs[0], subArgs[1], subArgs[2]
-		ttl, err := time.ParseDuration(ttlStr)
-		if err != nil {
-			logger.Error("cache set: invalid TTL format", "ttl_str", ttlStr, "error", err)
-			fmt.Fprintf(os.Stderr, "%s Invalid TTL format. Use format like '60s', '5m', '1h'.\n", color.RedString("Error:"))
-			os.Exit(1)
-		}
-		err = c.SetCache(key, valStr, ttl)
+		key, valStr := subArgs[0], subArgs[1]
+		err := c.SetCache(key, valStr)
 		if err != nil {
 			logger.Error("Cache set failed", "key", key, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 			os.Exit(1)
 		}
-		// logger.Info("Cache set successful", "key", key, "ttl", ttl) // Redundant
 		color.HiGreen("OK")
 	case "get":
 		if len(subArgs) != 1 {

@@ -44,17 +44,10 @@ echo "🚀 Running api-keys.sh..."
 run_test_script /tmp/insi-test-cluster/api-keys.sh
 echo "✅ Success: api-keys.sh completed."
 
-echo "🚀 Running crud-atomics.sh..."
-run_test_script /tmp/insi-test-cluster/crud-atomics.sh
-echo "✅ Success: crud-atomics.sh completed."
 
 echo "🚀 Running crud-iter.sh..."
 run_test_script /tmp/insi-test-cluster/crud-iter.sh
 echo "✅ Success: crud-iter.sh completed."
-
-echo "🚀 Running queues.sh..."
-run_test_script /tmp/insi-test-cluster/queues.sh
-echo "✅ Success: queues.sh completed."
 
 echo "🚀 Running events.sh..."
 run_test_script /tmp/insi-test-cluster/events.sh

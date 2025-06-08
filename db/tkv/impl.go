@@ -8,22 +8,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/dgraph-io/badger/v3"
-	"github.com/jellydator/ttlcache/v3"
 )
 
-var DefaultCacheTTL = 1 * time.Minute
-var DefaultSecureCacheTTL = 1 * time.Minute
-
 type tkv struct {
-	logger          *slog.Logger
-	appCtx          context.Context
-	db              *data
-	defaultCacheTTL time.Duration
-	identity        badge.Badge
+	logger   *slog.Logger
+	appCtx   context.Context
+	db       *data
+	identity badge.Badge
 }
 
 var _ TKV = &tkv{}
@@ -65,6 +59,7 @@ type ErrQueueEmpty struct {
 func (e *ErrQueueEmpty) Error() string {
 	return fmt.Sprintf("queue '%s' is empty", e.Key)
 }
+
 func normalizeDBName(dbName string) string {
 	// Replace any characters that are invalid in directory names across platforms
 	sanitized := strings.Map(func(r rune) rune {
@@ -116,24 +111,16 @@ func New(config Config) (TKV, error) {
 		return nil, &ErrInternal{Err: err}
 	}
 
-	// in case they set it to 0 for some fuckin reason
-	if DefaultCacheTTL == 0 {
-		DefaultCacheTTL = 1 * time.Minute
+	// Configure in-memory Badger for cache
+	cacheOpts := badger.DefaultOptions("").
+		WithInMemory(true).
+		WithLogger(newLogger(config.Logger.WithGroup("cache"))).
+		WithLoggingLevel(badgerLogLevel)
+
+	cache, err := badger.Open(cacheOpts)
+	if err != nil {
+		return nil, &ErrInternal{Err: err}
 	}
-
-	if config.CacheTTL == 0 {
-		config.CacheTTL = DefaultCacheTTL
-	}
-
-	cache := ttlcache.New[string, string](
-		ttlcache.WithTTL[string, string](config.CacheTTL),
-
-		// If we dont do this then on a multi-node cluster some nodes will expire
-		// while others might be "Getting hit" and not expire leading to a stale cache
-		// this ensures a fully ephemeral value that is only valid for the duration of the cache
-		ttlcache.WithDisableTouchOnHit[string, string](),
-	)
-	go cache.Start()
 
 	tkv := &tkv{
 		logger: config.Logger.WithGroup("tkv"),
@@ -142,8 +129,7 @@ func New(config Config) (TKV, error) {
 			store: db,
 			cache: cache,
 		},
-		defaultCacheTTL: config.CacheTTL,
-		identity:        config.Identity,
+		identity: config.Identity,
 	}
 
 	return tkv, nil
@@ -152,15 +138,20 @@ func New(config Config) (TKV, error) {
 func (t *tkv) Close() error {
 	var firstErr error
 
-	// Stop the cache
 	if t.db.cache != nil {
-		t.db.cache.Stop()
-		t.logger.Info("ttl cache stopped")
+		if err := t.db.cache.Close(); err != nil {
+			t.logger.Error("error closing cache db", "error", err)
+			firstErr = &ErrInternal{Err: err}
+		} else {
+			t.logger.Info("cache db closed")
+		}
 	}
 
 	if err := t.db.store.Close(); err != nil {
 		t.logger.Error("error closing store db", "error", err)
-		firstErr = &ErrInternal{Err: err}
+		if firstErr == nil {
+			firstErr = &ErrInternal{Err: err}
+		}
 	}
 
 	return firstErr
@@ -244,41 +235,58 @@ func (t *tkv) Iterate(prefix string, offset int, limit int) ([]string, error) {
 
 func (t *tkv) CacheGet(key string) (string, error) {
 	t.logger.Debug("CacheGet called", "key", key)
-	item := t.db.cache.Get(key)
-	if item == nil {
-		t.logger.Debug("Cache miss", "key", key)
-		return "", &ErrKeyNotFound{Key: key}
+	var value []byte
+	err := t.db.cache.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				t.logger.Debug("Cache miss", "key", key)
+				return &ErrKeyNotFound{Key: key}
+			}
+			return &ErrInternal{Err: err}
+		}
+		value, err = item.ValueCopy(nil)
+		if err != nil {
+			return &ErrInternal{Err: err}
+		}
+		t.logger.Debug("Cache hit", "key", key)
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
-	if item.IsExpired() {
-		t.logger.Debug("Cache item expired", "key", key)
-		t.db.cache.Delete(key)
-		return "", &ErrKeyNotFound{Key: key}
-	}
-	t.logger.Debug("Cache hit", "key", key, "value", item.Value())
-	return item.Value(), nil
+	return string(value), nil
 }
 
-func (t *tkv) CacheSet(key string, value string, ttl time.Duration) error {
-	t.logger.Debug("CacheSet called", "key", key, "value", value, "ttl", ttl)
-	if ttl == 0 {
-		t.logger.Debug("CacheSet ttl is 0, using default ttl", "default ttl", t.defaultCacheTTL)
-		ttl = t.defaultCacheTTL
-	}
-	t.db.cache.Set(key, value, ttl)
-	return nil
+func (t *tkv) CacheSet(key string, value string) error {
+	t.logger.Debug("CacheSet called", "key", key, "value", value)
+	err := t.db.cache.Update(func(txn *badger.Txn) error {
+		err := txn.Set([]byte(key), []byte(value))
+		if err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
 }
 
 func (t *tkv) CacheDelete(key string) error {
 	t.logger.Debug("CacheDelete called", "key", key)
-	t.db.cache.Delete(key)
-	return nil
+	err := t.db.cache.Update(func(txn *badger.Txn) error {
+		err := txn.Delete([]byte(key))
+		if err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
 }
 
 func (t *tkv) GetDataDB() *badger.DB {
 	return t.db.store
 }
 
-func (t *tkv) GetCache() *ttlcache.Cache[string, string] {
+func (t *tkv) GetCache() *badger.DB {
 	return t.db.cache
 }
 

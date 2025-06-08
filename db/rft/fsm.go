@@ -278,64 +278,13 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("Could not unmarshal set_std_cache payload", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal set_std_cache payload: %w", err)
 			}
-
-			kf.logger.Debug("Applying CmdSetCache",
-				"key", p.Key,
-				"value_len", len(p.Value),
-				"ttl_seconds", p.TTL, // Assuming p.TTL is int64 seconds
-				"set_at_unmarshaled", p.SetAt.Format(time.RFC3339Nano))
-
-			var err error
-			if p.SetAt.IsZero() {
-				kf.logger.Warn("CachePayload.SetAt is zero after unmarshaling. Applying with full original TTL from now.",
-					"key", p.Key,
-					"original_ttl_seconds", p.TTL)
-
-				// Convert p.TTL (seconds) to time.Duration for CacheSet
-				actualTTLForCacheSet := time.Duration(p.TTL) * time.Second
-				err = kf.tkv.CacheSet(p.Key, p.Value, actualTTLForCacheSet)
-				if err != nil {
-					kf.logger.Error("TKV CacheSet failed when SetAt was zero", "key", p.Key, "error", err)
-					return fmt.Errorf("tkv CacheSet failed for stdCache (key %s, SetAt was zero): %w", p.Key, err)
-				}
-				kf.logger.Debug("FSM applied set_std_cache (SetAt was zero, used full original TTL)", "key", p.Key, "applied_ttl", actualTTLForCacheSet.String())
-			} else {
-				// SetAt is valid, proceed with precise expiry calculation.
-				intendedDuration := time.Duration(p.TTL) * time.Second // Correctly convert int64 seconds to time.Duration
-				expiryTime := p.SetAt.Add(intendedDuration)
-				currentTime := time.Now()
-
-				if expiryTime.Before(currentTime) {
-					kf.logger.Debug("Skipping std cache entry because its calculated absolute expiry time is in the past",
-						"key", p.Key,
-						"original_ttl_seconds", p.TTL, // p.TTL is int64 seconds
-						"intended_duration_str", intendedDuration.String(),
-						"set_at", p.SetAt.Format(time.RFC3339Nano),
-						"calculated_expiry_time", expiryTime.Format(time.RFC3339Nano),
-						"current_time", currentTime.Format(time.RFC3339Nano))
-					return nil
-				}
-
-				remainingTTL := time.Until(expiryTime)
-				if remainingTTL <= 0 {
-					kf.logger.Debug("Skipping std cache entry as calculated remaining TTL is zero or negative",
-						"key", p.Key,
-						"original_ttl_seconds", p.TTL, // p.TTL is int64 seconds
-						"intended_duration_str", intendedDuration.String(),
-						"set_at", p.SetAt.Format(time.RFC3339Nano),
-						"calculated_expiry_time", expiryTime.Format(time.RFC3339Nano),
-						"current_time", currentTime.Format(time.RFC3339Nano),
-						"calculated_remaining_ttl", remainingTTL.String())
-					return nil
-				}
-
-				err = kf.tkv.CacheSet(p.Key, p.Value, remainingTTL) // Use calculated remainingTTL (which is a time.Duration)
-				if err != nil {
-					kf.logger.Error("TKV CacheSet failed", "key", p.Key, "remaining_ttl", remainingTTL.String(), "error", err)
-					return fmt.Errorf("tkv CacheSet failed for stdCache (key %s): %w", p.Key, err)
-				}
-				kf.logger.Debug("FSM applied set_std_cache with remaining TTL", "key", p.Key, "remaining_ttl", remainingTTL.String())
+			kf.logger.Debug("Applying CmdSetCache", "key", p.Key, "value_len", len(p.Value))
+			err := kf.tkv.CacheSet(p.Key, p.Value)
+			if err != nil {
+				kf.logger.Error("TKV CacheSet failed", "key", p.Key, "error", err)
+				return fmt.Errorf("tkv CacheSet failed for stdCache (key %s): %w", p.Key, err)
 			}
+			kf.logger.Debug("FSM applied set_std_cache", "key", p.Key)
 			return nil
 		case cmdDeleteCache:
 			var p models.KeyPayload
@@ -459,19 +408,14 @@ func (kf *kvFsm) Restore(rc io.ReadCloser) error {
 			valuesCount++
 
 		case cacheType:
-			// Get the time of encoding, add the TTL. If we are past that time dont add
-			timeOfEncoding := time.Unix(entry.TimeEncoded, 0)
-			timeOfEncodingPlusTTL := timeOfEncoding.Add(time.Duration(entry.TTL) * time.Second)
-			if time.Now().After(timeOfEncodingPlusTTL) {
-				kf.logger.Warn("Skipping std cache entry because it is past its TTL", "key", entry.Key, "ttl", entry.TTL)
-				continue
+			// With in-memory cache, restoring expired items is not a concern.
+			// We just set the key-value pair.
+			if err := stdCache.Update(func(txn *badger.Txn) error {
+				return txn.Set([]byte(entry.Key), []byte(entry.Value))
+			}); err != nil {
+				kf.logger.Error("Could not set value from snapshot in stdCache", "key", entry.Key, "error", err)
+				return fmt.Errorf("could not set value from snapshot in stdCache (key: %s): %w", entry.Key, err)
 			}
-			remainingTTL := time.Until(timeOfEncodingPlusTTL)
-			if remainingTTL <= 0 {
-				kf.logger.Debug("Skipping restore of cache entry as its remaining TTL is zero or negative", "key", entry.Key, "original_ttl_seconds", entry.TTL, "calculated_remaining_ttl", remainingTTL.String())
-				continue
-			}
-			stdCache.Set(entry.Key, entry.Value, remainingTTL)
 			stdCacheCount++
 
 		default:
@@ -671,9 +615,6 @@ func (kf *kvFsm) Iterate(prefix string, offset int, limit int) ([]string, error)
 
 func (kf *kvFsm) SetCache(payload models.CachePayload) error {
 	kf.logger.Debug("SetCache called", "key", payload.Key)
-
-	// Set SetAt to the current time just before proposing to Raft
-	payload.SetAt = time.Now()
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {

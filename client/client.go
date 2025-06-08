@@ -405,14 +405,13 @@ func (c *Client) IterateByPrefix(prefix string, offset, limit int) ([]string, er
 // --- Cache Operations ---
 
 // SetCache stores a key-value pair in the cache with a specific TTL.
-func (c *Client) SetCache(key, value string, ttl time.Duration) error {
+func (c *Client) SetCache(key, value string) error {
 	if key == "" {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]interface{}{
 		"key":   key,
 		"value": value,
-		"ttl":   ttl.Seconds(), // Server expects TTL in seconds
 	}
 	return c.doRequest(http.MethodPost, "db/api/v1/cache/set", nil, payload, nil)
 }

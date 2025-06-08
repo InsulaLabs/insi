@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"sort"
 	"testing"
-	"time"
 )
 
 type testTKV struct {
@@ -223,9 +222,8 @@ func TestTKV_Cache(t *testing.T) {
 	t.Run("Set and Get cache value", func(t *testing.T) {
 		key := "cacheKey1"
 		value := "cacheValue1"
-		ttl := 5 * time.Minute
 
-		if err := tkvInstance.CacheSet(key, value, ttl); err != nil {
+		if err := tkvInstance.CacheSet(key, value); err != nil {
 			t.Errorf("CacheSet() error = %v, wantErr nil", err)
 		}
 
@@ -253,34 +251,11 @@ func TestTKV_Cache(t *testing.T) {
 		}
 	})
 
-	t.Run("Cache value expiration", func(t *testing.T) {
-		key := "cacheKeyTTL"
-		value := "cacheValueTTL"
-		ttl := 100 * time.Millisecond // Short TTL
-
-		if err := tkvInstance.CacheSet(key, value, ttl); err != nil {
-			t.Fatalf("CacheSet() error = %v", err)
-		}
-
-		// Wait for TTL to expire
-		time.Sleep(ttl + 50*time.Millisecond)
-
-		_, err := tkvInstance.CacheGet(key)
-		if err == nil {
-			t.Errorf("CacheGet() expected error for expired key, got nil")
-		}
-		var keyNotFound *ErrKeyNotFound
-		if !errors.As(err, &keyNotFound) {
-			t.Errorf("CacheGet() expected ErrKeyNotFound for expired key, got %T", err)
-		}
-	})
-
 	t.Run("Delete cache key", func(t *testing.T) {
 		key := "cacheKeyDelete"
 		value := "cacheValueDelete"
-		ttl := 5 * time.Minute
 
-		if err := tkvInstance.CacheSet(key, value, ttl); err != nil {
+		if err := tkvInstance.CacheSet(key, value); err != nil {
 			t.Fatalf("CacheSet() error = %v", err)
 		}
 
@@ -296,32 +271,6 @@ func TestTKV_Cache(t *testing.T) {
 		if !errors.As(err, &keyNotFound) {
 			t.Errorf("CacheGet() after CacheDelete expected ErrKeyNotFound, got %T", err)
 		}
-	})
-
-	t.Run("Set value with zero TTL uses instance's default TTL for caching", func(t *testing.T) {
-		key := "cacheKeyZeroTTL"
-		value := "cacheValueZeroTTL"
-
-		// tkvInstance is from createTestTKV. Its tkvInstance.defaultCacheTTL is initialized
-		// based on the Config.CacheTTL or the global DefaultCacheTTL at the time of its creation.
-		// In this test setup, it will be the package-level DefaultCacheTTL (e.g., 1 minute).
-
-		if err := tkvInstance.CacheSet(key, value, 0); err != nil { // 0 TTL
-			t.Fatalf("CacheSet() with 0 TTL error = %v, wantErr nil", err)
-		}
-
-		// Item should be immediately available because it was cached with tkvInstance.defaultCacheTTL.
-		retrievedVal, err := tkvInstance.CacheGet(key)
-		if err != nil {
-			t.Fatalf("CacheGet() for 0 TTL key error = %v, wantErr nil. This implies it was not cached as expected.", err)
-		}
-		if retrievedVal != value {
-			t.Errorf("CacheGet() for 0 TTL key got = %v, want %v", retrievedVal, value)
-		}
-
-		// This test confirms that a 0 TTL to CacheSet results in the item being cached
-		// (using the instance's defaultCacheTTL). It does not need to wait for expiration.
-		// The actual expiration with a specific TTL is covered by "Cache value expiration" test.
 	})
 }
 
