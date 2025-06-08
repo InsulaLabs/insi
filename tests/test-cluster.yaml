@@ -36,9 +36,7 @@ rateLimiters:
   events:
     limit: 1000
     burst: 1500
-  queues:
-    limit: 1000
-    burst: 1500
+
 
 sessions:
   eventChannelSize: 256
@@ -66,6 +64,3 @@ nodes:
 logging:
   level: "debug"
 
-system:
-  maxBytesInMemory: 1000000000 # 1GB
-  maxBytesOnDisk: 10000000000 # 10GB

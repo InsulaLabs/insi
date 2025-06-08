@@ -55,7 +55,6 @@ type Cluster struct {
 	RateLimiters     RateLimiters    `yaml:"rateLimiters"`
 	Sessions         SessionsConfig  `yaml:"sessions"`
 	Logging          LoggingConfig   `yaml:"logging"`
-	System           SystemConfig    `yaml:"system"`
 }
 
 type RateLimiterConfig struct {
@@ -69,12 +68,6 @@ type RateLimiters struct {
 	System  RateLimiterConfig `yaml:"system"`
 	Default RateLimiterConfig `yaml:"default"`
 	Events  RateLimiterConfig `yaml:"events"`
-	Queues  RateLimiterConfig `yaml:"queues"`
-}
-
-type SystemConfig struct {
-	MaxBytesInMemory int `yaml:"maxBytesInMemory"`
-	MaxBytesOnDisk   int `yaml:"maxBytesOnDisk"`
 }
 
 var (
@@ -95,13 +88,10 @@ var (
 	ErrRateLimitersSystemLimitMissing          = errors.New("rateLimiters.system.limit is missing in config")
 	ErrRateLimitersDefaultLimitMissing         = errors.New("rateLimiters.default.limit is missing in config")
 	ErrRateLimitersEventsLimitMissing          = errors.New("rateLimiters.events.limit is missing in config")
-	ErrRateLimitersQueuesLimitMissing          = errors.New("rateLimiters.queues.limit is missing in config")
 	ErrSessionsEventChannelSizeMissing         = errors.New("sessions.eventChannelSize is missing or invalid in config")
 	ErrSessionsWebSocketReadBufferSizeMissing  = errors.New("sessions.webSocketReadBufferSize is missing or invalid in config")
 	ErrSessionsWebSocketWriteBufferSizeMissing = errors.New("sessions.webSocketWriteBufferSize is missing or invalid in config")
 	ErrSessionsMaxConnectionsMissing           = errors.New("sessions.maxConnections is missing or invalid in config")
-	ErrSystemMaxBytesInMemoryMissing           = errors.New("system.maxBytesInMemory is missing or invalid in config")
-	ErrSystemMaxBytesOnDiskMissing             = errors.New("system.maxBytesOnDisk is missing or invalid in config")
 )
 
 func LoadConfig(configFile string) (*Cluster, error) {
@@ -178,9 +168,6 @@ func LoadConfig(configFile string) (*Cluster, error) {
 	if cfg.RateLimiters.Events.Limit == 0 {
 		return nil, ErrRateLimitersEventsLimitMissing
 	}
-	if cfg.RateLimiters.Queues.Limit == 0 {
-		return nil, ErrRateLimitersQueuesLimitMissing
-	}
 	if cfg.Sessions.EventChannelSize <= 0 {
 		return nil, ErrSessionsEventChannelSizeMissing
 	}
@@ -192,12 +179,6 @@ func LoadConfig(configFile string) (*Cluster, error) {
 	}
 	if cfg.Sessions.MaxConnections <= 0 {
 		return nil, ErrSessionsMaxConnectionsMissing
-	}
-	if cfg.System.MaxBytesInMemory <= 0 {
-		return nil, ErrSystemMaxBytesInMemoryMissing
-	}
-	if cfg.System.MaxBytesOnDisk <= 0 {
-		return nil, ErrSystemMaxBytesOnDiskMissing
 	}
 
 	return &cfg, nil
@@ -226,17 +207,12 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 			System:  RateLimiterConfig{Limit: 50.0, Burst: 100},
 			Default: RateLimiterConfig{Limit: 100.0, Burst: 200},
 			Events:  RateLimiterConfig{Limit: 200.0, Burst: 400},
-			Queues:  RateLimiterConfig{Limit: 1000.0, Burst: 500},
 		},
 		Sessions: SessionsConfig{
 			EventChannelSize:         1000,
 			WebSocketReadBufferSize:  4096,
 			WebSocketWriteBufferSize: 4096,
 			MaxConnections:           100,
-		},
-		System: SystemConfig{
-			MaxBytesInMemory: 1000000000,
-			MaxBytesOnDisk:   10000000000,
 		},
 	}
 
