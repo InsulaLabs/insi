@@ -5,8 +5,8 @@ rootPrefix: "some-secure-prefix"
 # If first time launch, non-leaders will auto-follow this leader
 defaultLeader: "node0"
 
-# Directory for storing insudb data
-insudbDir: "/Users/bosley/.config/insi"
+# Directory for storing insi db data
+insiHome: "/Users/bosley/.config/insi"
 
 # TLS will be in same spot on all nodes
 tls:

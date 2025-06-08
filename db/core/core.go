@@ -221,18 +221,6 @@ func (c *Core) Run() {
 	c.mux.Handle("/db/api/v1/batchset", c.rateLimitMiddleware(http.HandlerFunc(c.batchSetHandler), "values"))
 	c.mux.Handle("/db/api/v1/batchdelete", c.rateLimitMiddleware(http.HandlerFunc(c.batchDeleteHandler), "values"))
 
-	// Atomic Operation handlers (using "values" rate limiting category for now)
-	c.mux.Handle("/db/api/v1/atomic/new", c.rateLimitMiddleware(http.HandlerFunc(c.atomicNewHandler), "values"))
-	c.mux.Handle("/db/api/v1/atomic/get", c.rateLimitMiddleware(http.HandlerFunc(c.atomicGetHandler), "values"))
-	c.mux.Handle("/db/api/v1/atomic/add", c.rateLimitMiddleware(http.HandlerFunc(c.atomicAddHandler), "values"))
-	c.mux.Handle("/db/api/v1/atomic/delete", c.rateLimitMiddleware(http.HandlerFunc(c.atomicDeleteHandler), "values"))
-
-	// Queue handlers (using "queues" rate limiting category)
-	c.mux.Handle("/db/api/v1/queue/new", c.rateLimitMiddleware(http.HandlerFunc(c.queueNewHandler), "queues"))
-	c.mux.Handle("/db/api/v1/queue/push", c.rateLimitMiddleware(http.HandlerFunc(c.queuePushHandler), "queues"))
-	c.mux.Handle("/db/api/v1/queue/pop", c.rateLimitMiddleware(http.HandlerFunc(c.queuePopHandler), "queues"))
-	c.mux.Handle("/db/api/v1/queue/delete", c.rateLimitMiddleware(http.HandlerFunc(c.queueDeleteHandler), "queues"))
-
 	// Cache handlers
 	c.mux.Handle("/db/api/v1/cache/set", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache"))
 	c.mux.Handle("/db/api/v1/cache/get", c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache"))

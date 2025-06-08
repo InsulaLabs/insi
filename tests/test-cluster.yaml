@@ -10,8 +10,8 @@ insiHome: "/tmp/insi-test-cluster/data"
 
 # TLS will be in same spot on all nodes
 tls:
-  cert: /home/bosley/.config/insi/keys/server.crt
-  key: /home/bosley/.config/insi/keys/server.key
+  cert: /Users/bosley/.config/insi/keys/server.crt
+  key: /Users/bosley/.config/insi/keys/server.key
 
 clientSkipVerify: true
 serverMustUseTLS: true

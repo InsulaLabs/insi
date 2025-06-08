@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -140,9 +139,8 @@ func New(config Config) (TKV, error) {
 		logger: config.Logger.WithGroup("tkv"),
 		appCtx: config.AppCtx,
 		db: &data{
-			store:  db,
-			cache:  cache,
-			queues: make(map[string][]string), // Initialize queues map
+			store: db,
+			cache: cache,
 		},
 		defaultCacheTTL: config.CacheTTL,
 		identity:        config.Identity,
@@ -332,193 +330,6 @@ func (t *tkv) BatchDelete(keys []string) error {
 
 	if err := wb.Flush(); err != nil {
 		return &ErrInternal{Err: fmt.Errorf("failed to flush batch delete: %w", err)}
-	}
-	return nil
-}
-
-// -------------------------- ATOMIC OPERATIONS
-
-// AtomicNew creates a new key for atomic operations, initializing its value to "0".
-// If overwrite is true and the key exists, it will be reset to "0".
-// If overwrite is false and the key exists, ErrKeyExists is returned.
-func (t *tkv) AtomicNew(key string, overwrite bool) error {
-	return t.db.store.Update(func(txn *badger.Txn) error {
-		_, err := txn.Get([]byte(key))
-		keyExists := err == nil
-
-		if err != nil && !errors.Is(err, badger.ErrKeyNotFound) {
-			return &ErrInternal{Err: fmt.Errorf("failed to check existence for key %s: %w", key, err)}
-		}
-
-		if keyExists && !overwrite {
-			return &ErrKeyExists{Key: key}
-		}
-
-		// If key exists and overwrite is true, or if key doesn't exist, set to "0".
-		// Badger's Set will handle overwriting if the key exists.
-		return txn.Set([]byte(key), []byte("0"))
-	})
-}
-
-// AtomicGet retrieves the int64 value of an atomic key.
-// Returns 0 if the key does not exist (as per interface spec).
-// Returns ErrInvalidState if the key exists but its value is not a valid int64.
-func (t *tkv) AtomicGet(key string) (int64, error) {
-	var value int64
-	errView := t.db.store.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			value = 0 // Key doesn't exist, return 0 and no error for AtomicGet
-			return nil
-		}
-		if err != nil {
-			return &ErrInternal{Err: fmt.Errorf("failed to get key %s: %w", key, err)}
-		}
-
-		valBytes, err := item.ValueCopy(nil)
-		if err != nil {
-			return &ErrInternal{Err: fmt.Errorf("failed to copy value for key %s: %w", key, err)}
-		}
-
-		parsedValue, err := strconv.ParseInt(string(valBytes), 10, 64)
-		if err != nil {
-			value = 0 // Set to 0 on parse error as well
-			return &ErrInvalidState{Key: key, Reason: fmt.Sprintf("value not a valid int64: '%s'", string(valBytes))}
-		}
-		value = parsedValue
-		return nil
-	})
-
-	if errView != nil {
-		return value, errView // Return the value (which might be 0 if parsing failed) and the error
-	}
-	return value, nil
-}
-
-// AtomicAdd adds a delta to an atomic key's int64 value.
-// If the key does not exist, it's treated as starting from 0.
-// The value is floored at 0 (cannot go negative).
-// Returns the new value after the addition.
-func (t *tkv) AtomicAdd(key string, delta int64) (int64, error) {
-	var newValue int64
-	errUpdate := t.db.store.Update(func(txn *badger.Txn) error {
-		item, errGet := txn.Get([]byte(key))
-		var currentValue int64
-
-		if errors.Is(errGet, badger.ErrKeyNotFound) {
-			currentValue = 0 // Key doesn't exist, start from 0
-		} else if errGet != nil {
-			return &ErrInternal{Err: fmt.Errorf("failed to get key %s for add: %w", key, errGet)}
-		} else {
-			valBytes, errCopy := item.ValueCopy(nil)
-			if errCopy != nil {
-				return &ErrInternal{Err: fmt.Errorf("failed to copy value for key %s for add: %w", key, errCopy)}
-			}
-			parsedVal, errParse := strconv.ParseInt(string(valBytes), 10, 64)
-			if errParse != nil {
-				// If current value is not a number, it's an invalid state.
-				// Consider if this should default to 0 and add, or error out.
-				// Erroring out seems safer for "atomic" operations.
-				return &ErrInvalidState{Key: key, Reason: fmt.Sprintf("existing value not a valid int64: '%s'", string(valBytes))}
-			}
-			currentValue = parsedVal
-		}
-
-		newValue = currentValue + delta
-		if newValue < 0 {
-			newValue = 0 // Floor at 0
-		}
-
-		return txn.Set([]byte(key), []byte(strconv.FormatInt(newValue, 10)))
-	})
-
-	if errUpdate != nil {
-		return 0, errUpdate // Return 0 for value if the update failed
-	}
-	return newValue, nil
-}
-
-// AtomicDelete deletes an atomic key.
-// No error is returned if the key does not exist.
-func (t *tkv) AtomicDelete(key string) error {
-	return t.db.store.Update(func(txn *badger.Txn) error {
-		err := txn.Delete([]byte(key))
-		if err != nil {
-			// Badger's Delete can return an error for reasons other than not found (though typically not for a simple Delete)
-			// We wrap it to conform to our error handling.
-			return &ErrInternal{Err: fmt.Errorf("failed to delete key %s: %w", key, err)}
-		}
-		return nil // Badger's Delete is idempotent; no error if key doesn't exist.
-	})
-}
-
-// -------------------------- QUEUE OPERATIONS (In-Memory)
-
-// QueueNew creates a new in-memory queue.
-// If the queue already exists, no error is returned and the existing queue is unchanged.
-func (t *tkv) QueueNew(key string) error {
-	t.db.qLock.Lock()
-	defer t.db.qLock.Unlock()
-
-	if _, exists := t.db.queues[key]; !exists {
-		t.db.queues[key] = make([]string, 0)
-		t.logger.Debug("QueueNew: created new queue", "key", key)
-	} else {
-		t.logger.Debug("QueueNew: queue already exists", "key", key)
-	}
-	return nil
-}
-
-// QueuePush pushes a value onto the end of an in-memory queue.
-// Returns the new length of the queue.
-// If the queue does not exist, it returns ErrQueueNotFound.
-func (t *tkv) QueuePush(key string, value string) (int, error) {
-	t.db.qLock.Lock()
-	defer t.db.qLock.Unlock()
-
-	if queue, exists := t.db.queues[key]; exists {
-		t.db.queues[key] = append(queue, value)
-		newLength := len(t.db.queues[key])
-		t.logger.Debug("QueuePush: pushed value to queue", "key", key, "value", value, "new_length", newLength)
-		return newLength, nil
-	}
-	t.logger.Warn("QueuePush: queue not found", "key", key)
-	return 0, &ErrQueueNotFound{Key: key}
-}
-
-// QueuePop removes and returns the first value from an in-memory queue (FIFO).
-// Returns the value.
-// If the queue does not exist, it returns ErrQueueNotFound.
-// If the queue is empty, it returns ErrQueueEmpty.
-func (t *tkv) QueuePop(key string) (string, error) {
-	t.db.qLock.Lock()
-	defer t.db.qLock.Unlock()
-
-	if queue, exists := t.db.queues[key]; exists {
-		if len(queue) == 0 {
-			t.logger.Warn("QueuePop: queue is empty", "key", key)
-			return "", &ErrQueueEmpty{Key: key}
-		}
-		value := queue[0]
-		t.db.queues[key] = queue[1:]
-		t.logger.Debug("QueuePop: popped value from queue", "key", key, "value", value, "new_length", len(t.db.queues[key]))
-		return value, nil
-	}
-	t.logger.Warn("QueuePop: queue not found", "key", key)
-	return "", &ErrQueueNotFound{Key: key}
-}
-
-// QueueDelete deletes an in-memory queue.
-// If the queue does not exist, no error is returned.
-func (t *tkv) QueueDelete(key string) error {
-	t.db.qLock.Lock()
-	defer t.db.qLock.Unlock()
-
-	if _, exists := t.db.queues[key]; exists {
-		delete(t.db.queues, key)
-		t.logger.Debug("QueueDelete: deleted queue", "key", key)
-	} else {
-		t.logger.Debug("QueueDelete: queue not found, no action needed", "key", key)
 	}
 	return nil
 }
