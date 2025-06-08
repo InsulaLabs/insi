@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
@@ -17,7 +16,7 @@ type ValueStoreIF interface {
 }
 
 type CacheStoreIF interface {
-	RT_SetCache(key string, value string, ttl time.Duration) error
+	RT_SetCache(key string, value string) error
 	RT_GetCache(key string) (string, error)
 	RT_DeleteCache(key string) error
 }

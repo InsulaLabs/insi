@@ -20,7 +20,9 @@ import (
 )
 
 const (
-	EntityRoot = "root"
+	EntityRoot     = "root"
+	MemoryUsageKey = "memory-usage"
+	DiskUsageKey   = "disk-usage"
 )
 
 /*
@@ -58,6 +60,14 @@ type Core struct {
 
 func (c *Core) GetRootClientKey() string {
 	return c.authToken
+}
+
+func (c *Core) GetMemoryUsageFullKey() string {
+	return fmt.Sprintf("%s:tracking:%s", c.cfg.RootPrefix, MemoryUsageKey)
+}
+
+func (c *Core) GetDiskUsageFullKey() string {
+	return fmt.Sprintf("%s:tracking:%s", c.cfg.RootPrefix, DiskUsageKey)
 }
 
 func (s *Core) AddHandler(path string, handler http.Handler) error {
@@ -129,10 +139,6 @@ func New(
 	if rlConfig := clusterCfg.RateLimiters.Events; rlConfig.Limit > 0 {
 		rateLimiters["events"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
-	}
-	if rlConfig := clusterCfg.RateLimiters.Queues; rlConfig.Limit > 0 {
-		rateLimiters["queues"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
-		rlLogger.Info("Initialized rate limiter for 'queues'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 
 	apiCache := ttlcache.New[string, models.TokenData](
@@ -216,22 +222,6 @@ func (c *Core) Run() {
 	c.mux.Handle("/db/api/v1/get", c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values"))
 	c.mux.Handle("/db/api/v1/delete", c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values"))
 	c.mux.Handle("/db/api/v1/iterate/prefix", c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values"))
-
-	// Batch Value handlers
-	c.mux.Handle("/db/api/v1/batchset", c.rateLimitMiddleware(http.HandlerFunc(c.batchSetHandler), "values"))
-	c.mux.Handle("/db/api/v1/batchdelete", c.rateLimitMiddleware(http.HandlerFunc(c.batchDeleteHandler), "values"))
-
-	// Atomic Operation handlers (using "values" rate limiting category for now)
-	c.mux.Handle("/db/api/v1/atomic/new", c.rateLimitMiddleware(http.HandlerFunc(c.atomicNewHandler), "values"))
-	c.mux.Handle("/db/api/v1/atomic/get", c.rateLimitMiddleware(http.HandlerFunc(c.atomicGetHandler), "values"))
-	c.mux.Handle("/db/api/v1/atomic/add", c.rateLimitMiddleware(http.HandlerFunc(c.atomicAddHandler), "values"))
-	c.mux.Handle("/db/api/v1/atomic/delete", c.rateLimitMiddleware(http.HandlerFunc(c.atomicDeleteHandler), "values"))
-
-	// Queue handlers (using "queues" rate limiting category)
-	c.mux.Handle("/db/api/v1/queue/new", c.rateLimitMiddleware(http.HandlerFunc(c.queueNewHandler), "queues"))
-	c.mux.Handle("/db/api/v1/queue/push", c.rateLimitMiddleware(http.HandlerFunc(c.queuePushHandler), "queues"))
-	c.mux.Handle("/db/api/v1/queue/pop", c.rateLimitMiddleware(http.HandlerFunc(c.queuePopHandler), "queues"))
-	c.mux.Handle("/db/api/v1/queue/delete", c.rateLimitMiddleware(http.HandlerFunc(c.queueDeleteHandler), "queues"))
 
 	// Cache handlers
 	c.mux.Handle("/db/api/v1/cache/set", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache"))

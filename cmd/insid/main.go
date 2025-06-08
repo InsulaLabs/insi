@@ -8,11 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/InsulaLabs/insi/runtime"
-	"github.com/InsulaLabs/insi/service/chat"
-	"github.com/InsulaLabs/insi/service/island"
 	"github.com/InsulaLabs/insi/service/objects"
-	"github.com/InsulaLabs/insi/service/provider"
-	"github.com/InsulaLabs/insi/service/static"
 	"github.com/InsulaLabs/insi/service/status"
 )
 
@@ -22,24 +18,7 @@ func main() {
 	// to raft snapshot store that isn't directly used by us
 	log.SetOutput(io.Discard)
 
-	args := os.Args[1:]
-	var staticPath string
-	var remainingArgs []string
-
-	// Check for "plugin" flags that the runtime doesn't know about (the reason they are plugins)
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--static" {
-			if i+1 < len(args) {
-				staticPath = args[i+1]
-				i++ // Skip the path argument
-			} else {
-				slog.Error("--static flag requires a path argument")
-				os.Exit(1)
-			}
-		} else {
-			remainingArgs = append(remainingArgs, args[i])
-		}
-	}
+	remainingArgs := os.Args[1:]
 
 	// The default config file path can be set here
 	// It's passed to the runtime, which handles flag parsing for --config override.
@@ -49,33 +28,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ------------------- Add Plugins -------------------
+	// ------------------- Add Services -------------------
 
-	rt.WithService(status.New(slog.Default().WithGroup("status-plugin")))
+	rt.WithService(status.New(slog.Default().WithGroup("status-service")))
 
-	rt.WithService(provider.New(slog.Default().WithGroup("provider-plugin")))
-
-	rt.WithService(chat.New(
-		slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		}).WithGroup("chat-plugin")),
-	))
-
-	rt.WithService(island.New(slog.Default().WithGroup("island-plugin")))
-
-	objectsDir := filepath.Join(rt.GetHomeDir(), "plugins", "objects")
+	objectsDir := filepath.Join(rt.GetHomeDir(), "services", "objects")
 	if err := os.MkdirAll(objectsDir, 0755); err != nil {
 		slog.Error("Failed to create objects directory", "error", err)
 		os.Exit(1)
 	}
 
-	rt.WithService(objects.New(slog.Default().WithGroup("objects-plugin"), objectsDir))
-
-	if staticPath != "" {
-		staticPlugin := static.New(slog.Default().WithGroup("static-plugin"), staticPath)
-		rt.WithService(staticPlugin)
-		slog.Info("Static plugin enabled", "path", staticPath)
-	}
+	rt.WithService(objects.New(slog.Default().WithGroup("objects-service"), objectsDir))
 
 	// ----------------- Start the runtime ----------------
 

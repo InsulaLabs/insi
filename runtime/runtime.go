@@ -315,7 +315,6 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		BadgerLogLevel: r.currentLogLevel,
 		Directory:      nodeDir,
 		AppCtx:         r.appCtx,
-		CacheTTL:       r.clusterCfg.Cache.StandardTTL,
 	})
 	if err != nil {
 		nodeLogger.Error("Failed to create KV manager", "error", err)

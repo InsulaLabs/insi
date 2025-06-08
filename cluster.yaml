@@ -36,9 +36,6 @@ rateLimiters:
   events:
     limit: 1000
     burst: 1500
-  queues:
-    limit: 1000
-    burst: 1500
 
 sessions:
   eventChannelSize: 256

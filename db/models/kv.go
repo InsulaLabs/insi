@@ -1,7 +1,5 @@
 package models
 
-import "time"
-
 /*
 	Payloads for the various KV, Key, and Cache operations.
 	These are all prefixed by the caller's api key unique identifier.
@@ -18,17 +16,14 @@ type KeyPayload struct {
 	Key string `json:"key"`
 }
 
-type CachePayload struct {
-	Key   string        `json:"key"`
-	Value string        `json:"value"`
-	TTL   time.Duration `json:"ttl"`
-	SetAt time.Time     `json:"set_at"`
+func (p *KVPayload) KeyLength() int {
+	return len(p.Key)
 }
 
-type BatchSetRequest struct {
-	Items []KVPayload `json:"items"`
+func (p *KVPayload) ValueLength() int {
+	return len(p.Value)
 }
 
-type BatchDeleteRequest struct {
-	Keys []string `json:"keys"`
+func (p *KVPayload) TotalLength() int {
+	return p.KeyLength() + p.ValueLength()
 }
