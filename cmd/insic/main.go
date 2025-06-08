@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,7 +16,6 @@ import (
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/db/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
@@ -164,10 +162,6 @@ func main() {
 		handlePublish(cli, cmdArgs)
 	case "subscribe":
 		handleSubscribe(cli, cmdArgs)
-	case "batchset":
-		handleBatchSet(cli, cmdArgs)
-	case "batchdelete":
-		handleBatchDelete(cli, cmdArgs)
 	case "api":
 		handleApi(cli, cmdArgs)
 	case "object":
@@ -512,76 +506,6 @@ func handlePing(c *client.Client, args []string) {
 	for k, v := range resp {
 		fmt.Printf("  %s: %s\n", color.CyanString(k), v)
 	}
-}
-
-func handleBatchSet(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("batchset: requires <filepath.json>")
-		printUsage()
-		os.Exit(1)
-	}
-	filePath := args[0]
-	fileData, err := os.ReadFile(filePath)
-	if err != nil {
-		logger.Error("batchset: failed to read file", "filepath", filePath, "error", err)
-		fmt.Fprintf(os.Stderr, "%s reading file %s: %v\n", color.RedString("Error"), color.CyanString(filePath), err)
-		os.Exit(1)
-	}
-
-	var items []models.KVPayload
-	if err := json.Unmarshal(fileData, &items); err != nil {
-		logger.Error("batchset: failed to unmarshal JSON from file", "filepath", filePath, "error", err)
-		fmt.Fprintf(os.Stderr, "%s unmarshaling JSON from %s: %v\n\t\tExpected format: [ { \"key\": \"k1\", \"value\": \"v1\" }, { \"key\": \"k2\", \"value\": \"v2\" } ]\n",
-			color.RedString("Error"), color.CyanString(filePath), err)
-		os.Exit(1)
-	}
-
-	err = c.BatchSet(items)
-	if err != nil {
-		logger.Error("Batch set failed", "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	// logger.Info("Batch set successful") // Redundant
-	color.HiGreen("OK")
-}
-
-func handleBatchDelete(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("batchdelete: requires <filepath.json>")
-		printUsage()
-		os.Exit(1)
-	}
-	filePath := args[0]
-	fileData, err := os.ReadFile(filePath)
-	if err != nil {
-		logger.Error("batchdelete: failed to read file", "filepath", filePath, "error", err)
-		fmt.Fprintf(os.Stderr, "%s reading file %s: %v\n", color.RedString("Error"), color.CyanString(filePath), err)
-		os.Exit(1)
-	}
-
-	var keys []string
-	if err := json.Unmarshal(fileData, &keys); err != nil {
-		logger.Error("batchdelete: failed to unmarshal JSON from file", "filepath", filePath, "error", err)
-		fmt.Fprintf(os.Stderr, "%s unmarshaling JSON from %s: %v\n\t\tExpected format: [ \"key1\", \"key2\", \"key3\" ]\n",
-			color.RedString("Error"), color.CyanString(filePath), err)
-		os.Exit(1)
-	}
-
-	if len(keys) == 0 {
-		logger.Error("batchdelete: no keys found in JSON file", "filepath", filePath)
-		fmt.Fprintf(os.Stderr, "%s No keys to delete in %s.\n", color.RedString("Error"), color.CyanString(filePath))
-		os.Exit(1)
-	}
-
-	err = c.BatchDelete(keys)
-	if err != nil {
-		logger.Error("batchdelete: failed to delete batch", "error", err)
-		fmt.Fprintf(os.Stderr, "%s deleting batch: %v\n", color.RedString("Error"), err)
-		os.Exit(1)
-	}
-
-	color.HiGreen("OK (%d keys processed)", len(keys))
 }
 
 // --- API Key Command Handlers ---

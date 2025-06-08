@@ -1,6 +1,9 @@
 package tkv
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrKeyNotFound is returned when a key is not found in the store.
 type ErrKeyNotFound struct {
@@ -32,4 +35,9 @@ type ErrDataCorruption struct {
 
 func (e *ErrDataCorruption) Error() string {
 	return fmt.Sprintf("data corruption for key %s: %s", e.Key, e.Reason)
+}
+
+func IsErrKeyNotFound(err error) bool {
+	var e *ErrKeyNotFound
+	return errors.As(err, &e)
 }

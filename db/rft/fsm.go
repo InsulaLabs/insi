@@ -78,7 +78,7 @@ type BatchIF interface {
 }
 
 type CacheStoreIF interface {
-	SetCache(kvp models.CachePayload) error
+	SetCache(kvp models.KVPayload) error
 	GetCache(key string) (string, error)
 	DeleteCache(key string) error
 }
@@ -273,7 +273,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 			kf.logger.Debug("FSM applied delete_value", "key", p.Key)
 			return nil
 		case cmdSetCache:
-			var p models.CachePayload
+			var p models.KVPayload
 			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 				kf.logger.Error("Could not unmarshal set_std_cache payload", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal set_std_cache payload: %w", err)
@@ -613,7 +613,7 @@ func (kf *kvFsm) Iterate(prefix string, offset int, limit int) ([]string, error)
 
 // [cache]
 
-func (kf *kvFsm) SetCache(payload models.CachePayload) error {
+func (kf *kvFsm) SetCache(payload models.KVPayload) error {
 	kf.logger.Debug("SetCache called", "key", payload.Key)
 
 	payloadBytes, err := json.Marshal(payload)

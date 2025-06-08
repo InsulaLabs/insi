@@ -55,6 +55,7 @@ type Cluster struct {
 	RateLimiters     RateLimiters    `yaml:"rateLimiters"`
 	Sessions         SessionsConfig  `yaml:"sessions"`
 	Logging          LoggingConfig   `yaml:"logging"`
+	System           SystemConfig    `yaml:"system"`
 }
 
 type RateLimiterConfig struct {
@@ -69,6 +70,11 @@ type RateLimiters struct {
 	Default RateLimiterConfig `yaml:"default"`
 	Events  RateLimiterConfig `yaml:"events"`
 	Queues  RateLimiterConfig `yaml:"queues"`
+}
+
+type SystemConfig struct {
+	MaxBytesInMemory int `yaml:"maxBytesInMemory"`
+	MaxBytesOnDisk   int `yaml:"maxBytesOnDisk"`
 }
 
 var (
@@ -94,6 +100,8 @@ var (
 	ErrSessionsWebSocketReadBufferSizeMissing  = errors.New("sessions.webSocketReadBufferSize is missing or invalid in config")
 	ErrSessionsWebSocketWriteBufferSizeMissing = errors.New("sessions.webSocketWriteBufferSize is missing or invalid in config")
 	ErrSessionsMaxConnectionsMissing           = errors.New("sessions.maxConnections is missing or invalid in config")
+	ErrSystemMaxBytesInMemoryMissing           = errors.New("system.maxBytesInMemory is missing or invalid in config")
+	ErrSystemMaxBytesOnDiskMissing             = errors.New("system.maxBytesOnDisk is missing or invalid in config")
 )
 
 func LoadConfig(configFile string) (*Cluster, error) {
@@ -185,6 +193,12 @@ func LoadConfig(configFile string) (*Cluster, error) {
 	if cfg.Sessions.MaxConnections <= 0 {
 		return nil, ErrSessionsMaxConnectionsMissing
 	}
+	if cfg.System.MaxBytesInMemory <= 0 {
+		return nil, ErrSystemMaxBytesInMemoryMissing
+	}
+	if cfg.System.MaxBytesOnDisk <= 0 {
+		return nil, ErrSystemMaxBytesOnDiskMissing
+	}
 
 	return &cfg, nil
 }
@@ -219,6 +233,10 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 			WebSocketReadBufferSize:  4096,
 			WebSocketWriteBufferSize: 4096,
 			MaxConnections:           100,
+		},
+		System: SystemConfig{
+			MaxBytesInMemory: 1000000000,
+			MaxBytesOnDisk:   10000000000,
 		},
 	}
 

@@ -20,7 +20,9 @@ import (
 )
 
 const (
-	EntityRoot = "root"
+	EntityRoot     = "root"
+	MemoryUsageKey = "memory-usage"
+	DiskUsageKey   = "disk-usage"
 )
 
 /*
@@ -58,6 +60,14 @@ type Core struct {
 
 func (c *Core) GetRootClientKey() string {
 	return c.authToken
+}
+
+func (c *Core) GetMemoryUsageFullKey() string {
+	return fmt.Sprintf("%s:tracking:%s", c.cfg.RootPrefix, MemoryUsageKey)
+}
+
+func (c *Core) GetDiskUsageFullKey() string {
+	return fmt.Sprintf("%s:tracking:%s", c.cfg.RootPrefix, DiskUsageKey)
 }
 
 func (s *Core) AddHandler(path string, handler http.Handler) error {
@@ -129,10 +139,6 @@ func New(
 	if rlConfig := clusterCfg.RateLimiters.Events; rlConfig.Limit > 0 {
 		rateLimiters["events"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
-	}
-	if rlConfig := clusterCfg.RateLimiters.Queues; rlConfig.Limit > 0 {
-		rateLimiters["queues"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
-		rlLogger.Info("Initialized rate limiter for 'queues'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 
 	apiCache := ttlcache.New[string, models.TokenData](
@@ -216,10 +222,6 @@ func (c *Core) Run() {
 	c.mux.Handle("/db/api/v1/get", c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values"))
 	c.mux.Handle("/db/api/v1/delete", c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values"))
 	c.mux.Handle("/db/api/v1/iterate/prefix", c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values"))
-
-	// Batch Value handlers
-	c.mux.Handle("/db/api/v1/batchset", c.rateLimitMiddleware(http.HandlerFunc(c.batchSetHandler), "values"))
-	c.mux.Handle("/db/api/v1/batchdelete", c.rateLimitMiddleware(http.HandlerFunc(c.batchDeleteHandler), "values"))
 
 	// Cache handlers
 	c.mux.Handle("/db/api/v1/cache/set", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache"))
