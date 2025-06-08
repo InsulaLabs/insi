@@ -12,9 +12,6 @@ import (
 	"github.com/dgraph-io/badger/v3"
 )
 
-const maxBatchItems = 1000                       // Limit the number of items in a single batch
-const maxTotalBatchPayloadSize = 1 * 1024 * 1024 // 1MB limit for the entire batch JSON payload
-
 // -- READ OPERATIONS --
 
 func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
