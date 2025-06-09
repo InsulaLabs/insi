@@ -22,16 +22,6 @@ type tkv struct {
 
 var _ TKV = &tkv{}
 
-// ErrKeyExists is returned when trying to create a key that already exists
-// and overwrite is false.
-type ErrKeyExists struct {
-	Key string
-}
-
-func (e *ErrKeyExists) Error() string {
-	return fmt.Sprintf("key '%s' already exists", e.Key)
-}
-
 // ErrInvalidState is returned when an operation encounters data in an unexpected format.
 type ErrInvalidState struct {
 	Key    string
@@ -340,4 +330,56 @@ func (t *tkv) BatchDelete(keys []string) error {
 		return &ErrInternal{Err: fmt.Errorf("failed to flush batch delete: %w", err)}
 	}
 	return nil
+}
+
+func (t *tkv) SetNX(key string, value string) error {
+	err := t.db.store.Update(func(txn *badger.Txn) error {
+		_, err := txn.Get([]byte(key))
+		if err == nil {
+			return &ErrKeyExists{Key: key}
+		}
+		if !errors.Is(err, badger.ErrKeyNotFound) {
+			return &ErrInternal{Err: err}
+		}
+
+		// Key does not exist, safe to set
+		if err := txn.Set([]byte(key), []byte(value)); err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
+}
+
+func (t *tkv) CompareAndSwap(key string, oldValue, newValue string) error {
+	err := t.db.store.Update(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				return &ErrCASFailed{Key: key}
+			}
+			return &ErrInternal{Err: err}
+		}
+
+		var valBytes []byte
+		err = item.Value(func(val []byte) error {
+			valBytes = append([]byte{}, val...)
+			return nil
+		})
+
+		if err != nil {
+			return &ErrInternal{Err: err}
+		}
+
+		if string(valBytes) != oldValue {
+			return &ErrCASFailed{Key: key}
+		}
+
+		// Value matches, proceed with setting the new value.
+		if err := txn.Set([]byte(key), []byte(newValue)); err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
 }
