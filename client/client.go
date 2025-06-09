@@ -40,6 +40,7 @@ const (
 
 var (
 	ErrKeyNotFound    = errors.New("key not found")
+	ErrConflict       = errors.New("operation failed due to a conflict (e.g., key exists for setnx, or cas failed)")
 	ErrTokenNotFound  = errors.New("token not found")
 	ErrTokenInvalid   = errors.New("token invalid")
 	ErrAPIKeyNotFound = errors.New("api key not found") // New distinct error
@@ -125,12 +126,12 @@ func NewClient(cfg *Config) (*Client, error) {
 	// Determine the host for the connection URL.
 	if connectClientDomain != "" {
 		connectHost = connectClientDomain // Prefer ClientDomain if available
-		clientLogger.Info("Using ClientDomain for connection URL host", "domain", connectClientDomain)
+		clientLogger.Debug("Using ClientDomain for connection URL host", "domain", connectClientDomain)
 	} else {
 		// Fallback to host from HostPort if ClientDomain is not set.
 		hostFromHostPort, _, _ := net.SplitHostPort(connectHost) // Error already handled for port, ignore here for host.
 		connectHost = hostFromHostPort
-		clientLogger.Info("Using host from HostPort for connection URL (ClientDomain not provided)", "host", connectHost)
+		clientLogger.Debug("Using host from HostPort for connection URL (ClientDomain not provided)", "host", connectHost)
 	}
 
 	// We ENFORCE HTTPS - NEVER PERMIT HTTP
@@ -153,9 +154,9 @@ func NewClient(cfg *Config) (*Client, error) {
 		// and certificate validation. This works correctly across redirects.
 		// Our `connectHost` (derived from ClientDomain or HostPort) is already used in the baseURL.
 		// tlsClientCfg.ServerName = connectHost // REMOVED: Let crypto/tls handle it based on target host
-		clientLogger.Info("TLS verification active. ServerName for SNI will be derived from target URL host.", "initial_target_host", connectHost)
+		clientLogger.Debug("TLS verification active. ServerName for SNI will be derived from target URL host.", "initial_target_host", connectHost)
 	} else {
-		clientLogger.Info("TLS verification is skipped.")
+		clientLogger.Debug("TLS verification is skipped.")
 	}
 
 	transport := &http.Transport{
@@ -174,7 +175,7 @@ func NewClient(cfg *Config) (*Client, error) {
 		},
 	}
 
-	clientLogger.Info("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify /*, "explicit_tls_server_name_set", tlsClientCfg.ServerName != "" */) // tlsClientCfg.ServerName will be empty
+	clientLogger.Debug("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify /*, "explicit_tls_server_name_set", tlsClientCfg.ServerName != "" */) // tlsClientCfg.ServerName will be empty
 
 	return &Client{
 		baseURL:    baseURL,
@@ -292,6 +293,14 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 			return fmt.Errorf("endpoint not found (404) at %s: %s", currentReqURL.String(), string(bodyBytes))
 		}
 
+		if resp.StatusCode == http.StatusConflict {
+			bodyBytes, _ := io.ReadAll(resp.Body) // Read body for specific conflict reason
+			c.logger.Warn("Conflict response from server", "url", currentReqURL.String(), "body", string(bodyBytes))
+			// The body contains a useful message like "key '...' already exists"
+			// But for programmatic checking, we return a typed error.
+			return ErrConflict
+		}
+
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			c.logger.Warn("Received non-2xx status code", "method", originalMethod, "url", currentReqURL.String(), "status_code", resp.StatusCode)
 
@@ -359,6 +368,29 @@ func (c *Client) Set(key, value string) error {
 	}
 	payload := map[string]string{"key": key, "value": value}
 	return c.doRequest(http.MethodPost, "db/api/v1/set", nil, payload, nil)
+}
+
+// SetNX sets a value for a given key, but only if the key does not already exist.
+func (c *Client) SetNX(key, value string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	payload := map[string]string{"key": key, "value": value}
+	return c.doRequest(http.MethodPost, "db/api/v1/setnx", nil, payload, nil)
+}
+
+// CompareAndSwap atomically swaps the value of a key from an old value to a new value.
+// The operation fails if the current value does not match the old value.
+func (c *Client) CompareAndSwap(key, oldValue, newValue string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	payload := models.CASPayload{
+		Key:      key,
+		OldValue: oldValue,
+		NewValue: newValue,
+	}
+	return c.doRequest(http.MethodPost, "db/api/v1/cas", nil, payload, nil)
 }
 
 // Delete removes a key and its value.

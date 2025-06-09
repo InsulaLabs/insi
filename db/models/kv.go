@@ -16,6 +16,13 @@ type KeyPayload struct {
 	Key string `json:"key"`
 }
 
+// CASPayload represents the payload for a Compare-And-Swap operation.
+type CASPayload struct {
+	Key      string `json:"key"`
+	OldValue string `json:"old_value"`
+	NewValue string `json:"new_value"`
+}
+
 func (p *KVPayload) KeyLength() int {
 	return len(p.Key)
 }

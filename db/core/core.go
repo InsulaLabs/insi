@@ -222,6 +222,8 @@ func (c *Core) Run() {
 	c.mux.Handle("/db/api/v1/get", c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values"))
 	c.mux.Handle("/db/api/v1/delete", c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values"))
 	c.mux.Handle("/db/api/v1/iterate/prefix", c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values"))
+	c.mux.Handle("/db/api/v1/setnx", c.rateLimitMiddleware(http.HandlerFunc(c.setNXHandler), "values"))
+	c.mux.Handle("/db/api/v1/cas", c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values"))
 
 	// Cache handlers
 	c.mux.Handle("/db/api/v1/cache/set", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache"))
