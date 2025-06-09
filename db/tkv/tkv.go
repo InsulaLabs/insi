@@ -35,6 +35,8 @@ type TKVDataHandler interface {
 	Iterate(prefix string, offset int, limit int) ([]string, error)
 	Set(key string, value string) error
 	Delete(key string) error
+	SetNX(key string, value string) error
+	CompareAndSwap(key string, oldValue, newValue string) error
 }
 
 type TKVCacheHandler interface {

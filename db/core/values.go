@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/db/tkv"
 	"github.com/dgraph-io/badger/v3"
+	"github.com/pkg/errors"
 )
 
 // -- READ OPERATIONS --
@@ -219,6 +221,122 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	err = c.fsm.Delete(p.Key)
 	if err != nil {
 		c.logger.Error("Could not unset value via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, AnyUser())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	c.logger.Debug("SetNXHandler", "entity", td.Entity)
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		c.logger.Error("Could not read body for setnx request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var p models.KVPayload
+	if err := json.Unmarshal(bodyBytes, &p); err != nil {
+		c.logger.Error("Invalid JSON payload for setnx request", "error", err)
+		http.Error(w, "Invalid JSON payload for setnx: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if p.Key == "" {
+		http.Error(w, "Missing key in setnx request payload", http.StatusBadRequest)
+		return
+	}
+
+	// prefix to lock to the api key holding entity
+	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
+
+	if sizeTooLargeForStorage(p.Value) {
+		http.Error(w, "Value is too large", http.StatusBadRequest)
+		return
+	}
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
+
+	err = c.fsm.SetNX(p)
+	if err != nil {
+		var keyExistsErr *tkv.ErrKeyExists
+		if errors.As(err, &keyExistsErr) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		c.logger.Error("Could not write key-value via FSM on SetNX", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, AnyUser())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	c.logger.Debug("CompareAndSwapHandler", "entity", td.Entity)
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		c.logger.Error("Could not read body for cas request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var p models.CASPayload
+	if err := json.Unmarshal(bodyBytes, &p); err != nil {
+		c.logger.Error("Invalid JSON payload for cas request", "error", err)
+		http.Error(w, "Invalid JSON payload for cas: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if p.Key == "" {
+		http.Error(w, "Missing key in cas request payload", http.StatusBadRequest)
+		return
+	}
+
+	// prefix to lock to the api key holding entity
+	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
+
+	if sizeTooLargeForStorage(p.NewValue) {
+		http.Error(w, "Value is too large", http.StatusBadRequest)
+		return
+	}
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
+
+	err = c.fsm.CompareAndSwap(p)
+	if err != nil {
+		var casFailedErr *tkv.ErrCASFailed
+		if errors.As(err, &casFailedErr) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		c.logger.Error("Could not write key-value via FSM on CAS", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

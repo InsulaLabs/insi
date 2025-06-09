@@ -49,6 +49,10 @@ echo "🚀 Running crud-iter.sh..."
 run_test_script /tmp/insi-test-cluster/crud-iter.sh
 echo "✅ Success: crud-iter.sh completed."
 
+echo "🚀 Running cas-setnx.sh..."
+run_test_script /tmp/insi-test-cluster/cas-setnx.sh
+echo "✅ Success: cas-setnx.sh completed."
+
 echo "🚀 Running events.sh..."
 run_test_script /tmp/insi-test-cluster/events.sh
 echo "✅ Success: events.sh completed."

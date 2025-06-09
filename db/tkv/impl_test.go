@@ -406,3 +406,111 @@ func TestTKV_BatchOperations(t *testing.T) {
 		// Verify non-existent keys don't cause issues (implicitly tested by no error from BatchDelete)
 	})
 }
+
+func TestTKV_SetNX(t *testing.T) {
+	ctx := context.Background()
+	tkvTest, err := createTestTKV(ctx)
+	if err != nil {
+		t.Fatalf("Failed to create test TKV: %v", err)
+	}
+	defer tkvTest.Cleanup()
+
+	t.Run("SetNX on a new key", func(t *testing.T) {
+		key := "newKey"
+		value := "newValue"
+		err := tkvTest.tkv.SetNX(key, value)
+		if err != nil {
+			t.Errorf("SetNX() on new key error = %v, wantErr nil", err)
+		}
+		retrieved, err := tkvTest.tkv.Get(key)
+		if err != nil {
+			t.Errorf("Get() after SetNX failed: %v", err)
+		}
+		if retrieved != value {
+			t.Errorf("Get() after SetNX got = %s, want = %s", retrieved, value)
+		}
+	})
+
+	t.Run("SetNX on an existing key", func(t *testing.T) {
+		key := "existingKey"
+		value := "existingValue"
+		tkvTest.tkv.Set(key, value) // Pre-populate
+
+		err := tkvTest.tkv.SetNX(key, "anotherValue")
+		if err == nil {
+			t.Fatal("SetNX() on existing key expected an error, got nil")
+		}
+
+		var keyExistsErr *ErrKeyExists
+		if !errors.As(err, &keyExistsErr) {
+			t.Errorf("SetNX() on existing key expected ErrKeyExists, got %T", err)
+		}
+		if keyExistsErr.Key != key {
+			t.Errorf("ErrKeyExists has wrong key, got = %s, want = %s", keyExistsErr.Key, key)
+		}
+	})
+}
+
+func TestTKV_CompareAndSwap(t *testing.T) {
+	ctx := context.Background()
+	tkvTest, err := createTestTKV(ctx)
+	if err != nil {
+		t.Fatalf("Failed to create test TKV: %v", err)
+	}
+	defer tkvTest.Cleanup()
+
+	key := "casKey"
+	initialValue := "initial"
+	newValue := "swapped"
+
+	// Setup initial value
+	if err := tkvTest.tkv.Set(key, initialValue); err != nil {
+		t.Fatalf("Setup: Set failed: %v", err)
+	}
+
+	t.Run("CAS with correct old value", func(t *testing.T) {
+		err := tkvTest.tkv.CompareAndSwap(key, initialValue, newValue)
+		if err != nil {
+			t.Errorf("CompareAndSwap() with correct value failed: %v", err)
+		}
+		retrieved, err := tkvTest.tkv.Get(key)
+		if err != nil {
+			t.Errorf("Get() after successful CAS failed: %v", err)
+		}
+		if retrieved != newValue {
+			t.Errorf("Get() after successful CAS got = %s, want = %s", retrieved, newValue)
+		}
+	})
+
+	t.Run("CAS with incorrect old value", func(t *testing.T) {
+		// Value is now `newValue`
+		err := tkvTest.tkv.CompareAndSwap(key, "wrongOldValue", "someOtherValue")
+		if err == nil {
+			t.Fatal("CompareAndSwap() with incorrect value expected an error, got nil")
+		}
+		var casFailedErr *ErrCASFailed
+		if !errors.As(err, &casFailedErr) {
+			t.Errorf("CompareAndSwap() with incorrect value expected ErrCASFailed, got %T", err)
+		}
+		if casFailedErr.Key != key {
+			t.Errorf("ErrCASFailed has wrong key, got = %s, want = %s", casFailedErr.Key, key)
+		}
+		// Ensure the value was not changed
+		retrieved, _ := tkvTest.tkv.Get(key)
+		if retrieved != newValue {
+			t.Errorf("Value should not have changed on failed CAS, got = %s, want = %s", retrieved, newValue)
+		}
+	})
+
+	t.Run("CAS on non-existent key", func(t *testing.T) {
+		nonExistentKey := "nonExistent"
+		err := tkvTest.tkv.CompareAndSwap(nonExistentKey, "any", "any")
+		if err == nil {
+			t.Fatal("CompareAndSwap() on non-existent key expected an error, got nil")
+		}
+		var casFailedErr *ErrCASFailed
+		if !errors.As(err, &casFailedErr) {
+			t.Errorf("CompareAndSwap() on non-existent key expected ErrCASFailed, got %T", err)
+		}
+	})
+}

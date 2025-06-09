@@ -64,7 +64,7 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 			return nil, fmt.Errorf("targetNodeID is empty and no DefaultLeader is set in config")
 		}
 		nodeToConnect = cfg.DefaultLeader
-		logger.Info("No target node specified, using DefaultLeader", "node_id", color.CyanString(nodeToConnect))
+		logger.Debug("No target node specified, using DefaultLeader", "node_id", color.CyanString(nodeToConnect))
 	}
 
 	nodeDetails, ok := cfg.Nodes[nodeToConnect]
@@ -148,6 +148,10 @@ func main() {
 		handleGet(cli, cmdArgs)
 	case "set":
 		handleSet(cli, cmdArgs)
+	case "setnx":
+		handleSetNX(cli, cmdArgs)
+	case "cas":
+		handleCAS(cli, cmdArgs)
 	case "delete":
 		handleDelete(cli, cmdArgs)
 	case "iterate":
@@ -180,6 +184,8 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "\nCommands:\n")
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("setnx"), color.CyanString("<key>"), color.CyanString("<value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cas"), color.CyanString("<key>"), color.CyanString("<old_value>"), color.CyanString("<new_value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"))
@@ -300,6 +306,46 @@ func handleSet(c *client.Client, args []string) {
 		os.Exit(1)
 	}
 	// logger.Info("Set successful", "key", key) // Redundant
+	color.HiGreen("OK")
+}
+
+func handleSetNX(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("setnx: requires <key> <value>")
+		printUsage()
+		os.Exit(1)
+	}
+	key, value := args[0], args[1]
+	err := c.SetNX(key, value)
+	if err != nil {
+		if errors.Is(err, client.ErrConflict) {
+			fmt.Fprintf(os.Stderr, "%s Key '%s' already exists.\n", color.RedString("Conflict:"), color.CyanString(key))
+		} else {
+			logger.Error("SetNX failed", "key", key, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleCAS(c *client.Client, args []string) {
+	if len(args) != 3 {
+		logger.Error("cas: requires <key> <old_value> <new_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	key, oldValue, newValue := args[0], args[1], args[2]
+	err := c.CompareAndSwap(key, oldValue, newValue)
+	if err != nil {
+		if errors.Is(err, client.ErrConflict) {
+			fmt.Fprintf(os.Stderr, "%s Compare-and-swap failed for key '%s'. The current value does not match the expected old value.\n", color.RedString("Conflict:"), color.CyanString(key))
+		} else {
+			logger.Error("CAS failed", "key", key, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
 	color.HiGreen("OK")
 }
 
