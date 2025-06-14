@@ -37,6 +37,8 @@ type TKVDataHandler interface {
 	Delete(key string) error
 	SetNX(key string, value string) error
 	CompareAndSwap(key string, oldValue, newValue string) error
+
+	BumpInteger(key string, delta int) error
 }
 
 type TKVCacheHandler interface {

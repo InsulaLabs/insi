@@ -225,6 +225,22 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 		return "", fmt.Errorf("failed to set API key in FSM for %s: %w", keyName, err)
 	}
 
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMemoryUsage(keyUUID),
+		Value: "0",
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyDiskUsage(keyUUID),
+		Value: "0",
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyEvents(keyUUID),
+		Value: "0",
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeySubscribers(keyUUID),
+		Value: "0",
+	})
 	return actualKey, nil
 }
 
@@ -252,6 +268,11 @@ func (c *Core) deleteExistingApiKey(key string) error {
 		c.logger.Error("Failed to delete API key from FSM", "key", apiKeyFsmStorageKey, "error", err)
 		return fmt.Errorf("failed to delete API key from FSM for %s: %w", td.Entity, err)
 	}
+
+	c.fsm.Delete(WithApiKeyMemoryUsage(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyDiskUsage(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyEvents(td.KeyUUID))
+	c.fsm.Delete(WithApiKeySubscribers(td.KeyUUID))
 
 	c.apiCache.Delete(key)
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/InsulaLabs/insula/security/badge"
@@ -459,6 +460,38 @@ func (t *tkv) CompareAndSwap(key string, oldValue, newValue string) error {
 
 		// Value matches, proceed with setting the new value.
 		if err := txn.Set([]byte(key), []byte(newValue)); err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
+}
+
+func (t *tkv) BumpInteger(key string, delta int) error {
+	err := t.db.store.Update(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			return &ErrInternal{Err: err}
+		}
+
+		var valBytes []byte
+		err = item.Value(func(val []byte) error {
+			valBytes = append([]byte{}, val...)
+			return nil
+		})
+
+		if err != nil {
+			return &ErrInternal{Err: err}
+		}
+
+		val, err := strconv.Atoi(string(valBytes))
+		if err != nil {
+			return &ErrInternal{Err: err}
+		}
+
+		val += delta
+
+		if err := txn.Set([]byte(key), []byte(strconv.Itoa(val))); err != nil {
 			return &ErrInternal{Err: err}
 		}
 		return nil

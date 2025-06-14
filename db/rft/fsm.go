@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"unsafe"
 
 	"time"
@@ -72,6 +73,8 @@ type ValueStoreIF interface {
 	Get(key string) (string, error)
 	Delete(key string) error
 	Iterate(prefix string, offset int, limit int) ([]string, error)
+
+	BumpInteger(key string, delta int) error
 }
 
 type CacheStoreIF interface {
@@ -120,6 +123,8 @@ const (
 
 	cmdSetCacheNX          = "set_cache_nx"
 	cmdCompareAndSwapCache = "compare_and_swap_cache"
+
+	cmdBumpInteger = "bump_integer"
 )
 
 // kvFsm holds references to both BadgerDB instances.
@@ -386,6 +391,26 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 			*/
 			kf.eventRecvr.Receive(p.Topic, p.Data)
 			return nil
+		case cmdBumpInteger:
+			kf.logger.Debug("Applying CmdBumpInteger", "payload", string(cmd.Payload))
+			var p models.KVPayload
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal bump_integer payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal bump_integer payload: %w", err)
+			}
+			delta, err := strconv.Atoi(p.Value)
+			if err != nil {
+				kf.logger.Error("Could not unmarshal bump_integer value", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal bump_integer value: %w", err)
+			}
+
+			err = kf.tkv.BumpInteger(p.Key, delta)
+			if err != nil {
+				kf.logger.Error("TKV BumpInteger failed", "key", p.Key, "error", err)
+				return fmt.Errorf("tkv BumpInteger failed (key %s): %w", p.Key, err)
+			}
+			kf.logger.Debug("FSM applied bump_integer", "key", p.Key)
+			return nil
 		default:
 			kf.logger.Error("Unknown raft command type in Apply", "command_type", cmd.Type)
 			return fmt.Errorf("unknown raft command type: %s", cmd.Type)
@@ -642,6 +667,45 @@ func (kf *kvFsm) Iterate(prefix string, offset int, limit int) ([]string, error)
 	}
 	kf.logger.Debug("Iterate successful", "prefix", prefix, "offset", offset, "limit", limit)
 	return value, nil
+}
+
+func (kf *kvFsm) BumpInteger(key string, delta int) error {
+	kf.logger.Debug("BumpInteger called", "key", key, "delta", delta)
+
+	payload := models.KVPayload{
+		Key:   key,
+		Value: strconv.Itoa(delta),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for bump_integer", "key", key, "error", err)
+		return fmt.Errorf("could not marshal payload for bump_integer: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdBumpInteger,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for bump_integer", "key", key, "error", err)
+		return fmt.Errorf("could not marshal raft command for bump_integer: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for BumpInteger", "key", key, "error", err)
+		return fmt.Errorf("raft Apply for BumpInteger failed (key %s): %w", key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for BumpInteger", "key", key, "error", responseErr)
+		return fmt.Errorf("fsm application error for BumpInteger (key %s): %w", key, responseErr)
+	}
+	kf.logger.Debug("BumpInteger Raft Apply successful", "key", key)
+	return nil
 }
 
 // [cache]

@@ -169,12 +169,42 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	exists := false
+	existingValue, err := c.fsm.Get(p.Key)
+	if err != nil {
+		var nfErr *tkv.ErrKeyNotFound
+		// We only care about key not found, other errors should be returned.
+		if !errors.As(err, &nfErr) {
+			c.logger.Error("Could not get existing value for value", "error", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		exists = false
+	} else {
+		exists = true
+	}
+
 	err = c.fsm.Set(p)
 	if err != nil {
 		c.logger.Error("Could not write key-value via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	if !exists {
+		if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), p.TotalLength()); err != nil {
+			c.logger.Error("Could not bump integer via FSM for disk usage", "error", err)
+			// continue on, we don't want to block the request on this
+		}
+	} else {
+		if err := c.fsm.BumpInteger(
+			WithApiKeyDiskUsage(td.KeyUUID),
+			CalculateDelta(models.KVPayload{Key: p.Key, Value: existingValue}, p)); err != nil {
+			c.logger.Error("Could not bump integer via FSM for disk usage", "error", err)
+			// continue on, we don't want to block the request on this
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -218,12 +248,33 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existingValue, err := c.fsm.Get(p.Key)
+	if err != nil {
+		var nfErr *tkv.ErrKeyNotFound
+		if errors.As(err, &nfErr) {
+			// Key doesn't exist, so the delete is a no-op.
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		c.logger.Error("Could not get existing value for value deletion", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	err = c.fsm.Delete(p.Key)
 	if err != nil {
 		c.logger.Error("Could not unset value via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	// Decrement memory usage
+	size := len(p.Key) + len(existingValue)
+	if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), -size); err != nil {
+		c.logger.Error("Could not bump integer via FSM for disk usage on delete", "error", err)
+		// Don't fail the whole request, but log it.
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 

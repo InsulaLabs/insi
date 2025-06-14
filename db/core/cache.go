@@ -11,6 +11,7 @@ import (
 
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/tkv"
+	"github.com/dgraph-io/badger/v3"
 )
 
 // -- READ OPERATIONS --
@@ -53,12 +54,6 @@ func (c *Core) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	/*
-
-		NOTE: Due to limiting restrictions, caches have been set
-			  to root-only operations
-
-	*/
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -103,12 +98,40 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	exists := false
+	existingValue, err := c.fsm.GetCache(p.Key)
+	if err != nil {
+		if !errors.Is(err, badger.ErrKeyNotFound) {
+			c.logger.Error("Could not get existing value for cache", "error", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		exists = false
+	} else {
+		exists = true
+	}
+
 	err = c.fsm.SetCache(p)
 	if err != nil {
 		c.logger.Error("Could not set cache via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	if !exists {
+		if err := c.fsm.BumpInteger(WithApiKeyMemoryUsage(td.KeyUUID), p.TotalLength()); err != nil {
+			c.logger.Error("Could not bump integer via FSM for memory usage", "error", err)
+			// continue on, we don't want to block the request on this
+		}
+	} else {
+		if err := c.fsm.BumpInteger(
+			WithApiKeyMemoryUsage(td.KeyUUID),
+			CalculateDelta(models.KVPayload{Key: p.Key, Value: existingValue}, p)); err != nil {
+			c.logger.Error("Could not bump integer via FSM for memory usage", "error", err)
+			// continue on, we don't want to block the request on this
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -159,12 +182,31 @@ func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existingValue, err := s.fsm.GetCache(p.Key)
+	if err != nil {
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		s.logger.Error("Could not get existing value for cache deletion", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	err = s.fsm.DeleteCache(p.Key)
 	if err != nil {
 		s.logger.Error("Could not delete cache via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	// Decrement memory usage
+	size := len(p.Key) + len(existingValue)
+	if err := s.fsm.BumpInteger(WithApiKeyMemoryUsage(td.KeyUUID), -size); err != nil {
+		s.logger.Error("Could not bump integer via FSM for memory usage on delete", "error", err)
+		// Don't fail the whole request, but log it.
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 

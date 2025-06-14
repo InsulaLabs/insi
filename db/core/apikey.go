@@ -2,11 +2,43 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/InsulaLabs/insi/db/models"
 )
+
+const (
+	ApiTrackMemoryPrefix      = "internal:api_key_memory_usage"
+	ApiTrackDiskPrefix        = "internal:api_key_disk_usage"
+	ApiTrackEventsPrefix      = "internal:api_key_events"
+	ApiTrackSubscribersPrefix = "internal:api_key_subscribers"
+)
+
+func WithApiKeyMemoryUsage(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTrackMemoryPrefix, key)
+}
+
+func WithApiKeyDiskUsage(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTrackDiskPrefix, key)
+}
+
+func WithApiKeyEvents(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTrackEventsPrefix, key)
+}
+
+func WithApiKeySubscribers(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTrackSubscribersPrefix, key)
+}
+
+// CalculateDelta returns the delta between the old and new payloads.
+// If the new payload is smaller, the delta will be negative.
+// If the new payload is larger, the delta will be positive.
+// If the new payload is the same, the delta will be 0.
+func CalculateDelta(old models.KVPayload, new models.KVPayload) int {
+	return new.TotalLength() - old.TotalLength()
+}
 
 // These functions are meant to be used with ValidateToken. they seem silly but it helps
 // clarify the point of call when reasoning about the code
