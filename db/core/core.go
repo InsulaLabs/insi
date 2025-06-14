@@ -341,4 +341,32 @@ func (c *Core) ensureRootKeyTrackersExist() {
 			)
 		}
 	}
+
+	keysToSet = []string{
+		WithApiKeyMaxMemoryUsage(c.cfg.RootPrefix),
+		WithApiKeyMaxDiskUsage(c.cfg.RootPrefix),
+		WithApiKeyMaxEvents(c.cfg.RootPrefix),
+		WithApiKeyMaxSubscriptions(c.cfg.RootPrefix),
+	}
+
+	for _, key := range keysToSet {
+		val, err := c.fsm.Get(key)
+		if tkv.IsErrKeyNotFound(err) {
+			c.logger.Info("set root tracker", "key", strings.TrimSuffix(key, c.cfg.RootPrefix))
+			color.HiRed("set root tracker key %s", strings.TrimSuffix(key, c.cfg.RootPrefix))
+			c.fsm.Set(models.KVPayload{
+				Key:   key,
+				Value: fmt.Sprintf("%d", 1024*1024*1024*10), // 10GB or some wild amount of events/ subscriptions
+			})
+		} else {
+			color.HiCyan("Key already exists %s %s", strings.TrimSuffix(key, c.cfg.RootPrefix), val)
+			c.logger.Info(
+				"Key already exists",
+				"key",
+				strings.TrimSuffix(key, c.cfg.RootPrefix), // its a suffix, not a prefix
+				"value",
+				val,
+			)
+		}
+	}
 }

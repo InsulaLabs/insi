@@ -17,6 +17,10 @@ type Config struct {
 	Logger     *slog.Logger
 	SetupCtx   context.Context
 	InsiClient *client.Client
+
+	DoAddApiKeyMgmt bool
+	DoAddConsole    bool
+	DoAddOS         bool
 }
 
 type OVM struct {
@@ -42,14 +46,23 @@ func New(cfg *Config) (*OVM, error) {
 	if err := ovm.addEventEmitter(cfg.SetupCtx); err != nil {
 		return nil, err
 	}
-	if err := ovm.addConsole(cfg.SetupCtx); err != nil {
-		return nil, err
+	if cfg.DoAddConsole {
+		if err := ovm.addConsole(cfg.SetupCtx); err != nil {
+			return nil, err
+		}
 	}
-	if err := ovm.addOS(cfg.SetupCtx); err != nil {
-		return nil, err
+	if cfg.DoAddOS {
+		if err := ovm.addOS(cfg.SetupCtx); err != nil {
+			return nil, err
+		}
 	}
 	if err := ovm.addTime(cfg.SetupCtx); err != nil {
 		return nil, err
+	}
+	if cfg.DoAddApiKeyMgmt {
+		if err := ovm.addApiKeyMgmt(cfg.SetupCtx); err != nil {
+			return nil, err
+		}
 	}
 
 	return ovm, nil
@@ -387,4 +400,40 @@ func (o *OVM) addTime(ctx context.Context) error {
 	})
 
 	return o.vm.Set("time", timeObj)
+}
+
+func (o *OVM) addApiKeyMgmt(ctx context.Context) error {
+	apiKeyMgmtObj, err := o.vm.Object(`({})`)
+	if err != nil {
+		return fmt.Errorf("failed to create api key management object: %w", err)
+	}
+
+	// Create API Key
+	apiKeyMgmtObj.Set("create", func(call otto.FunctionCall) otto.Value {
+		keyName, _ := call.Argument(0).ToString()
+		if keyName == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "keyName cannot be empty"))
+		}
+		resp, err := o.insiClient.CreateAPIKey(keyName)
+		if err != nil {
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		val, _ := o.vm.ToValue(resp)
+		return val
+	})
+
+	// Delete API Key
+	apiKeyMgmtObj.Set("delete", func(call otto.FunctionCall) otto.Value {
+		apiKey, _ := call.Argument(0).ToString()
+		if apiKey == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "apiKey cannot be empty"))
+		}
+		err := o.insiClient.DeleteAPIKey(apiKey)
+		if err != nil {
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		return otto.Value{}
+	})
+
+	return o.vm.Set("apiKeyMgmt", apiKeyMgmtObj)
 }

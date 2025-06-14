@@ -241,6 +241,22 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 		Key:   WithApiKeySubscriptions(keyUUID),
 		Value: "0",
 	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMaxMemoryUsage(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultMaxMemoryUsage),
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMaxDiskUsage(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultMaxDiskUsage),
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMaxEvents(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultMaxEvents),
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMaxSubscriptions(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultMaxSubscriptions),
+	})
 	return actualKey, nil
 }
 
@@ -273,6 +289,10 @@ func (c *Core) deleteExistingApiKey(key string) error {
 	c.fsm.Delete(WithApiKeyDiskUsage(td.KeyUUID))
 	c.fsm.Delete(WithApiKeyEvents(td.KeyUUID))
 	c.fsm.Delete(WithApiKeySubscriptions(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyMaxEvents(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyMaxSubscriptions(td.KeyUUID))
 
 	c.apiCache.Delete(key)
 
