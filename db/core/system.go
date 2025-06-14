@@ -576,17 +576,17 @@ func (c *Core) callerLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limitsResponse := models.LimitsResponse{
-		MaxLimits: models.Limits{
-			BytesOnDisk:     &diskLimitForKeyInt,
-			BytesInMemory:   &memLimitForKeyInt,
-			EventsPerSecond: &eventsLimitForKeyInt,
-			Subscribers:     &subscribersLimitForKeyInt,
+		MaxLimits: &models.Limits{
+			BytesOnDisk:   &diskLimitForKeyInt,
+			BytesInMemory: &memLimitForKeyInt,
+			EventsEmitted: &eventsLimitForKeyInt,
+			Subscribers:   &subscribersLimitForKeyInt,
 		},
-		Current: models.Limits{
-			BytesOnDisk:     &diskUsageInt,
-			BytesInMemory:   &memUsageInt,
-			EventsPerSecond: &eventsUsageInt,
-			Subscribers:     &subscribersUsageInt,
+		CurrentUsage: &models.Limits{
+			BytesOnDisk:   &diskUsageInt,
+			BytesInMemory: &memUsageInt,
+			EventsEmitted: &eventsUsageInt,
+			Subscribers:   &subscribersUsageInt,
 		},
 	}
 
@@ -651,10 +651,10 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.Limits.EventsPerSecond != nil {
+	if req.Limits.EventsEmitted != nil {
 		if err := c.fsm.Set(models.KVPayload{
 			Key:   WithApiKeyMaxEvents(target.KeyUUID),
-			Value: fmt.Sprintf("%d", *req.Limits.EventsPerSecond),
+			Value: fmt.Sprintf("%d", *req.Limits.EventsEmitted),
 		}); err != nil {
 			c.logger.Error("failed to set events limit", "error", err)
 			http.Error(w, "failed to set events limit", http.StatusInternalServerError)
@@ -822,17 +822,17 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limitsResponse := models.LimitsResponse{
-		MaxLimits: models.Limits{
-			BytesOnDisk:     &diskLimitForKeyInt,
-			BytesInMemory:   &memLimitForKeyInt,
-			EventsPerSecond: &eventsLimitForKeyInt,
-			Subscribers:     &subscribersLimitForKeyInt,
+		MaxLimits: &models.Limits{
+			BytesOnDisk:   &diskLimitForKeyInt,
+			BytesInMemory: &memLimitForKeyInt,
+			EventsEmitted: &eventsLimitForKeyInt,
+			Subscribers:   &subscribersLimitForKeyInt,
 		},
-		Current: models.Limits{
-			BytesOnDisk:     &diskUsageInt,
-			BytesInMemory:   &memUsageInt,
-			EventsPerSecond: &eventsUsageInt,
-			Subscribers:     &subscribersUsageInt,
+		CurrentUsage: &models.Limits{
+			BytesOnDisk:   &diskUsageInt,
+			BytesInMemory: &memUsageInt,
+			EventsEmitted: &eventsUsageInt,
+			Subscribers:   &subscribersUsageInt,
 		},
 	}
 

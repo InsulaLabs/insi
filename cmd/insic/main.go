@@ -842,24 +842,24 @@ func handleApiLimits(c *client.Client, args []string) {
 	if resp.MaxLimits.BytesInMemory != nil {
 		fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
 	}
-	if resp.MaxLimits.EventsPerSecond != nil {
-		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsPerSecond)
+	if resp.MaxLimits.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsEmitted)
 	}
 	if resp.MaxLimits.Subscribers != nil {
 		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
 	}
 	fmt.Println(color.CyanString("\nCurrent Usage:"))
-	if resp.Current.BytesOnDisk != nil {
-		fmt.Printf("  Bytes on Disk:     %d\n", *resp.Current.BytesOnDisk)
+	if resp.CurrentUsage.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.CurrentUsage.BytesOnDisk)
 	}
-	if resp.Current.BytesInMemory != nil {
-		fmt.Printf("  Bytes in Memory:   %d\n", *resp.Current.BytesInMemory)
+	if resp.CurrentUsage.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.CurrentUsage.BytesInMemory)
 	}
-	if resp.Current.EventsPerSecond != nil {
-		fmt.Printf("  Events per Second: %d\n", *resp.Current.EventsPerSecond)
+	if resp.CurrentUsage.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.CurrentUsage.EventsEmitted)
 	}
-	if resp.Current.Subscribers != nil {
-		fmt.Printf("  Subscribers:       %d\n", *resp.Current.Subscribers)
+	if resp.CurrentUsage.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.CurrentUsage.Subscribers)
 	}
 }
 
@@ -894,25 +894,25 @@ func handleApiGetLimits(c *client.Client, args []string) {
 	if resp.MaxLimits.BytesInMemory != nil {
 		fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
 	}
-	if resp.MaxLimits.EventsPerSecond != nil {
-		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsPerSecond)
+	if resp.MaxLimits.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsEmitted)
 	}
 	if resp.MaxLimits.Subscribers != nil {
 		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
 	}
 
 	fmt.Println(color.CyanString("\nCurrent Usage:"))
-	if resp.Current.BytesOnDisk != nil {
-		fmt.Printf("  Bytes on Disk:     %d\n", *resp.Current.BytesOnDisk)
+	if resp.CurrentUsage.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.CurrentUsage.BytesOnDisk)
 	}
-	if resp.Current.BytesInMemory != nil {
-		fmt.Printf("  Bytes in Memory:   %d\n", *resp.Current.BytesInMemory)
+	if resp.CurrentUsage.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.CurrentUsage.BytesInMemory)
 	}
-	if resp.Current.EventsPerSecond != nil {
-		fmt.Printf("  Events per Second: %d\n", *resp.Current.EventsPerSecond)
+	if resp.CurrentUsage.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.CurrentUsage.EventsEmitted)
 	}
-	if resp.Current.Subscribers != nil {
-		fmt.Printf("  Subscribers:       %d\n", *resp.Current.Subscribers)
+	if resp.CurrentUsage.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.CurrentUsage.Subscribers)
 	}
 }
 
@@ -948,7 +948,7 @@ func handleApiSetLimits(c *client.Client, args []string) {
 		limits.BytesInMemory = mem
 	}
 	if *events != -1 {
-		limits.EventsPerSecond = events
+		limits.EventsEmitted = events
 	}
 	if *subs != -1 {
 		limits.Subscribers = subs

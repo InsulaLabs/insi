@@ -212,6 +212,7 @@ func main() {
 		DoAddAdmin:   true,
 		DoAddConsole: true,
 		DoAddOS:      true,
+		DoAddTest:    true,
 	})
 	if err != nil {
 		logger.Error("Failed to initialize OVM", "error", err)

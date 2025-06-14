@@ -31,8 +31,8 @@ try {
     console.log("\n3. Getting initial limits for new key '" + newKeyName + "'...");
     var initialLimits = admin.getLimitsForKey(newApiKey);
     console.log("Initial limits for new key: " + JSON.stringify(initialLimits));
-    if (initialLimits.current_limits.bytes_on_disk !== 0) {
-        throw new Error("Initial disk usage should be 0, but was " + initialLimits.current_limits.bytes_on_disk);
+    if (initialLimits.usage.bytes_on_disk !== 0) {
+        throw new Error("Initial disk usage should be 0, but was " + initialLimits.usage.bytes_on_disk);
     }
 
     // 4. Set new limits for the created key
@@ -40,7 +40,7 @@ try {
     var newLimits = {
         bytes_on_disk: 1000000000, // 1 GB
         bytes_in_memory: 500000000,  // 500 MB
-        events_per_second: 100,
+        events_emitted: 1000,        // Max total events
         subscribers: 10
     };
     admin.setLimits(newApiKey, newLimits);
@@ -55,7 +55,7 @@ try {
     if (updatedLimits.max_limits.bytes_on_disk !== newLimits.bytes_on_disk) {
         throw new Error("Disk limit was not updated correctly!");
     }
-    if (updatedLimits.max_limits.events_per_second !== newLimits.events_per_second) {
+    if (updatedLimits.max_limits.events_emitted !== newLimits.events_emitted) {
         throw new Error("Events limit was not updated correctly!");
     }
 

@@ -6,12 +6,21 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/robertkrimen/otto"
+)
+
+const (
+	colorReset    = "[0m"
+	colorHiRed    = "[91m"
+	colorHiGreen  = "[92m"
+	colorHiYellow = "[93m"
+	colorHiCyan   = "[96m"
 )
 
 type Config struct {
@@ -22,12 +31,14 @@ type Config struct {
 	DoAddAdmin   bool
 	DoAddConsole bool
 	DoAddOS      bool
+	DoAddTest    bool
 }
 
 type OVM struct {
 	logger     *slog.Logger
 	vm         *otto.Otto
 	insiClient *client.Client
+	testDir    string
 }
 
 func New(cfg *Config) (*OVM, error) {
@@ -62,6 +73,11 @@ func New(cfg *Config) (*OVM, error) {
 	}
 	if cfg.DoAddAdmin {
 		if err := ovm.addAdmin(cfg.SetupCtx); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.DoAddTest {
+		if err := ovm.addTest(cfg.SetupCtx); err != nil {
 			return nil, err
 		}
 	}
@@ -481,9 +497,9 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 			bytes, _ := val.ToInteger()
 			limits.BytesInMemory = &bytes
 		}
-		if val, err := limitsObj.Get("events_per_second"); err == nil && !val.IsUndefined() && !val.IsNull() {
+		if val, err := limitsObj.Get("events_emitted"); err == nil && !val.IsUndefined() && !val.IsNull() {
 			events, _ := val.ToInteger()
-			limits.EventsPerSecond = &events
+			limits.EventsEmitted = &events
 		}
 		if val, err := limitsObj.Get("subscribers"); err == nil && !val.IsUndefined() && !val.IsNull() {
 			subs, _ := val.ToInteger()
@@ -498,4 +514,126 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 	})
 
 	return o.vm.Set("admin", adminObj)
+}
+
+func (o *OVM) addTestFeedback(testObj *otto.Object) {
+	testObj.Set("Yay", func(call otto.FunctionCall) otto.Value {
+		msg, _ := call.Argument(0).ToString()
+		fmt.Printf("%s✅ Yay! %s%s\n", colorHiGreen, msg, colorReset)
+		return otto.Value{}
+	})
+
+	testObj.Set("Aww", func(call otto.FunctionCall) otto.Value {
+		msg, _ := call.Argument(0).ToString()
+		fmt.Printf("%s💥 Aww! %s%s\n", colorHiRed, msg, colorReset)
+		return otto.Value{}
+	})
+}
+
+func (o *OVM) addTest(ctx context.Context) error {
+	testObj, err := o.vm.Object(`({})`)
+	if err != nil {
+		return fmt.Errorf("failed to create test object: %w", err)
+	}
+
+	o.addTestFeedback(testObj)
+
+	testObj.Set("setDir", func(call otto.FunctionCall) otto.Value {
+		dir, _ := call.Argument(0).ToString()
+		if dir == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "directory path cannot be empty"))
+		}
+		o.testDir = dir
+		return otto.Value{}
+	})
+
+	runTest := func(call otto.FunctionCall, expectSuccess bool) otto.Value {
+		scriptPath, _ := call.Argument(0).ToString()
+		if scriptPath == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "script path cannot be empty"))
+		}
+
+		if o.testDir == "" {
+			panic(o.vm.MakeCustomError("ConfigurationError", "test directory not set, call test.setDir() first"))
+		}
+
+		fullPath := filepath.Join(o.testDir, scriptPath)
+		if !strings.HasPrefix(fullPath, o.testDir) {
+			panic(o.vm.MakeCustomError("SecurityError", "path traversal is not allowed"))
+		}
+
+		scriptContent, err := os.ReadFile(fullPath)
+		if err != nil {
+			panic(o.vm.MakeCustomError("FileError", fmt.Sprintf("failed to read test script %s: %v", fullPath, err)))
+		}
+
+		testOVM, err := New(&Config{
+			Logger:       o.logger.WithGroup("test"),
+			SetupCtx:     ctx,
+			InsiClient:   o.insiClient,
+			DoAddAdmin:   true,
+			DoAddConsole: true,
+			DoAddOS:      true,
+			DoAddTest:    false, // No nested tests for now
+		})
+		if err != nil {
+			panic(o.vm.MakeCustomError("OVMError", fmt.Sprintf("failed to create test OVM: %v", err)))
+		}
+
+		// Manually add test feedback functions
+		testFeedbackObj, _ := testOVM.vm.Object(`({})`)
+		testOVM.addTestFeedback(testFeedbackObj)
+		testOVM.vm.Set("test", testFeedbackObj)
+
+		result, runErr := testOVM.vm.Run(string(scriptContent))
+
+		if expectSuccess {
+			if runErr != nil {
+				errMsg := fmt.Sprintf("script %s failed unexpectedly: %v", scriptPath, runErr)
+				panic(o.vm.MakeCustomError("TestFailure", fmt.Sprintf("%s😭 %s%s", colorHiRed, errMsg, colorReset)))
+			}
+
+			if !result.IsNumber() {
+				panic(o.vm.MakeCustomError("TestFailure", fmt.Sprintf("script %s did not return a number, got: %s", scriptPath, result.Class())))
+			}
+
+			retVal, _ := result.ToInteger()
+			if retVal != 0 {
+				errMsg := fmt.Sprintf("script %s expected return 0, got: %d", scriptPath, retVal)
+				panic(o.vm.MakeCustomError("TestFailure", fmt.Sprintf("%s👎 %s%s", colorHiRed, errMsg, colorReset)))
+			}
+			fmt.Printf("%s🎉 Hooray! Test '%s' passed!%s\n", colorHiGreen, scriptPath, colorReset)
+			return otto.Value{}
+		} else { // expect failure
+			if runErr != nil {
+				// Script panicked, which is a failure, so test passes.
+				fmt.Printf("%s😅 Whew! Test '%s' failed as expected.%s\n", colorHiYellow, scriptPath, colorReset)
+				return otto.Value{}
+			}
+
+			if !result.IsNumber() {
+				panic(o.vm.MakeCustomError("TestFailure", fmt.Sprintf("script %s was expected to fail, but it returned a non-number: %s", scriptPath, result.Class())))
+			}
+
+			retVal, _ := result.ToInteger()
+			if retVal == 0 {
+				errMsg := fmt.Sprintf("script %s was expected to fail, but it returned 0", scriptPath)
+				panic(o.vm.MakeCustomError("TestFailure", fmt.Sprintf("%s🤔 %s%s", colorHiYellow, errMsg, colorReset)))
+			}
+
+			// Returned non-zero, which is a failure, so test passes.
+			fmt.Printf("%s😅 Whew! Test '%s' failed as expected (non-zero return).%s\n", colorHiYellow, scriptPath, colorReset)
+			return otto.Value{}
+		}
+	}
+
+	testObj.Set("runExpectSuccess", func(call otto.FunctionCall) otto.Value {
+		return runTest(call, true)
+	})
+
+	testObj.Set("runExpectFailure", func(call otto.FunctionCall) otto.Value {
+		return runTest(call, false)
+	})
+
+	return o.vm.Set("test", testObj)
 }
