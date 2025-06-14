@@ -13,7 +13,8 @@ function main() {
         "vs_test",
         "cache_test",
         "events_test",
-        "limits_test"
+        "limits_test",
+        "access_failures_test"
     ];
 
     var runTest = function(testName) {

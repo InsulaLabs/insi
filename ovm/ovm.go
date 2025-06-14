@@ -574,16 +574,14 @@ func (o *OVM) addTest(ctx context.Context) error {
 			DoAddAdmin:   true,
 			DoAddConsole: true,
 			DoAddOS:      true,
-			DoAddTest:    false, // No nested tests for now
+			DoAddTest:    true, // Allow nested tests
 		})
 		if err != nil {
 			panic(o.vm.MakeCustomError("OVMError", fmt.Sprintf("failed to create test OVM: %v", err)))
 		}
 
-		// Manually add test feedback functions
-		testFeedbackObj, _ := testOVM.vm.Object(`({})`)
-		testOVM.addTestFeedback(testFeedbackObj)
-		testOVM.vm.Set("test", testFeedbackObj)
+		// Inherit test directory from parent OVM
+		testOVM.testDir = o.testDir
 
 		result, runErr := testOVM.vm.Run(string(scriptContent))
 
