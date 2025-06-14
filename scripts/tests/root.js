@@ -15,6 +15,7 @@ function main() {
         "events_test",
         "subscription_test",
         "limits_test",
+        "admin_test",
         "access_failures_test"
     ];
 
