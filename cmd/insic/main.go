@@ -212,6 +212,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.YellowString("uses key from env or --root"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("get-limits"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N"), color.YellowString("--root flag usually required"))
 	// Object Commands
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("upload"), color.CyanString("<filepath>"))
@@ -694,6 +695,14 @@ func handleApi(c *client.Client, args []string) {
 		handleApiVerify(subArgs)
 	case "limits":
 		handleApiLimits(c, subArgs)
+	case "get-limits":
+		// Enforce --root for get-limits
+		if !useRootKey {
+			logger.Error("api get-limits requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s api get-limits requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleApiGetLimits(c, subArgs)
 	case "set-limits":
 		// Enforce --root for set-limits
 		if !useRootKey {
@@ -827,15 +836,84 @@ func handleApiLimits(c *client.Client, args []string) {
 	}
 
 	fmt.Println(color.CyanString("Maximum Limits:"))
-	fmt.Printf("  Bytes on Disk:     %d\n", *resp.MaxLimits.BytesOnDisk)
-	fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
-	fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsPerSecond)
-	fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
+	if resp.MaxLimits.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.MaxLimits.BytesOnDisk)
+	}
+	if resp.MaxLimits.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
+	}
+	if resp.MaxLimits.EventsPerSecond != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsPerSecond)
+	}
+	if resp.MaxLimits.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
+	}
 	fmt.Println(color.CyanString("\nCurrent Usage:"))
-	fmt.Printf("  Bytes on Disk:     %d\n", *resp.Current.BytesOnDisk)
-	fmt.Printf("  Bytes in Memory:   %d\n", *resp.Current.BytesInMemory)
-	fmt.Printf("  Events per Second: %d\n", *resp.Current.EventsPerSecond)
-	fmt.Printf("  Subscribers:       %d\n", *resp.Current.Subscribers)
+	if resp.Current.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.Current.BytesOnDisk)
+	}
+	if resp.Current.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.Current.BytesInMemory)
+	}
+	if resp.Current.EventsPerSecond != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.Current.EventsPerSecond)
+	}
+	if resp.Current.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.Current.Subscribers)
+	}
+}
+
+func handleApiGetLimits(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("api get-limits: requires <key_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	apiKey := args[0]
+
+	resp, err := c.GetLimitsForKey(apiKey)
+	if err != nil {
+		logger.Error("Failed to get API key limits for specific key", "key", apiKey, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	var keyIdentifier string
+	if len(apiKey) > 12 { // "insi_" prefix + some chars
+		keyIdentifier = apiKey[:8] + "..." + apiKey[len(apiKey)-4:]
+	} else {
+		keyIdentifier = apiKey
+	}
+
+	fmt.Printf("Limits for key %s\n", color.CyanString(keyIdentifier))
+
+	fmt.Println(color.CyanString("Maximum Limits:"))
+	if resp.MaxLimits.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.MaxLimits.BytesOnDisk)
+	}
+	if resp.MaxLimits.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
+	}
+	if resp.MaxLimits.EventsPerSecond != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsPerSecond)
+	}
+	if resp.MaxLimits.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
+	}
+
+	fmt.Println(color.CyanString("\nCurrent Usage:"))
+	if resp.Current.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.Current.BytesOnDisk)
+	}
+	if resp.Current.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.Current.BytesInMemory)
+	}
+	if resp.Current.EventsPerSecond != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.Current.EventsPerSecond)
+	}
+	if resp.Current.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.Current.Subscribers)
+	}
 }
 
 func handleApiSetLimits(c *client.Client, args []string) {

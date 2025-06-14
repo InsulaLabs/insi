@@ -51,3 +51,9 @@ type SetLimitsRequest struct {
 	ApiKey string  `json:"api_key"` // the key to limit - must be fully composed key
 	Limits *Limits `json:"limits"`
 }
+
+type GetLimitsRequest struct {
+	ApiKey string `json:"api_key"` // the key to limit - must be fully composed key
+}
+
+// sends limits response

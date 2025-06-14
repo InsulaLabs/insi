@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
+	"github.com/InsulaLabs/insi/db/models"
 	"github.com/robertkrimen/otto"
 )
 
@@ -18,9 +19,9 @@ type Config struct {
 	SetupCtx   context.Context
 	InsiClient *client.Client
 
-	DoAddApiKeyMgmt bool
-	DoAddConsole    bool
-	DoAddOS         bool
+	DoAddAdmin   bool
+	DoAddConsole bool
+	DoAddOS      bool
 }
 
 type OVM struct {
@@ -59,8 +60,8 @@ func New(cfg *Config) (*OVM, error) {
 	if err := ovm.addTime(cfg.SetupCtx); err != nil {
 		return nil, err
 	}
-	if cfg.DoAddApiKeyMgmt {
-		if err := ovm.addApiKeyMgmt(cfg.SetupCtx); err != nil {
+	if cfg.DoAddAdmin {
+		if err := ovm.addAdmin(cfg.SetupCtx); err != nil {
 			return nil, err
 		}
 	}
@@ -402,14 +403,14 @@ func (o *OVM) addTime(ctx context.Context) error {
 	return o.vm.Set("time", timeObj)
 }
 
-func (o *OVM) addApiKeyMgmt(ctx context.Context) error {
-	apiKeyMgmtObj, err := o.vm.Object(`({})`)
+func (o *OVM) addAdmin(ctx context.Context) error {
+	adminObj, err := o.vm.Object(`({})`)
 	if err != nil {
-		return fmt.Errorf("failed to create api key management object: %w", err)
+		return fmt.Errorf("failed to create admin object: %w", err)
 	}
 
 	// Create API Key
-	apiKeyMgmtObj.Set("create", func(call otto.FunctionCall) otto.Value {
+	adminObj.Set("createKey", func(call otto.FunctionCall) otto.Value {
 		keyName, _ := call.Argument(0).ToString()
 		if keyName == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "keyName cannot be empty"))
@@ -423,7 +424,7 @@ func (o *OVM) addApiKeyMgmt(ctx context.Context) error {
 	})
 
 	// Delete API Key
-	apiKeyMgmtObj.Set("delete", func(call otto.FunctionCall) otto.Value {
+	adminObj.Set("deleteKey", func(call otto.FunctionCall) otto.Value {
 		apiKey, _ := call.Argument(0).ToString()
 		if apiKey == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "apiKey cannot be empty"))
@@ -435,5 +436,66 @@ func (o *OVM) addApiKeyMgmt(ctx context.Context) error {
 		return otto.Value{}
 	})
 
-	return o.vm.Set("apiKeyMgmt", apiKeyMgmtObj)
+	// Get Caller's Limits
+	adminObj.Set("getLimits", func(call otto.FunctionCall) otto.Value {
+		resp, err := o.insiClient.GetLimits()
+		if err != nil {
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		val, _ := o.vm.ToValue(resp)
+		return val
+	})
+
+	// Get Limits for a specific Key
+	adminObj.Set("getLimitsForKey", func(call otto.FunctionCall) otto.Value {
+		apiKey, _ := call.Argument(0).ToString()
+		if apiKey == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "apiKey cannot be empty"))
+		}
+		resp, err := o.insiClient.GetLimitsForKey(apiKey)
+		if err != nil {
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		val, _ := o.vm.ToValue(resp)
+		return val
+	})
+
+	// Set Limits for a specific Key
+	adminObj.Set("setLimits", func(call otto.FunctionCall) otto.Value {
+		apiKey, _ := call.Argument(0).ToString()
+		if apiKey == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "apiKey cannot be empty"))
+		}
+		limitsObj := call.Argument(1).Object()
+		if limitsObj == nil {
+			panic(o.vm.MakeCustomError("ArgumentError", "second argument must be a limits object"))
+		}
+
+		limits := models.Limits{}
+
+		if val, err := limitsObj.Get("bytes_on_disk"); err == nil && !val.IsUndefined() && !val.IsNull() {
+			bytes, _ := val.ToInteger()
+			limits.BytesOnDisk = &bytes
+		}
+		if val, err := limitsObj.Get("bytes_in_memory"); err == nil && !val.IsUndefined() && !val.IsNull() {
+			bytes, _ := val.ToInteger()
+			limits.BytesInMemory = &bytes
+		}
+		if val, err := limitsObj.Get("events_per_second"); err == nil && !val.IsUndefined() && !val.IsNull() {
+			events, _ := val.ToInteger()
+			limits.EventsPerSecond = &events
+		}
+		if val, err := limitsObj.Get("subscribers"); err == nil && !val.IsUndefined() && !val.IsNull() {
+			subs, _ := val.ToInteger()
+			limits.Subscribers = &subs
+		}
+
+		err = o.insiClient.SetLimits(apiKey, limits)
+		if err != nil {
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		return otto.Value{}
+	})
+
+	return o.vm.Set("admin", adminObj)
 }

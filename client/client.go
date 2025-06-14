@@ -277,11 +277,23 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 		defer resp.Body.Close() // Ensure this final response body is closed when function returns
 
 		if resp.StatusCode == http.StatusNotFound {
-			// For specific GET operations, a 404 is a semantic "not found" for the resource.
+			bodyBytes, _ := io.ReadAll(resp.Body) // Read body to check for specific errors
+
+			var errorResp ErrorResponse
+			if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
+				// Check for specific error types returned with a 404 status
+				if errorResp.ErrorType == "API_KEY_NOT_FOUND" {
+					// The server returns this when a key in a request body (e.g. get-limits) doesn't exist.
+					return ErrAPIKeyNotFound
+				}
+				// Return a more informative error if we could parse it
+				return fmt.Errorf("server error (status 404): %s - %s", errorResp.ErrorType, errorResp.Message)
+			}
+
+			// For specific GET operations, a 404 is a semantic "not found" for the resource key in the URL.
 			isDataGetOperation := method == http.MethodGet &&
 				(strings.HasPrefix(path, "db/api/v1/get") ||
 					strings.HasPrefix(path, "db/api/v1/cache/get") ||
-					strings.HasPrefix(path, "db/api/v1/atomic/get") ||
 					strings.HasPrefix(path, "db/api/v1/iterate"))
 
 			if isDataGetOperation {
@@ -289,7 +301,6 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 			}
 
 			// For all other operations (POST, DELETE, other GETs), a 404 implies the endpoint itself was not found.
-			bodyBytes, _ := io.ReadAll(resp.Body) // Read body for context
 			return fmt.Errorf("endpoint not found (404) at %s: %s", currentReqURL.String(), string(bodyBytes))
 		}
 
@@ -624,6 +635,22 @@ func (c *Client) SetLimits(apiKey string, limits models.Limits) error {
 		return err
 	}
 	return nil
+}
+
+// GetLimitsForKey retrieves the usage limits and current usage for a specific API key.
+// This operation typically requires root privileges.
+func (c *Client) GetLimitsForKey(apiKey string) (*models.LimitsResponse, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("apiKey cannot be empty for GetLimitsForKey")
+	}
+	requestPayload := models.GetLimitsRequest{ApiKey: apiKey}
+	var response models.LimitsResponse
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/admin/limits/get", nil, requestPayload, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
 }
 
 // SubscribeToEvents connects to the event subscription WebSocket endpoint and prints incoming events.

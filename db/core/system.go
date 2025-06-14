@@ -458,7 +458,7 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 }
 
 // Allow any user to get their limits and current usage
-func (c *Core) limitsHandler(w http.ResponseWriter, r *http.Request) {
+func (c *Core) callerLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
@@ -674,4 +674,168 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// Allow any user to get their limits and current usage
+func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
+
+	// ONLY ROOT CAN GET LIMITS FOR SPECIFIC KEYS
+	_, ok := c.ValidateToken(r, RootOnly())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req models.GetLimitsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// get the targeted key
+	td, err := c.decomposeKey(req.ApiKey)
+	if err != nil {
+		http.Error(w, "Invalid target key format", http.StatusBadRequest)
+		return
+	}
+
+	// Check if the key exists before proceeding.
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
+	if _, err := c.fsm.Get(fsmStorageKey); err != nil {
+		c.logger.Warn("Attempt to get limits for non-existent API key", "key_uuid", td.KeyUUID, "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error_type": "API_KEY_NOT_FOUND",
+			"message":    "The specified API key does not exist or has been deleted.",
+		})
+		return
+	}
+
+	// Get the limit for disk usage
+	diskLimitForKey, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	diskLimitForKeyInt, err := strconv.ParseInt(diskLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	memLimitForKey, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	memLimitForKeyInt, err := strconv.ParseInt(memLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	eventsLimitForKey, err := c.fsm.Get(WithApiKeyMaxEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	eventsLimitForKeyInt, err := strconv.ParseInt(eventsLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	subscribersLimitForKey, err := c.fsm.Get(WithApiKeyMaxSubscriptions(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	subscribersLimitForKeyInt, err := strconv.ParseInt(subscribersLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for disk
+	diskUsage, err := c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	diskUsageInt, err := strconv.ParseInt(diskUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for memory
+	memUsage, err := c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	memUsageInt, err := strconv.ParseInt(memUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for events
+	eventsUsage, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	eventsUsageInt, err := strconv.ParseInt(eventsUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for subscribers
+	subscribersUsage, err := c.fsm.Get(WithApiKeySubscriptions(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	subscribersUsageInt, err := strconv.ParseInt(subscribersUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	limitsResponse := models.LimitsResponse{
+		MaxLimits: models.Limits{
+			BytesOnDisk:     &diskLimitForKeyInt,
+			BytesInMemory:   &memLimitForKeyInt,
+			EventsPerSecond: &eventsLimitForKeyInt,
+			Subscribers:     &subscribersLimitForKeyInt,
+		},
+		Current: models.Limits{
+			BytesOnDisk:     &diskUsageInt,
+			BytesInMemory:   &memUsageInt,
+			EventsPerSecond: &eventsUsageInt,
+			Subscribers:     &subscribersUsageInt,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(limitsResponse)
 }

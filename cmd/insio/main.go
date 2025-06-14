@@ -206,12 +206,12 @@ func main() {
 
 	ovmLogger := logger.WithGroup("ovm")
 	vm, err := ovm.New(&ovm.Config{
-		Logger:          ovmLogger,
-		SetupCtx:        context.Background(),
-		InsiClient:      cli,
-		DoAddApiKeyMgmt: true,
-		DoAddConsole:    true,
-		DoAddOS:         true,
+		Logger:       ovmLogger,
+		SetupCtx:     context.Background(),
+		InsiClient:   cli,
+		DoAddAdmin:   true,
+		DoAddConsole: true,
+		DoAddOS:      true,
 	})
 	if err != nil {
 		logger.Error("Failed to initialize OVM", "error", err)

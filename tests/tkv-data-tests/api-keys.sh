@@ -54,7 +54,40 @@ run_insic() {
     fi
 
     echo -e "${INFO_EMOJI} Running: ${full_command_array[*]}" >&2
-    cmd_output=$("${full_command_array[@]}")
+    cmd_output=$("${full_command_array[@]}" 2>&1)
+    exit_code=$? # Capture exit code immediately
+    echo -e "${cmd_output}" # Print command output to stdout for capture
+    echo -e "Exit code: ${exit_code}" >&2
+    return ${exit_code}
+}
+
+# Function to run the insic command without the --root flag
+# $1: main command (e.g., "api")
+# $2+: subcommand and its arguments
+run_insic_no_root() {
+    local main_command="$1"
+    shift
+    local sub_command_and_args=("$@")
+
+    local insic_executable="${INSIC_PATH}"
+    local config_arg="--config"
+    local config_file="${DEFAULT_CONFIG_PATH}"
+    local cmd_output
+    local exit_code
+    local full_command_array=()
+
+    full_command_array+=("$insic_executable")
+    # This version does NOT add --root
+    full_command_array+=("$config_arg" "$config_file")
+    full_command_array+=("$main_command")
+    if [ ${#sub_command_and_args[@]} -gt 0 ]; then
+        full_command_array+=("${sub_command_and_args[@]}")
+    fi
+
+    echo -e "${INFO_EMOJI} Running (no root, with dummy key): ${full_command_array[*]}" >&2
+    # Setting a dummy key so the client doesn't complain about a missing key,
+    # allowing the --root flag check inside the CLI to be the point of failure.
+    cmd_output=$(INSI_API_KEY="dummy" "${full_command_array[@]}" 2>&1)
     exit_code=$? # Capture exit code immediately
     echo -e "${cmd_output}" # Print command output to stdout for capture
     echo -e "Exit code: ${exit_code}" >&2
@@ -88,7 +121,7 @@ run_insic_with_key() {
     fi
 
     echo -e "${INFO_EMOJI} Running (with INSI_API_KEY set): ${full_command_array[*]}" >&2
-    cmd_output=$(INSI_API_KEY="$api_key" "${full_command_array[@]}")
+    cmd_output=$(INSI_API_KEY="$api_key" "${full_command_array[@]}" 2>&1)
     exit_code=$? # Capture exit code immediately
     echo -e "${cmd_output}" # Print command output to stdout for capture
     echo -e "Exit code: ${exit_code}" >&2
@@ -280,6 +313,65 @@ test_api_key_limits() {
     expect_success "API delete for key '$generated_key' after limits test" "$exit_code_delete" "$output_delete" "OK"
 }
 
+test_api_get_specific_key_limits() {
+    print_header "Test: API Get Specific Key Limits (get-limits)"
+    local key_name="testgetlimits_$(date +%s)_$$"
+    local generated_key=""
+    local output_add output_set_limits output_get_specific output_delete
+    local exit_code_add exit_code_set_limits exit_code_get_specific exit_code_delete
+
+    # 1. API Add Key
+    echo -e "${INFO_EMOJI} Attempting to add API key for get-limits test: $key_name"
+    output_add=$(run_insic "api" "add" "$key_name")
+    exit_code_add=$?
+    expect_success "API add key '$key_name' for get-limits test" "$exit_code_add" "$output_add" "API Key:"
+    if [ "$exit_code_add" -ne 0 ]; then
+        echo -e "${FAILURE_EMOJI} ${RED}API key add failed, cannot proceed with get-limits test.${NC}"
+        return
+    fi
+    generated_key=$(echo "$output_add" | grep "API Key:" | awk '{print $3}')
+    echo -e "${INFO_EMOJI} Parsed generated key for get-limits test: $generated_key"
+
+    sleep 2
+
+    # 2. Set new limits for the key (requires --root)
+    local new_disk=555666777
+    local new_mem=111222333
+    local new_events=250
+    local new_subs=25
+    echo -e "${INFO_EMOJI} Attempting to set limits for key: $generated_key"
+    output_set_limits=$(run_insic "api" "set-limits" "$generated_key" "--disk" "$new_disk" "--mem" "$new_mem" "--events" "$new_events" "--subs" "$new_subs")
+    exit_code_set_limits=$?
+    expect_success "Set new limits for key '$generated_key'" "$exit_code_set_limits" "$output_set_limits" "OK"
+
+    sleep 2
+
+    # 3. Get limits for that specific key using the root key and get-limits command
+    echo -e "${INFO_EMOJI} Attempting to get specific limits for key '$generated_key' using root"
+    output_get_specific=$(run_insic "api" "get-limits" "$generated_key")
+    exit_code_get_specific=$?
+    expect_success "Get specific limits for key '$generated_key'" "$exit_code_get_specific" "$output_get_specific" "Maximum Limits:"
+    # Check each value individually
+    expect_success "Verify specific disk limit" "$exit_code_get_specific" "$output_get_specific" "Bytes on Disk:     $new_disk"
+    expect_success "Verify specific memory limit" "$exit_code_get_specific" "$output_get_specific" "Bytes in Memory:   $new_mem"
+    expect_success "Verify specific events limit" "$exit_code_get_specific" "$output_get_specific" "Events per Second: $new_events"
+    expect_success "Verify specific subscribers limit" "$exit_code_get_specific" "$output_get_specific" "Subscribers:       $new_subs"
+
+    # 4. Try to get limits for that specific key without root. This should fail.
+    echo -e "${INFO_EMOJI} Attempting to get specific limits for key '$generated_key' WITHOUT root"
+    local output_get_specific_no_root
+    local exit_code_get_specific_no_root
+    output_get_specific_no_root=$(run_insic_no_root "api" "get-limits" "$generated_key")
+    exit_code_get_specific_no_root=$?
+    expect_error "Get specific limits without root" "$exit_code_get_specific_no_root" "$output_get_specific_no_root" "requires --root flag"
+
+    # 5. Delete the key
+    echo -e "${INFO_EMOJI} Attempting to delete API key used for get-limits test: $generated_key"
+    output_delete=$(run_insic "api" "delete" "$generated_key")
+    exit_code_delete=$?
+    expect_success "API delete for key '$generated_key' after get-limits test" "$exit_code_delete" "$output_delete" "OK"
+}
+
 # --- Main Execution ---
 main() {
     if [ -z "$1" ]; then
@@ -336,6 +428,7 @@ main() {
 
     test_api_key_lifecycle
     test_api_key_limits
+    test_api_get_specific_key_limits
 
     echo -e "\n${GREEN}All TKV API Key operations tests completed.${NC}"
 
