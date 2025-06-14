@@ -398,7 +398,7 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				kf.logger.Error("Could not unmarshal bump_integer payload", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal bump_integer payload: %w", err)
 			}
-			delta, err := strconv.Atoi(p.Value)
+			delta, err := strconv.ParseInt(p.Value, 10, 64)
 			if err != nil {
 				kf.logger.Error("Could not unmarshal bump_integer value", "error", err, "payload", string(cmd.Payload))
 				return fmt.Errorf("could not unmarshal bump_integer value: %w", err)
@@ -648,8 +648,8 @@ func (kf *kvFsm) Get(key string) (string, error) {
 	var value string
 	value, err := kf.tkv.Get(key)
 	if err != nil {
-		if err != badger.ErrKeyNotFound {
-			kf.logger.Error("Failed to get value from valuesDb", "key", key, "error", err)
+		if !tkv.IsErrKeyNotFound(err) {
+			kf.logger.Debug("Failed to get value from valuesDb", "key", key, "error", err)
 		}
 		return "", err
 	}

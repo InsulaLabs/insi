@@ -11,7 +11,6 @@ import (
 
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/tkv"
-	"github.com/dgraph-io/badger/v3"
 )
 
 // -- READ OPERATIONS --
@@ -101,7 +100,7 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 	exists := false
 	existingValue, err := c.fsm.GetCache(p.Key)
 	if err != nil {
-		if !errors.Is(err, badger.ErrKeyNotFound) {
+		if !tkv.IsErrKeyNotFound(err) {
 			c.logger.Error("Could not get existing value for cache", "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
@@ -184,7 +183,7 @@ func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 
 	existingValue, err := s.fsm.GetCache(p.Key)
 	if err != nil {
-		if errors.Is(err, badger.ErrKeyNotFound) {
+		if tkv.IsErrKeyNotFound(err) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}

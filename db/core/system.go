@@ -238,7 +238,7 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 		Value: "0",
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeySubscribers(keyUUID),
+		Key:   WithApiKeySubscriptions(keyUUID),
 		Value: "0",
 	})
 	return actualKey, nil
@@ -272,7 +272,7 @@ func (c *Core) deleteExistingApiKey(key string) error {
 	c.fsm.Delete(WithApiKeyMemoryUsage(td.KeyUUID))
 	c.fsm.Delete(WithApiKeyDiskUsage(td.KeyUUID))
 	c.fsm.Delete(WithApiKeyEvents(td.KeyUUID))
-	c.fsm.Delete(WithApiKeySubscribers(td.KeyUUID))
+	c.fsm.Delete(WithApiKeySubscriptions(td.KeyUUID))
 
 	c.apiCache.Delete(key)
 

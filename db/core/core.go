@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +61,10 @@ type Core struct {
 
 func (c *Core) GetRootClientKey() string {
 	return c.authToken
+}
+
+func (c *Core) tdIsRoot(td models.TokenData) bool {
+	return td.KeyUUID == c.cfg.RootPrefix
 }
 
 func (c *Core) GetMemoryUsageFullKey() string {
@@ -179,6 +184,8 @@ func New(
 
 	go service.eventProcessingLoop()
 
+	// Make sure root keyUUID (root prefix) has a memory tracker
+
 	return service, nil
 }
 
@@ -263,6 +270,11 @@ func (c *Core) Run() {
 		}
 	}()
 
+	go func() {
+		time.Sleep(time.Second * 10)
+		c.ensureRootKeyTrackersExist()
+	}()
+
 	c.startedAt = time.Now()
 
 	if c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != "" {
@@ -293,4 +305,37 @@ func (c *Core) OnTTLCacheEviction(key string, value string) error {
 
 	fmt.Println("OnTTLCacheEviction", key, value)
 	return nil
+}
+
+func (c *Core) ensureRootKeyTrackersExist() {
+	if !c.fsm.IsLeader() {
+		return
+	}
+
+	keysToSet := []string{
+		WithApiKeyMemoryUsage(c.cfg.RootPrefix),
+		WithApiKeyDiskUsage(c.cfg.RootPrefix),
+		WithApiKeyEvents(c.cfg.RootPrefix),
+		WithApiKeySubscriptions(c.cfg.RootPrefix),
+	}
+
+	c.logger.Info("Ensuring root key trackers exist", "keys", keysToSet)
+	for _, key := range keysToSet {
+		val, err := c.fsm.Get(key)
+		if tkv.IsErrKeyNotFound(err) {
+			c.fsm.Set(models.KVPayload{
+				Key:   key,
+				Value: "0",
+			})
+			c.logger.Info("set root tracker", "key", strings.TrimSuffix(key, c.cfg.RootPrefix), "value", "0")
+		} else {
+			c.logger.Info(
+				"Key already exists",
+				"key",
+				strings.TrimSuffix(key, c.cfg.RootPrefix), // its a suffix, not a prefix
+				"value",
+				val,
+			)
+		}
+	}
 }

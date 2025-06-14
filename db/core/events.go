@@ -28,6 +28,8 @@ type eventSession struct {
 	send chan []byte
 	// Service pointer to access logger, etc.
 	service *Core
+	// The UUID of the API key that created the session.
+	keyUUID string
 }
 
 type eventSubsystem struct {
@@ -125,6 +127,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 		topic:   prefixedTopic,
 		send:    make(chan []byte, 256), // Buffered channel
 		service: c,
+		keyUUID: td.KeyUUID,
 	}
 
 	c.registerSubscriber(session)
@@ -157,6 +160,11 @@ func (c *Core) registerSubscriber(session *eventSession) {
 	}
 	c.eventSubscribers[session.topic][session] = true // Store the session itself
 
+	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), 1); err != nil {
+		c.logger.Error("Could not bump integer via FSM for subscribers", "error", err)
+		// Don't fail the registration, but log it.
+	}
+
 	c.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 }
 
@@ -171,6 +179,11 @@ func (c *Core) unregisterSubscriber(session *eventSession) {
 		if _, ok := sessionsInTopic[session]; ok {
 			delete(c.eventSubscribers[session.topic], session)
 			c.logger.Info("Subscriber unregistered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
+
+			if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), -1); err != nil {
+				c.logger.Error("Could not bump integer via FSM for subscribers on unregister", "error", err)
+				// Don't fail, just log.
+			}
 
 			// Decrement connection count only if we actually found and removed the session
 			if c.activeWsConnections > 0 {
@@ -428,4 +441,10 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	if err := c.fsm.BumpInteger(WithApiKeyEvents(td.KeyUUID), 1); err != nil {
+		c.logger.Error("Could not bump integer via FSM for events", "error", err)
+		// Don't fail the whole request, but log it.
+	}
+	w.WriteHeader(http.StatusOK)
 }

@@ -467,7 +467,7 @@ func (t *tkv) CompareAndSwap(key string, oldValue, newValue string) error {
 	return err
 }
 
-func (t *tkv) BumpInteger(key string, delta int) error {
+func (t *tkv) BumpInteger(key string, delta int64) error {
 	err := t.db.store.Update(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(key))
 		if err != nil {
@@ -484,14 +484,19 @@ func (t *tkv) BumpInteger(key string, delta int) error {
 			return &ErrInternal{Err: err}
 		}
 
-		val, err := strconv.Atoi(string(valBytes))
+		val, err := strconv.ParseInt(string(valBytes), 10, 64)
 		if err != nil {
 			return &ErrInternal{Err: err}
 		}
 
 		val += delta
 
-		if err := txn.Set([]byte(key), []byte(strconv.Itoa(val))); err != nil {
+		// Explicitly floor the value at 0
+		if val < 0 {
+			val = 0
+		}
+
+		if err := txn.Set([]byte(key), []byte(strconv.FormatInt(val, 10))); err != nil {
 			return &ErrInternal{Err: err}
 		}
 		return nil

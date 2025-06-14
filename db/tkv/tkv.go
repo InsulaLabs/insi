@@ -38,7 +38,7 @@ type TKVDataHandler interface {
 	SetNX(key string, value string) error
 	CompareAndSwap(key string, oldValue, newValue string) error
 
-	BumpInteger(key string, delta int) error
+	BumpInteger(key string, delta int64) error
 }
 
 type TKVCacheHandler interface {

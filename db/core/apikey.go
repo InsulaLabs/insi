@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	ApiTrackMemoryPrefix      = "internal:api_key_memory_usage"
-	ApiTrackDiskPrefix        = "internal:api_key_disk_usage"
-	ApiTrackEventsPrefix      = "internal:api_key_events"
-	ApiTrackSubscribersPrefix = "internal:api_key_subscribers"
+	ApiTrackMemoryPrefix        = "internal:api_key_memory_usage"
+	ApiTrackDiskPrefix          = "internal:api_key_disk_usage"
+	ApiTrackEventsPrefix        = "internal:api_key_events"
+	ApiTrackSubscriptionsPrefix = "internal:api_key_subscriptions"
 )
 
 func WithApiKeyMemoryUsage(key string) string {
@@ -28,8 +28,8 @@ func WithApiKeyEvents(key string) string {
 	return fmt.Sprintf("%s:%s", ApiTrackEventsPrefix, key)
 }
 
-func WithApiKeySubscribers(key string) string {
-	return fmt.Sprintf("%s:%s", ApiTrackSubscribersPrefix, key)
+func WithApiKeySubscriptions(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTrackSubscriptionsPrefix, key)
 }
 
 // CalculateDelta returns the delta between the old and new payloads.
