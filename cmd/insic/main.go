@@ -188,9 +188,12 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cas"), color.CyanString("<key>"), color.CyanString("<old_value>"), color.CyanString("<new_value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("delete"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cache"), color.CyanString("setnx"), color.CyanString("<key>"), color.CyanString("<value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("cas"), color.CyanString("<key>"), color.CyanString("<old_value>"), color.CyanString("<new_value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("join"), color.CyanString("<leaderNodeID>"), color.CyanString("<followerNodeID>"))
 	fmt.Fprintf(os.Stderr, "  %s\n", color.GreenString("ping"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("publish"), color.CyanString("<topic>"), color.CyanString("<data>"))
@@ -488,10 +491,99 @@ func handleCache(c *client.Client, args []string) {
 		}
 		// logger.Info("Cache delete successful", "key", key) // Redundant
 		color.HiGreen("OK")
+	case "setnx":
+		if len(subArgs) != 2 {
+			logger.Error("cache setnx: requires <key> <value>")
+			printUsage()
+			os.Exit(1)
+		}
+		key, value := subArgs[0], subArgs[1]
+		err := c.SetCacheNX(key, value)
+		if err != nil {
+			if errors.Is(err, client.ErrConflict) {
+				fmt.Fprintf(os.Stderr, "%s Key '%s' already exists in cache.\n", color.RedString("Conflict:"), color.CyanString(key))
+			} else {
+				logger.Error("Cache SetNX failed", "key", key, "error", err)
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
+			os.Exit(1)
+		}
+		color.HiGreen("OK")
+	case "cas":
+		if len(subArgs) != 3 {
+			logger.Error("cache cas: requires <key> <old_value> <new_value>")
+			printUsage()
+			os.Exit(1)
+		}
+		key, oldValue, newValue := subArgs[0], subArgs[1], subArgs[2]
+		err := c.CompareAndSwapCache(key, oldValue, newValue)
+		if err != nil {
+			if errors.Is(err, client.ErrConflict) {
+				fmt.Fprintf(os.Stderr, "%s Cache compare-and-swap failed for key '%s'.\n", color.RedString("Precondition Failed:"), color.CyanString(key))
+			} else {
+				logger.Error("Cache CAS failed", "key", key, "error", err)
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
+			os.Exit(1)
+		}
+		color.HiGreen("OK")
+	case "iterate":
+		handleCacheIterate(c, subArgs)
 	default:
 		logger.Error("cache: unknown sub-command", "sub_command", subCommand)
 		printUsage()
 		os.Exit(1)
+	}
+}
+
+func handleCacheIterate(c *client.Client, args []string) {
+	if len(args) < 2 {
+		logger.Error("cache iterate: requires <type (prefix)> <value> [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	iterType := args[0]
+	value := args[1]
+	offset, limit := 0, 100 // Defaults
+
+	var err error
+	if len(args) > 2 {
+		offset, err = strconv.Atoi(args[2])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[2], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 3 {
+		limit, err = strconv.Atoi(args[3])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[3], err)
+			os.Exit(1)
+		}
+	}
+
+	var results []string
+	switch iterType {
+	case "prefix":
+		results, err = c.IterateCacheByPrefix(value, offset, limit)
+	default:
+		logger.Error("cache iterate: unknown type", "type", iterType)
+		printUsage()
+		os.Exit(1)
+		return
+	}
+
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) {
+			color.HiRed("No keys found in cache.")
+		} else {
+			logger.Error("Cache iterate failed", "type", iterType, "value", value, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
+	for _, item := range results {
+		fmt.Println(item)
 	}
 }
 

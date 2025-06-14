@@ -229,6 +229,9 @@ func (c *Core) Run() {
 	c.mux.Handle("/db/api/v1/cache/set", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache"))
 	c.mux.Handle("/db/api/v1/cache/get", c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache"))
 	c.mux.Handle("/db/api/v1/cache/delete", c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/setnx", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/cas", c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/iterate/prefix", c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache"))
 
 	// Events handlers
 	c.mux.Handle("/db/api/v1/events", c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events"))

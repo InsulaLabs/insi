@@ -43,6 +43,10 @@ type TKVCacheHandler interface {
 	CacheGet(key string) (string, error)
 	CacheSet(key string, value string) error
 	CacheDelete(key string) error
+
+	CacheSetNX(key string, value string) error
+	CacheCompareAndSwap(key string, oldValue, newValue string) error
+	CacheIterate(prefix string, offset int, limit int) ([]string, error)
 }
 
 type TKV interface {

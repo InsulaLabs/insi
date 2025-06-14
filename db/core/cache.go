@@ -2,11 +2,15 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/db/tkv"
 )
 
 // -- READ OPERATIONS --
@@ -162,4 +166,141 @@ func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, AnyUser())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		c.logger.Error("Could not read body for set cache nx request", "error", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var p models.KVPayload
+	if err := json.Unmarshal(bodyBytes, &p); err != nil {
+		http.Error(w, "Invalid JSON payload for set cache nx: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if p.Key == "" {
+		http.Error(w, "Missing key in set cache nx request payload", http.StatusBadRequest)
+		return
+	}
+
+	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
+
+	if err := c.fsm.SetCacheNX(p); err != nil {
+		var keyExistsErr *tkv.ErrKeyExists
+		if errors.As(err, &keyExistsErr) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		c.logger.Error("Could not set cache nx via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *Core) compareAndSwapCacheHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, AnyUser())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var p models.CASPayload
+	if err := json.Unmarshal(bodyBytes, &p); err != nil {
+		http.Error(w, "Invalid JSON payload for cache cas: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if p.Key == "" {
+		http.Error(w, "Missing key in cache cas request payload", http.StatusBadRequest)
+		return
+	}
+
+	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
+
+	if err := c.fsm.CompareAndSwapCache(p); err != nil {
+		var casFailedErr *tkv.ErrCASFailed
+		if errors.As(err, &casFailedErr) {
+			http.Error(w, err.Error(), http.StatusPreconditionFailed)
+			return
+		}
+		c.logger.Error("Could not cas cache via FSM", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func parseOffsetAndLimit(r *http.Request) (int, int) {
+	offsetStr := r.URL.Query().Get("offset")
+	limitStr := r.URL.Query().Get("limit")
+
+	offset, err := strconv.Atoi(offsetStr)
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 {
+		limit = 100 // Default limit
+	}
+	if limit > 1000 { // Max limit
+		limit = 1000
+	}
+	return offset, limit
+}
+
+func (c *Core) iterateCacheKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
+	td, ok := c.ValidateToken(r, AnyUser())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	prefix := r.URL.Query().Get("prefix")
+	offset, limit := parseOffsetAndLimit(r)
+
+	fullPrefix := fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix)
+
+	keys, err := c.fsm.IterateCache(fullPrefix, offset, limit)
+	if err != nil {
+		http.Error(w, "Failed to iterate cache keys", http.StatusInternalServerError)
+		return
+	}
+
+	// Trim the internal prefix from the keys before returning them
+	prefixToTrim := td.DataScopeUUID + ":"
+	trimmedKeys := make([]string, len(keys))
+	for i, key := range keys {
+		trimmedKeys[i] = strings.TrimPrefix(key, prefixToTrim)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(trimmedKeys); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }

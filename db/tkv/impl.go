@@ -272,6 +272,88 @@ func (t *tkv) CacheDelete(key string) error {
 	return err
 }
 
+func (t *tkv) CacheIterate(prefix string, offset int, limit int) ([]string, error) {
+	var keys []string
+	err := t.db.cache.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+
+		prefixBytes := []byte(prefix)
+		skipped := 0
+		collected := 0
+
+		for it.Seek(prefixBytes); it.ValidForPrefix(prefixBytes); it.Next() {
+			if skipped < offset {
+				skipped++
+				continue
+			}
+			if limit > 0 && collected >= limit {
+				break
+			}
+			item := it.Item()
+			keys = append(keys, string(item.Key()))
+			collected++
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func (t *tkv) CacheSetNX(key string, value string) error {
+	err := t.db.cache.Update(func(txn *badger.Txn) error {
+		_, err := txn.Get([]byte(key))
+		if err == nil {
+			return &ErrKeyExists{Key: key}
+		}
+		if !errors.Is(err, badger.ErrKeyNotFound) {
+			return &ErrInternal{Err: err}
+		}
+
+		// Key does not exist, safe to set
+		if err := txn.Set([]byte(key), []byte(value)); err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
+}
+
+func (t *tkv) CacheCompareAndSwap(key string, oldValue, newValue string) error {
+	err := t.db.cache.Update(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				return &ErrCASFailed{Key: key}
+			}
+			return &ErrInternal{Err: err}
+		}
+
+		var valBytes []byte
+		err = item.Value(func(val []byte) error {
+			valBytes = append([]byte{}, val...)
+			return nil
+		})
+
+		if err != nil {
+			return &ErrInternal{Err: err}
+		}
+
+		if string(valBytes) != oldValue {
+			return &ErrCASFailed{Key: key}
+		}
+
+		// Value matches, proceed with setting the new value.
+		if err := txn.Set([]byte(key), []byte(newValue)); err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
+}
+
 func (t *tkv) GetDataDB() *badger.DB {
 	return t.db.store
 }

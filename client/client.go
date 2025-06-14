@@ -293,9 +293,9 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 			return fmt.Errorf("endpoint not found (404) at %s: %s", currentReqURL.String(), string(bodyBytes))
 		}
 
-		if resp.StatusCode == http.StatusConflict {
+		if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusPreconditionFailed {
 			bodyBytes, _ := io.ReadAll(resp.Body) // Read body for specific conflict reason
-			c.logger.Warn("Conflict response from server", "url", currentReqURL.String(), "body", string(bodyBytes))
+			c.logger.Warn("Conflict/Precondition failed response from server", "url", currentReqURL.String(), "status", resp.StatusCode, "body", string(bodyBytes))
 			// The body contains a useful message like "key '...' already exists"
 			// But for programmatic checking, we return a typed error.
 			return ErrConflict
@@ -481,6 +481,49 @@ func (c *Client) DeleteCache(key string) error {
 		return err
 	}
 	return nil
+}
+
+// SetCacheNX sets a value in the cache, but only if the key does not already exist.
+func (c *Client) SetCacheNX(key, value string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	payload := map[string]string{"key": key, "value": value}
+	return c.doRequest(http.MethodPost, "db/api/v1/cache/setnx", nil, payload, nil)
+}
+
+// CompareAndSwapCache atomically swaps the value of a key in the cache.
+func (c *Client) CompareAndSwapCache(key, oldValue, newValue string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	payload := models.CASPayload{
+		Key:      key,
+		OldValue: oldValue,
+		NewValue: newValue,
+	}
+	return c.doRequest(http.MethodPost, "db/api/v1/cache/cas", nil, payload, nil)
+}
+
+// IterateCacheByPrefix retrieves a list of keys from the cache matching a given prefix.
+func (c *Client) IterateCacheByPrefix(prefix string, offset, limit int) ([]string, error) {
+	if prefix == "" {
+		return nil, fmt.Errorf("prefix cannot be empty")
+	}
+	params := map[string]string{
+		"prefix": prefix,
+		"offset": strconv.Itoa(offset),
+		"limit":  strconv.Itoa(limit),
+	}
+	var response []string
+	err := c.doRequest(http.MethodGet, "db/api/v1/cache/iterate/prefix", params, nil, &response)
+	if err != nil {
+		if errors.Is(err, ErrKeyNotFound) {
+			return nil, ErrKeyNotFound
+		}
+		return nil, err
+	}
+	return response, nil
 }
 
 func (c *Client) PublishEvent(topic string, data any) error {
