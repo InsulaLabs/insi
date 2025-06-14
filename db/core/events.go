@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/InsulaLabs/insi/db/models"
@@ -437,6 +438,41 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
 		c.logger.Error("Invalid JSON payload for events request", "error", err)
 		http.Error(w, "Invalid JSON payload for events: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	limit, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for events", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for events", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// get the current events
+	currentEvents, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current events", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	currentEventsInt, err := strconv.ParseInt(currentEvents, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current events", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	if currentEventsInt+1 > limitInt {
+		// Add headers to show them their current events and the limit
+		w.Header().Set("X-Current-Events", currentEvents)
+		w.Header().Set("X-Events-Limit", limit)
+		http.Error(w, "Events limit exceeded", http.StatusBadRequest)
 		return
 	}
 

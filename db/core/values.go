@@ -184,6 +184,42 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 		exists = true
 	}
 
+	// Get the limit for disk usage
+	limit, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// get the current disk usage
+	currentDiskUsage, err := c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	currentDiskUsageInt, err := strconv.ParseInt(currentDiskUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	if currentDiskUsageInt+int64(p.TotalLength()) > limitInt {
+		// Add headers to show them their current disk usage and the limit
+		w.Header().Set("X-Current-Disk-Usage", currentDiskUsage)
+		w.Header().Set("X-Disk-Usage-Limit", limit)
+		http.Error(w, "Disk usage limit exceeded", http.StatusBadRequest)
+		return
+	}
+
 	err = c.fsm.Set(p)
 	if err != nil {
 		c.logger.Error("Could not write key-value via FSM", "error", err)

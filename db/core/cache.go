@@ -110,6 +110,44 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 		exists = true
 	}
 
+	// Get the limit for memory usage
+	limit, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// get the current memory usage
+	currentMemoryUsage, err := c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	currentMemoryUsageInt, err := strconv.ParseInt(currentMemoryUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	if currentMemoryUsageInt+int64(p.TotalLength()) > limitInt {
+		// Add headers to show them their current memory usage and the limit
+		w.Header().Set("X-Current-Memory-Usage", currentMemoryUsage)
+		w.Header().Set("X-Memory-Usage-Limit", limit)
+		http.Error(w, "Memory usage limit exceeded", http.StatusBadRequest)
+		return
+	}
+
+	// set the cache
+
 	err = c.fsm.SetCache(p)
 	if err != nil {
 		c.logger.Error("Could not set cache via FSM", "error", err)
