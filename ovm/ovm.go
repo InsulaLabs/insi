@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
@@ -34,19 +35,35 @@ type Config struct {
 	DoAddTest    bool
 }
 
+type eventCollector struct {
+	topic  string
+	events []any // Store the 'data' part of the event
+	lock   sync.Mutex
+	cancel context.CancelFunc // To stop the subscription goroutine
+}
+
 type OVM struct {
 	logger     *slog.Logger
 	vm         *otto.Otto
 	insiClient *client.Client
 	testDir    string
+
+	// subscription management
+	subscriptionCtx    context.Context
+	subscriptionCancel context.CancelFunc
+	collectors         map[string]*eventCollector
+	collectorsLock     sync.RWMutex
 }
 
 func New(cfg *Config) (*OVM, error) {
-
+	subCtx, subCancel := context.WithCancel(context.Background())
 	ovm := &OVM{
-		logger:     cfg.Logger,
-		vm:         otto.New(),
-		insiClient: cfg.InsiClient,
+		logger:             cfg.Logger,
+		vm:                 otto.New(),
+		insiClient:         cfg.InsiClient,
+		subscriptionCtx:    subCtx,
+		subscriptionCancel: subCancel,
+		collectors:         make(map[string]*eventCollector),
 	}
 
 	if err := ovm.addValueStore(cfg.SetupCtx); err != nil {
@@ -56,6 +73,9 @@ func New(cfg *Config) (*OVM, error) {
 		return nil, err
 	}
 	if err := ovm.addEventEmitter(cfg.SetupCtx); err != nil {
+		return nil, err
+	}
+	if err := ovm.addSubscriptions(cfg.SetupCtx); err != nil {
 		return nil, err
 	}
 	if cfg.DoAddConsole {
@@ -83,6 +103,13 @@ func New(cfg *Config) (*OVM, error) {
 	}
 
 	return ovm, nil
+}
+
+func (o *OVM) Close() {
+	if o.subscriptionCancel != nil {
+		o.logger.Debug("Closing OVM and all active subscriptions")
+		o.subscriptionCancel()
+	}
 }
 
 func (o *OVM) Execute(ctx context.Context, code string) error {
@@ -377,6 +404,148 @@ func (o *OVM) addEventEmitter(ctx context.Context) error {
 
 		return otto.Value{}
 	})
+}
+
+func (o *OVM) addSubscriptions(ctx context.Context) error {
+	subsObj, err := o.vm.Object(`({})`)
+	if err != nil {
+		return fmt.Errorf("failed to create subscriptions object: %w", err)
+	}
+
+	// subscribe("topic")
+	subsObj.Set("subscribe", func(call otto.FunctionCall) otto.Value {
+		topic, _ := call.Argument(0).ToString()
+		if topic == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "topic cannot be empty"))
+		}
+
+		o.collectorsLock.Lock()
+		defer o.collectorsLock.Unlock()
+
+		if _, exists := o.collectors[topic]; exists {
+			// Already subscribed, this is a no-op
+			o.logger.Debug("Subscription already exists for topic", "topic", topic)
+			return otto.Value{}
+		}
+
+		collectorCtx, collectorCancel := context.WithCancel(o.subscriptionCtx)
+
+		collector := &eventCollector{
+			topic:  topic,
+			events: make([]any, 0),
+			cancel: collectorCancel,
+		}
+		o.collectors[topic] = collector
+
+		go func() {
+			o.logger.Info("Starting OVM event subscription", "topic", topic)
+			onEvent := func(data any) {
+				collector.lock.Lock()
+				collector.events = append(collector.events, data)
+				collector.lock.Unlock()
+				o.logger.Debug("OVM event collector received event", "topic", topic)
+			}
+
+			err := o.insiClient.SubscribeToEvents(topic, collectorCtx, onEvent)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				o.logger.Error("OVM event subscription failed", "topic", topic, "error", err)
+			}
+			o.logger.Info("OVM event subscription stopped", "topic", topic)
+
+			// Clean up collector if subscription ends unexpectedly
+			o.collectorsLock.Lock()
+			delete(o.collectors, topic)
+			o.collectorsLock.Unlock()
+		}()
+
+		return otto.Value{}
+	})
+
+	// poll("topic", max_events) -> returns array of events and consumes them from buffer
+	subsObj.Set("poll", func(call otto.FunctionCall) otto.Value {
+		topic, _ := call.Argument(0).ToString()
+		max, _ := call.Argument(1).ToInteger()
+
+		if topic == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "topic cannot be empty"))
+		}
+
+		o.collectorsLock.RLock()
+		collector, exists := o.collectors[topic]
+		o.collectorsLock.RUnlock()
+
+		if !exists {
+			// Not subscribed, return empty array.
+			val, _ := o.vm.ToValue([]any{})
+			return val
+		}
+
+		collector.lock.Lock()
+		defer collector.lock.Unlock()
+
+		if len(collector.events) == 0 {
+			val, _ := o.vm.ToValue([]any{})
+			return val
+		}
+
+		count := int(max)
+		if count <= 0 || count > len(collector.events) {
+			count = len(collector.events)
+		}
+
+		eventsToReturn := make([]any, count)
+		copy(eventsToReturn, collector.events[:count])
+		collector.events = collector.events[count:] // Consume them
+
+		val, err := o.vm.ToValue(eventsToReturn)
+		if err != nil {
+			panic(o.vm.MakeCustomError("InternalError", "failed to convert events to JS value: "+err.Error()))
+		}
+		return val
+	})
+
+	// unsubscribe("topic")
+	subsObj.Set("unsubscribe", func(call otto.FunctionCall) otto.Value {
+		topic, _ := call.Argument(0).ToString()
+		if topic == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "topic cannot be empty"))
+		}
+
+		o.collectorsLock.Lock()
+		defer o.collectorsLock.Unlock()
+
+		collector, exists := o.collectors[topic]
+		if !exists {
+			return otto.Value{}
+		}
+
+		collector.cancel()
+		delete(o.collectors, topic)
+
+		return otto.Value{}
+	})
+
+	// clear("topic") -> clears event buffer for topic without unsubscribing
+	subsObj.Set("clear", func(call otto.FunctionCall) otto.Value {
+		topic, _ := call.Argument(0).ToString()
+		if topic == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "topic cannot be empty"))
+		}
+
+		o.collectorsLock.RLock()
+		collector, exists := o.collectors[topic]
+		o.collectorsLock.RUnlock()
+
+		if exists {
+			collector.lock.Lock()
+			collector.events = make([]any, 0)
+			collector.lock.Unlock()
+		}
+
+		return otto.Value{}
+	})
+
+	return o.vm.Set("subscriptions", subsObj)
 }
 
 func (o *OVM) addOS(ctx context.Context) error {

@@ -182,6 +182,7 @@ func main() {
 			logger.Error("Failed to initialize OVM", "error", err)
 			os.Exit(1)
 		}
+		defer vm.Close()
 
 		logger.Info("Executing script", "path", scriptPath)
 		if err := vm.Execute(context.Background(), string(scriptContent)); err != nil {

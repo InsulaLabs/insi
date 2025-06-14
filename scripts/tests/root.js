@@ -13,6 +13,7 @@ function main() {
         "vs_test",
         "cache_test",
         "events_test",
+        "subscription_test",
         "limits_test",
         "access_failures_test"
     ];
