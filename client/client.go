@@ -598,6 +598,34 @@ func (c *Client) DeleteAPIKey(apiKey string) error {
 	return nil
 }
 
+// GetLimits retrieves the usage limits and current usage for the API key used by the client.
+func (c *Client) GetLimits() (*models.LimitsResponse, error) {
+	var response models.LimitsResponse
+	err := c.doRequest(http.MethodGet, "db/api/v1/limits", nil, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// SetLimits sets the usage limits for a given API key.
+// This operation typically requires root privileges.
+func (c *Client) SetLimits(apiKey string, limits models.Limits) error {
+	if apiKey == "" {
+		return fmt.Errorf("apiKey cannot be empty for SetLimits")
+	}
+	requestPayload := models.SetLimitsRequest{
+		ApiKey: apiKey,
+		Limits: &limits,
+	}
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/admin/limits/set", nil, requestPayload, nil)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // SubscribeToEvents connects to the event subscription WebSocket endpoint and prints incoming events.
 func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent func(data any)) error {
 	if topic == "" {

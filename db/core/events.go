@@ -441,7 +441,7 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	limit, err := c.fsm.Get(WithApiKeyMaxEvents(td.KeyUUID))
 	if err != nil {
 		c.logger.Error("Could not get limit for events", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

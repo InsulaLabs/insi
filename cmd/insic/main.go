@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
+	"github.com/InsulaLabs/insi/db/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
@@ -209,6 +211,8 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<key_name>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.YellowString("uses key from env or --root"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N"), color.YellowString("--root flag usually required"))
 	// Object Commands
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("upload"), color.CyanString("<filepath>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("download"), color.CyanString("<uuid>"), color.CyanString("<output_path>"))
@@ -222,8 +226,19 @@ func handlePublish(c *client.Client, args []string) {
 		os.Exit(1)
 	}
 	topic := args[0]
-	data := args[1]
-	err := c.PublishEvent(topic, data)
+	dataStr := args[1]
+
+	var dataToPublish any
+	// Try to unmarshal the data argument as JSON.
+	// If it fails, we assume it's a plain string.
+	var jsonData any
+	if err := json.Unmarshal([]byte(dataStr), &jsonData); err == nil {
+		dataToPublish = jsonData
+	} else {
+		dataToPublish = dataStr
+	}
+
+	err := c.PublishEvent(topic, dataToPublish)
 	if err != nil {
 		logger.Error("Publish failed", "topic", topic, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
@@ -677,6 +692,16 @@ func handleApi(c *client.Client, args []string) {
 	case "verify":
 		// --root is not required for verify, as we are creating a new client with the provided key
 		handleApiVerify(subArgs)
+	case "limits":
+		handleApiLimits(c, subArgs)
+	case "set-limits":
+		// Enforce --root for set-limits
+		if !useRootKey {
+			logger.Error("api set-limits requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s api set-limits requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleApiSetLimits(c, subArgs)
 	default:
 		logger.Error("api: unknown sub-command", "sub_command", subCommand)
 		printUsage()
@@ -785,6 +810,80 @@ func handleApiVerify(args []string) {
 	for k, v := range pingResp {
 		fmt.Printf("  %s: %s\n", color.CyanString(k), v)
 	}
+}
+
+func handleApiLimits(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("api limits: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	resp, err := c.GetLimits()
+	if err != nil {
+		logger.Error("Failed to get API key limits", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	fmt.Println(color.CyanString("Maximum Limits:"))
+	fmt.Printf("  Bytes on Disk:     %d\n", *resp.MaxLimits.BytesOnDisk)
+	fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
+	fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsPerSecond)
+	fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
+	fmt.Println(color.CyanString("\nCurrent Usage:"))
+	fmt.Printf("  Bytes on Disk:     %d\n", *resp.Current.BytesOnDisk)
+	fmt.Printf("  Bytes in Memory:   %d\n", *resp.Current.BytesInMemory)
+	fmt.Printf("  Events per Second: %d\n", *resp.Current.EventsPerSecond)
+	fmt.Printf("  Subscribers:       %d\n", *resp.Current.Subscribers)
+}
+
+func handleApiSetLimits(c *client.Client, args []string) {
+	setLimitsCmd := flag.NewFlagSet("set-limits", flag.ExitOnError)
+	disk := setLimitsCmd.Int64("disk", -1, "Max bytes on disk")
+	mem := setLimitsCmd.Int64("mem", -1, "Max bytes in memory")
+	events := setLimitsCmd.Int64("events", -1, "Max events per second")
+	subs := setLimitsCmd.Int64("subs", -1, "Max subscribers")
+
+	if len(args) < 1 {
+		logger.Error("api set-limits: requires <key_value> and flags")
+		setLimitsCmd.Usage()
+		os.Exit(1)
+	}
+	apiKey := args[0]
+	if err := setLimitsCmd.Parse(args[1:]); err != nil {
+		logger.Error("api set-limits: error parsing flags", "error", err)
+		os.Exit(1)
+	}
+
+	if len(setLimitsCmd.Args()) > 0 {
+		logger.Error("api set-limits: unknown arguments provided", "unknown_args", setLimitsCmd.Args())
+		setLimitsCmd.Usage()
+		os.Exit(1)
+	}
+
+	limits := models.Limits{}
+	if *disk != -1 {
+		limits.BytesOnDisk = disk
+	}
+	if *mem != -1 {
+		limits.BytesInMemory = mem
+	}
+	if *events != -1 {
+		limits.EventsPerSecond = events
+	}
+	if *subs != -1 {
+		limits.Subscribers = subs
+	}
+
+	err := c.SetLimits(apiKey, limits)
+	if err != nil {
+		logger.Error("Failed to set API key limits", "key", apiKey, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	color.HiGreen("OK")
 }
 
 // --- Object Command Handlers ---

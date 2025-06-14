@@ -249,6 +249,12 @@ func (c *Core) Run() {
 	c.mux.Handle("/db/api/v1/join", c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system"))
 	c.mux.Handle("/db/api/v1/ping", c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system"))
 
+	// System handle anyone can call with an api key to get their current usage and limits
+	c.mux.Handle("/db/api/v1/limits", c.rateLimitMiddleware(http.HandlerFunc(c.limitsHandler), "system"))
+
+	// Only ROOT can set limits
+	c.mux.Handle("/db/api/v1/admin/limits/set", c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system"))
+
 	// Admin API Key Management handlers (system category for rate limiting)
 	c.mux.Handle("/db/api/v1/admin/api/create", c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system"))
 	c.mux.Handle("/db/api/v1/admin/api/delete", c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system"))

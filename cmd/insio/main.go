@@ -52,6 +52,16 @@ func loadConfig(path string) (*config.Cluster, error) {
 	return &cfg, nil
 }
 
+func printUsage() {
+	fmt.Fprintf(os.Stderr, "Usage: insio <command> [flags]\n")
+	fmt.Fprintf(os.Stderr, "   or: insio --script <path_to_script.js> [flags]\n")
+	fmt.Fprintf(os.Stderr, "\nCommands:\n")
+	fmt.Fprintf(os.Stderr, "  ping\t\tPing the target node to check connectivity.\n")
+	fmt.Fprintf(os.Stderr, "  verify\tVerify the API key has connectivity to the target node.\n")
+	fmt.Fprintf(os.Stderr, "\nFlags:\n")
+	flag.PrintDefaults()
+}
+
 func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error) {
 	nodeToConnect := targetNodeID
 	if nodeToConnect == "" {
@@ -104,12 +114,60 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 	return c, nil
 }
 
+func handlePing(c *client.Client, args []string) {
+	if len(args) > 0 {
+		logger.Error("ping: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+	resp, err := c.Ping()
+	if err != nil {
+		logger.Error("Ping failed", "error", err)
+		os.Exit(1)
+	}
+	fmt.Println("Ping Response:")
+	for k, v := range resp {
+		fmt.Printf("  %s: %s\n", k, v)
+	}
+}
+
+func handleVerify(c *client.Client, args []string) {
+	if len(args) > 0 {
+		logger.Error("verify: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+	logger.Info("Attempting to verify API key with a ping...")
+	resp, err := c.Ping()
+	if err != nil {
+		logger.Error("API key verification failed", "error", err)
+		os.Exit(1)
+	}
+
+	logger.Info("API Key Verified Successfully!")
+	fmt.Println("Ping Response:")
+	for k, v := range resp {
+		fmt.Printf("  %s: %s\n", k, v)
+	}
+}
+
 func main() {
 	flag.Parse()
 
-	if scriptPath == "" {
-		fmt.Fprintf(os.Stderr, "Usage: insio --script <path_to_script.js> [flags]\n")
-		flag.PrintDefaults()
+	args := flag.Args()
+	command := ""
+	if len(args) > 0 {
+		command = args[0]
+	}
+
+	if scriptPath == "" && command == "" {
+		printUsage()
+		os.Exit(1)
+	}
+
+	if scriptPath != "" && command != "" {
+		logger.Error("Cannot use --script flag with a command")
+		printUsage()
 		os.Exit(1)
 	}
 
@@ -124,6 +182,20 @@ func main() {
 	if err != nil {
 		logger.Error("Failed to initialize API client", "error", err)
 		os.Exit(1)
+	}
+
+	if command != "" {
+		switch command {
+		case "ping":
+			handlePing(cli, args[1:])
+		case "verify":
+			handleVerify(cli, args[1:])
+		default:
+			logger.Error("Unknown command", "command", command)
+			printUsage()
+			os.Exit(1)
+		}
+		return
 	}
 
 	scriptContent, err := os.ReadFile(scriptPath)

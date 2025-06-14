@@ -34,3 +34,20 @@ type TokenData struct {
 	DataScopeUUID string `json:"ds"`
 	KeyUUID       string `json:"k"`
 }
+
+type Limits struct {
+	BytesOnDisk     *int64 `json:"bytes_on_disk,omitempty"`
+	BytesInMemory   *int64 `json:"bytes_in_memory,omitempty"`
+	EventsPerSecond *int64 `json:"events_per_second,omitempty"`
+	Subscribers     *int64 `json:"subscribers,omitempty"`
+}
+
+type LimitsResponse struct {
+	MaxLimits Limits `json:"max_limits"`
+	Current   Limits `json:"current_limits"`
+}
+
+type SetLimitsRequest struct {
+	ApiKey string  `json:"api_key"` // the key to limit - must be fully composed key
+	Limits *Limits `json:"limits"`
+}
