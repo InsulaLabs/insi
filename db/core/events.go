@@ -209,6 +209,15 @@ func (c *Core) eventProcessingLoop() {
 	for {
 		select {
 		case event := <-c.eventCh:
+			c.eventSubscribersLock.RLock()
+			hasSubscribers := len(c.eventSubscribers) > 0
+			c.eventSubscribersLock.RUnlock()
+
+			if !hasSubscribers {
+				c.logger.Debug("No active subscribers, skipping event dispatch", "topic", event.Topic)
+				continue
+			}
+
 			c.logger.Debug("Service event loop received event", "topic", event.Topic)
 			c.dispatchEventToSubscribersViaSessionSend(event)
 

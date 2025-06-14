@@ -404,11 +404,33 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				return fmt.Errorf("could not unmarshal bump_integer value: %w", err)
 			}
 
-			err = kf.tkv.BumpInteger(p.Key, delta)
+			// Atomically increment the value. This is safe because Apply is serialized.
+			currentValStr, err := kf.tkv.Get(p.Key)
+			var currentVal int64
+
 			if err != nil {
-				kf.logger.Error("TKV BumpInteger failed", "key", p.Key, "error", err)
-				return fmt.Errorf("tkv BumpInteger failed (key %s): %w", p.Key, err)
+				if tkv.IsErrKeyNotFound(err) {
+					currentVal = 0 // Key doesn't exist, start from 0
+				} else {
+					kf.logger.Error("TKV Get failed during BumpInteger", "key", p.Key, "error", err)
+					return fmt.Errorf("tkv Get failed during BumpInteger (key %s): %w", p.Key, err)
+				}
+			} else {
+				// Key exists, parse its value
+				currentVal, err = strconv.ParseInt(currentValStr, 10, 64)
+				if err != nil {
+					kf.logger.Error("Could not parse existing value for BumpInteger", "key", p.Key, "value", currentValStr, "error", err)
+					return fmt.Errorf("could not parse existing value for BumpInteger (key %s): %w", p.Key, err)
+				}
 			}
+
+			newValue := currentVal + delta
+			err = kf.tkv.Set(p.Key, strconv.FormatInt(newValue, 10))
+			if err != nil {
+				kf.logger.Error("TKV Set failed during BumpInteger operation", "key", p.Key, "error", err)
+				return fmt.Errorf("tkv Set failed during BumpInteger (key %s): %w", p.Key, err)
+			}
+
 			kf.logger.Debug("FSM applied bump_integer", "key", p.Key)
 			return nil
 		default:

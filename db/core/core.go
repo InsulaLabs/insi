@@ -15,6 +15,7 @@ import (
 	"github.com/InsulaLabs/insi/db/rft"
 	"github.com/InsulaLabs/insi/db/tkv"
 	"github.com/InsulaLabs/insula/security/badge"
+	"github.com/fatih/color"
 	"github.com/gorilla/websocket"
 	"github.com/jellydator/ttlcache/v3"
 	"golang.org/x/time/rate"
@@ -328,7 +329,9 @@ func (c *Core) ensureRootKeyTrackersExist() {
 				Value: "0",
 			})
 			c.logger.Info("set root tracker", "key", strings.TrimSuffix(key, c.cfg.RootPrefix), "value", "0")
+			color.HiRed("set root tracker key %s value %s", strings.TrimSuffix(key, c.cfg.RootPrefix), "0")
 		} else {
+			color.HiCyan("Key already exists %s %s", strings.TrimSuffix(key, c.cfg.RootPrefix), val)
 			c.logger.Info(
 				"Key already exists",
 				"key",
