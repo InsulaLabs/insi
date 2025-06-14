@@ -469,34 +469,48 @@ func (t *tkv) CompareAndSwap(key string, oldValue, newValue string) error {
 
 func (t *tkv) BumpInteger(key string, delta int64) error {
 	err := t.db.store.Update(func(txn *badger.Txn) error {
+		var currentVal int64
 		item, err := txn.Get([]byte(key))
-		if err != nil {
-			return &ErrInternal{Err: err}
-		}
-
-		var valBytes []byte
-		err = item.Value(func(val []byte) error {
-			valBytes = append([]byte{}, val...)
-			return nil
-		})
 
 		if err != nil {
-			return &ErrInternal{Err: err}
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				// Key doesn't exist, we'll create it. Start from 0.
+				currentVal = 0
+			} else {
+				// For any other error, it's internal.
+				return &ErrInternal{Err: err}
+			}
+		} else {
+			// Key exists, get its value.
+			err = item.Value(func(val []byte) error {
+				// If value is empty, treat as 0
+				if len(val) == 0 {
+					currentVal = 0
+					return nil
+				}
+				// Otherwise, parse it.
+				parsedVal, parseErr := strconv.ParseInt(string(val), 10, 64)
+				if parseErr != nil {
+					// If parsing fails, return an invalid state error.
+					return &ErrInvalidState{Key: key, Reason: "value is not a valid integer"}
+				}
+				currentVal = parsedVal
+				return nil
+			})
+			if err != nil {
+				return err // This could be ErrInvalidState or another error from Value().
+			}
 		}
 
-		val, err := strconv.ParseInt(string(valBytes), 10, 64)
-		if err != nil {
-			return &ErrInternal{Err: err}
+		newValue := currentVal + delta
+
+		// Explicitly floor the value at 0.
+		if newValue < 0 {
+			newValue = 0
 		}
 
-		val += delta
-
-		// Explicitly floor the value at 0
-		if val < 0 {
-			val = 0
-		}
-
-		if err := txn.Set([]byte(key), []byte(strconv.FormatInt(val, 10))); err != nil {
+		// Set the new value.
+		if err := txn.Set([]byte(key), []byte(strconv.FormatInt(newValue, 10))); err != nil {
 			return &ErrInternal{Err: err}
 		}
 		return nil

@@ -392,6 +392,7 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 			return models.TokenData{
 				Entity:        EntityRoot,
 				DataScopeUUID: c.cfg.RootPrefix,
+				KeyUUID:       c.cfg.RootPrefix,
 			}, false
 		}
 	}
@@ -400,6 +401,7 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 		return models.TokenData{
 			Entity:        EntityRoot,
 			DataScopeUUID: c.cfg.RootPrefix,
+			KeyUUID:       c.cfg.RootPrefix,
 		}, true
 	}
 
