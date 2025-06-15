@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -210,7 +211,8 @@ func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Hand
 			c.logger.Warn("Rate limit exceeded", "category", category, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
 
 			// Set headers to inform the client about the rate limit.
-			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", delay.Seconds())) // Correctly format seconds.
+			retryAfterSeconds := math.Ceil(delay.Seconds())
+			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfterSeconds)) // Correctly format seconds.
 			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%v", limiter.Limit()))
 			w.Header().Set("X-RateLimit-Burst", fmt.Sprintf("%d", limiter.Burst()))
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)

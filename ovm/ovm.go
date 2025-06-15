@@ -55,7 +55,7 @@ type OVM struct {
 	subscriptionCancel context.CancelFunc
 	collectors         map[string]*eventCollector
 	collectorsLock     sync.RWMutex
-	rateLimitRetries   uint64
+	rateLimitRetries   atomic.Uint64
 }
 
 func New(cfg *Config) (*OVM, error) {
@@ -179,7 +179,7 @@ func withRetries[R any](o *OVM, ctx context.Context, fn func() (R, error)) (R, e
 		var rateLimitErr *client.ErrRateLimited
 		if errors.As(err, &rateLimitErr) {
 			o.logger.Warn("OVM operation rate limited, sleeping", "duration", rateLimitErr.RetryAfter)
-			atomic.AddUint64(&o.rateLimitRetries, 1)
+			o.rateLimitRetries.Add(1)
 			select {
 			case <-time.After(rateLimitErr.RetryAfter):
 				o.logger.Debug("Finished rate limit sleep, retrying operation.")
@@ -859,13 +859,19 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 
 	insightObj.Set("getMetrics", func(call otto.FunctionCall) otto.Value {
 		metrics := map[string]interface{}{
-			"rate_limit_retries": atomic.LoadUint64(&o.rateLimitRetries),
+			"rate_limit_retries": o.rateLimitRetries.Load(),
 		}
 		val, err := o.vm.ToValue(metrics)
 		if err != nil {
 			panic(o.vm.MakeCustomError("InsightError", "failed to convert metrics to JS value: "+err.Error()))
 		}
 		return val
+	})
+
+	insightObj.Set("resetMetrics", func(call otto.FunctionCall) otto.Value {
+		o.rateLimitRetries.Store(0)
+		o.logger.Debug("OVM rate limit retry metric reset")
+		return otto.Value{}
 	})
 
 	if err := adminObj.Set("insight", insightObj); err != nil {

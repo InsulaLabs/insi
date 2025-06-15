@@ -14,6 +14,9 @@ console.log("running rate limit test");
 
 function testRateLimit() {
     test.Yay("Starting rate limit test using a system command. This may take a moment...");
+
+    admin.insight.resetMetrics();
+    
     var iterations = 30; // Should be enough to trigger 'system' rate limits (limit: 10, burst: 15).
 
     var startTime = time.stamp();
@@ -57,6 +60,8 @@ function testRateLimit() {
     }
 
     test.Yay("Rate limit test passed! The OVM successfully handled all operations without crashing.");
+
+    time.sleep(1000 * 10); // Wait for rate limit to reset for next test
 }
 
 
