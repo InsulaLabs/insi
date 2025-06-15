@@ -122,10 +122,24 @@ function atomic_stress(n) {
 
     test.Yay("[GET] Average time per get: " + (get_time_sum / keys.length) + "ms");
 
+    // delete keys
+
+    log("Deleting keys");
+
+    var delete_time_sum = 0;
+    for (var i = 0; i < keys.length; i++) {
+        var delete_start = time.stamp();
+        vs.delete(keys[i]);
+        var delete_time = time.stamp() - delete_start;
+        delete_time_sum += delete_time;
+    }
+
+    test.Yay("[DELETE] Average time per delete: " + (delete_time_sum / keys.length) + "ms");
+
     log("Done");
 
-    log("Total time: " + (set_time_sum + cas_time_sum + get_time_sum) + "ms");
-    log("Average time per operation: " + ((set_time_sum + cas_time_sum + get_time_sum) / keys.length) + "ms");
+    log("Total time: " + (set_time_sum + cas_time_sum + get_time_sum + delete_time_sum) + "ms");
+    log("Average time per operation: " + ((set_time_sum + cas_time_sum + get_time_sum + delete_time_sum) / keys.length) + "ms");
 
 }
 
