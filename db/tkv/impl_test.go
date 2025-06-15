@@ -274,6 +274,92 @@ func TestTKV_Cache(t *testing.T) {
 	})
 }
 
+func TestTKV_Cache_Advanced(t *testing.T) {
+	ctx := context.Background()
+	tkvTest, err := createTestTKV(ctx)
+	if err != nil {
+		t.Fatalf("Failed to create test TKV: %v", err)
+	}
+	defer tkvTest.Cleanup()
+
+	tkvCache, ok := tkvTest.tkv.(TKVCacheHandler)
+	if !ok {
+		t.Fatalf("TKV instance does not implement TKVCacheHandler")
+	}
+
+	t.Run("CacheIterate", func(t *testing.T) {
+		keys := []string{"c_prefix_key1", "c_prefix_key2", "c_prefix_key3", "c_other_key1"}
+		for _, key := range keys {
+			if err := tkvCache.CacheSet(key, "value"); err != nil {
+				t.Fatalf("Setup: CacheSet() error for key %s: %v", key, err)
+			}
+		}
+
+		prefix := "c_prefix_"
+		expectedKeys := []string{"c_prefix_key1", "c_prefix_key2", "c_prefix_key3"}
+		retrievedKeys, err := tkvCache.CacheIterate(prefix, 0, 0)
+		if err != nil {
+			t.Errorf("CacheIterate() error = %v, wantErr nil", err)
+		}
+		sort.Strings(retrievedKeys)
+		sort.Strings(expectedKeys)
+		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
+			t.Errorf("CacheIterate() got = %v, want %v", retrievedKeys, expectedKeys)
+		}
+	})
+
+	t.Run("CacheSetNX", func(t *testing.T) {
+		key := "newCacheKey"
+		value := "newCacheValue"
+
+		// Set for the first time
+		err := tkvCache.CacheSetNX(key, value)
+		if err != nil {
+			t.Errorf("CacheSetNX() on new key error = %v, wantErr nil", err)
+		}
+		retrieved, err := tkvCache.CacheGet(key)
+		if err != nil || retrieved != value {
+			t.Errorf("CacheGet() after CacheSetNX failed or got wrong value")
+		}
+
+		// Try to set again
+		err = tkvCache.CacheSetNX(key, "anotherValue")
+		if !errors.As(err, new(*ErrKeyExists)) {
+			t.Errorf("CacheSetNX() on existing key expected ErrKeyExists, got %v", err)
+		}
+	})
+
+	t.Run("CacheCompareAndSwap", func(t *testing.T) {
+		key := "casCacheKey"
+		initialValue := "initial"
+		newValue := "swapped"
+
+		if err := tkvCache.CacheSet(key, initialValue); err != nil {
+			t.Fatalf("Setup: CacheSet failed: %v", err)
+		}
+
+		// CAS with correct old value
+		err := tkvCache.CacheCompareAndSwap(key, initialValue, newValue)
+		if err != nil {
+			t.Errorf("CacheCompareAndSwap() with correct value failed: %v", err)
+		}
+		retrieved, _ := tkvCache.CacheGet(key)
+		if retrieved != newValue {
+			t.Errorf("Get() after successful CAS got = %s, want = %s", retrieved, newValue)
+		}
+
+		// CAS with incorrect old value
+		err = tkvCache.CacheCompareAndSwap(key, "wrongOldValue", "someOtherValue")
+		if !errors.As(err, new(*ErrCASFailed)) {
+			t.Errorf("CacheCompareAndSwap() with incorrect value expected ErrCASFailed, got %T", err)
+		}
+		retrieved, _ = tkvCache.CacheGet(key)
+		if retrieved != newValue {
+			t.Errorf("Value should not have changed on failed CAS, got = %s", retrieved)
+		}
+	})
+}
+
 func TestTKV_BatchOperations(t *testing.T) {
 	ctx := context.Background()
 	tkvTest, err := createTestTKV(ctx)

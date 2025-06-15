@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
+	"github.com/InsulaLabs/insi/db/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
@@ -188,9 +190,12 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cas"), color.CyanString("<key>"), color.CyanString("<old_value>"), color.CyanString("<new_value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("delete"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cache"), color.CyanString("setnx"), color.CyanString("<key>"), color.CyanString("<value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("cas"), color.CyanString("<key>"), color.CyanString("<old_value>"), color.CyanString("<new_value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("join"), color.CyanString("<leaderNodeID>"), color.CyanString("<followerNodeID>"))
 	fmt.Fprintf(os.Stderr, "  %s\n", color.GreenString("ping"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("publish"), color.CyanString("<topic>"), color.CyanString("<data>"))
@@ -206,6 +211,8 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<key_name>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.CyanString("[key_value]"), color.YellowString("Get limits. If key provided, gets for that key (--root required)."))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N"), color.YellowString("--root flag usually required"))
 	// Object Commands
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("upload"), color.CyanString("<filepath>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("download"), color.CyanString("<uuid>"), color.CyanString("<output_path>"))
@@ -219,8 +226,19 @@ func handlePublish(c *client.Client, args []string) {
 		os.Exit(1)
 	}
 	topic := args[0]
-	data := args[1]
-	err := c.PublishEvent(topic, data)
+	dataStr := args[1]
+
+	var dataToPublish any
+	// Try to unmarshal the data argument as JSON.
+	// If it fails, we assume it's a plain string.
+	var jsonData any
+	if err := json.Unmarshal([]byte(dataStr), &jsonData); err == nil {
+		dataToPublish = jsonData
+	} else {
+		dataToPublish = dataStr
+	}
+
+	err := c.PublishEvent(topic, dataToPublish)
 	if err != nil {
 		logger.Error("Publish failed", "topic", topic, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
@@ -488,10 +506,99 @@ func handleCache(c *client.Client, args []string) {
 		}
 		// logger.Info("Cache delete successful", "key", key) // Redundant
 		color.HiGreen("OK")
+	case "setnx":
+		if len(subArgs) != 2 {
+			logger.Error("cache setnx: requires <key> <value>")
+			printUsage()
+			os.Exit(1)
+		}
+		key, value := subArgs[0], subArgs[1]
+		err := c.SetCacheNX(key, value)
+		if err != nil {
+			if errors.Is(err, client.ErrConflict) {
+				fmt.Fprintf(os.Stderr, "%s Key '%s' already exists in cache.\n", color.RedString("Conflict:"), color.CyanString(key))
+			} else {
+				logger.Error("Cache SetNX failed", "key", key, "error", err)
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
+			os.Exit(1)
+		}
+		color.HiGreen("OK")
+	case "cas":
+		if len(subArgs) != 3 {
+			logger.Error("cache cas: requires <key> <old_value> <new_value>")
+			printUsage()
+			os.Exit(1)
+		}
+		key, oldValue, newValue := subArgs[0], subArgs[1], subArgs[2]
+		err := c.CompareAndSwapCache(key, oldValue, newValue)
+		if err != nil {
+			if errors.Is(err, client.ErrConflict) {
+				fmt.Fprintf(os.Stderr, "%s Cache compare-and-swap failed for key '%s'.\n", color.RedString("Precondition Failed:"), color.CyanString(key))
+			} else {
+				logger.Error("Cache CAS failed", "key", key, "error", err)
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
+			os.Exit(1)
+		}
+		color.HiGreen("OK")
+	case "iterate":
+		handleCacheIterate(c, subArgs)
 	default:
 		logger.Error("cache: unknown sub-command", "sub_command", subCommand)
 		printUsage()
 		os.Exit(1)
+	}
+}
+
+func handleCacheIterate(c *client.Client, args []string) {
+	if len(args) < 2 {
+		logger.Error("cache iterate: requires <type (prefix)> <value> [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	iterType := args[0]
+	value := args[1]
+	offset, limit := 0, 100 // Defaults
+
+	var err error
+	if len(args) > 2 {
+		offset, err = strconv.Atoi(args[2])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[2], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 3 {
+		limit, err = strconv.Atoi(args[3])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[3], err)
+			os.Exit(1)
+		}
+	}
+
+	var results []string
+	switch iterType {
+	case "prefix":
+		results, err = c.IterateCacheByPrefix(value, offset, limit)
+	default:
+		logger.Error("cache iterate: unknown type", "type", iterType)
+		printUsage()
+		os.Exit(1)
+		return
+	}
+
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) {
+			color.HiRed("No keys found in cache.")
+		} else {
+			logger.Error("Cache iterate failed", "type", iterType, "value", value, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
+	for _, item := range results {
+		fmt.Println(item)
 	}
 }
 
@@ -585,6 +692,25 @@ func handleApi(c *client.Client, args []string) {
 	case "verify":
 		// --root is not required for verify, as we are creating a new client with the provided key
 		handleApiVerify(subArgs)
+	case "limits":
+		if len(subArgs) == 0 {
+			handleApiGetMyLimits(c, subArgs)
+		} else {
+			if !useRootKey {
+				logger.Error("api limits <key_value> requires the --root flag to be set.")
+				fmt.Fprintf(os.Stderr, "%s api limits <key_value> requires --root flag.\n", color.RedString("Error:"))
+				os.Exit(1)
+			}
+			handleApiGetLimits(c, subArgs)
+		}
+	case "set-limits":
+		// Enforce --root for set-limits
+		if !useRootKey {
+			logger.Error("api set-limits requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s api set-limits requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleApiSetLimits(c, subArgs)
 	default:
 		logger.Error("api: unknown sub-command", "sub_command", subCommand)
 		printUsage()
@@ -675,6 +801,7 @@ func handleApiVerify(args []string) {
 	if err != nil {
 		logger.Error("api verify: failed to create client for verification", "target_node", nodeToConnect, "error", err)
 		fmt.Fprintf(os.Stderr, "%s Failed to create client for verification: %v\n", color.RedString("Error:"), err)
+		color.HiRed("Verification FAILED")
 		os.Exit(1)
 	}
 
@@ -693,6 +820,149 @@ func handleApiVerify(args []string) {
 	for k, v := range pingResp {
 		fmt.Printf("  %s: %s\n", color.CyanString(k), v)
 	}
+}
+
+func handleApiGetMyLimits(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("api limits: does not take arguments for self")
+		printUsage()
+		os.Exit(1)
+	}
+
+	resp, err := c.GetLimits()
+	if err != nil {
+		logger.Error("Failed to get API key limits", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	fmt.Println(color.CyanString("Maximum Limits (for current key):"))
+	if resp.MaxLimits.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.MaxLimits.BytesOnDisk)
+	}
+	if resp.MaxLimits.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
+	}
+	if resp.MaxLimits.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsEmitted)
+	}
+	if resp.MaxLimits.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
+	}
+	fmt.Println(color.CyanString("\nCurrent Usage (for current key):"))
+	if resp.CurrentUsage.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.CurrentUsage.BytesOnDisk)
+	}
+	if resp.CurrentUsage.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.CurrentUsage.BytesInMemory)
+	}
+	if resp.CurrentUsage.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.CurrentUsage.EventsEmitted)
+	}
+	if resp.CurrentUsage.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.CurrentUsage.Subscribers)
+	}
+}
+
+func handleApiGetLimits(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("api get-limits: requires <key_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	apiKey := args[0]
+
+	resp, err := c.GetLimitsForKey(apiKey)
+	if err != nil {
+		logger.Error("Failed to get API key limits for specific key", "key", apiKey, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	var keyIdentifier string
+	if len(apiKey) > 12 { // "insi_" prefix + some chars
+		keyIdentifier = apiKey[:8] + "..." + apiKey[len(apiKey)-4:]
+	} else {
+		keyIdentifier = apiKey
+	}
+
+	fmt.Printf("Limits for key %s\n", color.CyanString(keyIdentifier))
+
+	fmt.Println(color.CyanString("Maximum Limits:"))
+	if resp.MaxLimits.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.MaxLimits.BytesOnDisk)
+	}
+	if resp.MaxLimits.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
+	}
+	if resp.MaxLimits.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsEmitted)
+	}
+	if resp.MaxLimits.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
+	}
+
+	fmt.Println(color.CyanString("\nCurrent Usage:"))
+	if resp.CurrentUsage.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.CurrentUsage.BytesOnDisk)
+	}
+	if resp.CurrentUsage.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.CurrentUsage.BytesInMemory)
+	}
+	if resp.CurrentUsage.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.CurrentUsage.EventsEmitted)
+	}
+	if resp.CurrentUsage.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.CurrentUsage.Subscribers)
+	}
+}
+
+func handleApiSetLimits(c *client.Client, args []string) {
+	setLimitsCmd := flag.NewFlagSet("set-limits", flag.ExitOnError)
+	disk := setLimitsCmd.Int64("disk", -1, "Max bytes on disk")
+	mem := setLimitsCmd.Int64("mem", -1, "Max bytes in memory")
+	events := setLimitsCmd.Int64("events", -1, "Max events per second")
+	subs := setLimitsCmd.Int64("subs", -1, "Max subscribers")
+
+	if len(args) < 1 {
+		logger.Error("api set-limits: requires <key_value> and flags")
+		setLimitsCmd.Usage()
+		os.Exit(1)
+	}
+	apiKey := args[0]
+	if err := setLimitsCmd.Parse(args[1:]); err != nil {
+		logger.Error("api set-limits: error parsing flags", "error", err)
+		os.Exit(1)
+	}
+
+	if len(setLimitsCmd.Args()) > 0 {
+		logger.Error("api set-limits: unknown arguments provided", "unknown_args", setLimitsCmd.Args())
+		setLimitsCmd.Usage()
+		os.Exit(1)
+	}
+
+	limits := models.Limits{}
+	if *disk != -1 {
+		limits.BytesOnDisk = disk
+	}
+	if *mem != -1 {
+		limits.BytesInMemory = mem
+	}
+	if *events != -1 {
+		limits.EventsEmitted = events
+	}
+	if *subs != -1 {
+		limits.Subscribers = subs
+	}
+
+	err := c.SetLimits(apiKey, limits)
+	if err != nil {
+		logger.Error("Failed to set API key limits", "key", apiKey, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	color.HiGreen("OK")
 }
 
 // --- Object Command Handlers ---

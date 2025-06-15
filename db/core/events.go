@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/InsulaLabs/insi/db/models"
@@ -28,6 +29,8 @@ type eventSession struct {
 	send chan []byte
 	// Service pointer to access logger, etc.
 	service *Core
+	// The UUID of the API key that created the session.
+	keyUUID string
 }
 
 type eventSubsystem struct {
@@ -125,6 +128,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 		topic:   prefixedTopic,
 		send:    make(chan []byte, 256), // Buffered channel
 		service: c,
+		keyUUID: td.KeyUUID,
 	}
 
 	c.registerSubscriber(session)
@@ -157,6 +161,11 @@ func (c *Core) registerSubscriber(session *eventSession) {
 	}
 	c.eventSubscribers[session.topic][session] = true // Store the session itself
 
+	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), 1); err != nil {
+		c.logger.Error("Could not bump integer via FSM for subscribers", "error", err)
+		// Don't fail the registration, but log it.
+	}
+
 	c.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 }
 
@@ -171,6 +180,11 @@ func (c *Core) unregisterSubscriber(session *eventSession) {
 		if _, ok := sessionsInTopic[session]; ok {
 			delete(c.eventSubscribers[session.topic], session)
 			c.logger.Info("Subscriber unregistered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
+
+			if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), -1); err != nil {
+				c.logger.Error("Could not bump integer via FSM for subscribers on unregister", "error", err)
+				// Don't fail, just log.
+			}
 
 			// Decrement connection count only if we actually found and removed the session
 			if c.activeWsConnections > 0 {
@@ -196,6 +210,15 @@ func (c *Core) eventProcessingLoop() {
 	for {
 		select {
 		case event := <-c.eventCh:
+			c.eventSubscribersLock.RLock()
+			hasSubscribers := len(c.eventSubscribers) > 0
+			c.eventSubscribersLock.RUnlock()
+
+			if !hasSubscribers {
+				c.logger.Debug("No active subscribers, skipping event dispatch", "topic", event.Topic)
+				continue
+			}
+
 			c.logger.Debug("Service event loop received event", "topic", event.Topic)
 			c.dispatchEventToSubscribersViaSessionSend(event)
 
@@ -418,6 +441,41 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limit, err := c.fsm.Get(WithApiKeyMaxEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for events", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for events", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// get the current events
+	currentEvents, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current events", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	currentEventsInt, err := strconv.ParseInt(currentEvents, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current events", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	if currentEventsInt+1 > limitInt {
+		// Add headers to show them their current events and the limit
+		w.Header().Set("X-Current-Events", currentEvents)
+		w.Header().Set("X-Events-Limit", limit)
+		http.Error(w, "Events limit exceeded", http.StatusBadRequest)
+		return
+	}
+
 	// Prefix the topic with the entity's UUID to scope it
 	prefixedTopic := fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Topic)
 	c.logger.Debug("Publishing event with prefixed topic", "original_topic", p.Topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.DataScopeUUID)
@@ -428,4 +486,10 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	if err := c.fsm.BumpInteger(WithApiKeyEvents(td.KeyUUID), 1); err != nil {
+		c.logger.Error("Could not bump integer via FSM for events", "error", err)
+		// Don't fail the whole request, but log it.
+	}
+	w.WriteHeader(http.StatusOK)
 }

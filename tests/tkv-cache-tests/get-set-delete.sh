@@ -255,6 +255,82 @@ test_cache_cli_arg_validation() {
     expect_error "cache delete: too many arguments" "$exit_code" "$output"
 }
 
+test_cache_iterate_prefix() {
+    print_header "Test: Cache Iterate by Prefix"
+    local prefix="c_iter_prefix_$(date +%s)_"
+    local key1="${prefix}key1"
+    local value1="c_value1_iter"
+    local key2="${prefix}key2"
+    local value2="c_value2_iter"
+    local key3="${prefix}key3"
+    local value3="c_value3_iter"
+    local output_iterate
+    local exit_code_iterate
+    local exit_code_set
+
+    # Set keys
+    run_insic "cache" "set" "$key1" "$value1" > /dev/null
+    exit_code_set=$?
+    expect_success "Cache set key '$key1' for iteration" "$exit_code_set"
+    run_insic "cache" "set" "$key2" "$value2" > /dev/null
+    exit_code_set=$?
+    expect_success "Cache set key '$key2' for iteration" "$exit_code_set"
+    run_insic "cache" "set" "$key3" "$value3" > /dev/null
+    exit_code_set=$?
+    expect_success "Cache set key '$key3' for iteration" "$exit_code_set"
+
+    sleep 0.5 # Give a moment for writes to settle across the cluster if applicable
+
+    # Iterate
+    output_iterate=$(run_insic "cache" "iterate" "prefix" "$prefix")
+    exit_code_iterate=$?
+    expect_success "Cache iterate by prefix '$prefix'" "$exit_code_iterate" # Don't print output here, we'll validate it below
+
+    local found_key1=false
+    local found_key2=false
+    local found_key3=false
+    local extra_items=false
+    local count=0
+
+    # Read the output line by line to handle multi-line results
+    while IFS= read -r line; do
+        # Ignore empty lines which might result from the command output parsing
+        if [ -z "$line" ]; then
+            continue
+        fi
+        count=$((count + 1))
+        if [[ "$line" == "$key1" ]]; then
+            found_key1=true
+        elif [[ "$line" == "$key2" ]]; then
+            found_key2=true
+        elif [[ "$line" == "$key3" ]]; then
+            found_key3=true
+        else
+            # This logic assumes the only output is the list of keys.
+            # We filter slog lines in run_insic, but if other text appears, it will be flagged.
+            echo -e "${WARNING_EMOJI} ${YELLOW}Iterate by prefix '$prefix' returned unexpected item: $line${NC}"
+            extra_items=true
+        fi
+    done <<< "$(echo -e "${output_iterate}")" # Use echo -e to handle potential newlines correctly
+
+    if [[ "$found_key1" == true && "$found_key2" == true && "$found_key3" == true && "$extra_items" == false && $count -eq 3 ]]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}Cache iterate by prefix '$prefix' successfully retrieved all expected keys and no extras.${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Cache iterate by prefix '$prefix' did not retrieve the expected set of keys.${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+        echo -e "  Found key1 ($key1): $found_key1"
+        echo -e "  Found key2 ($key2): $found_key2"
+        echo -e "  Found key3 ($key3): $found_key3"
+        echo -e "  Extra items found: $extra_items"
+        echo -e "  Total items found: $count (Expected 3)"
+    fi
+
+    # Cleanup iteration keys
+    run_insic "cache" "delete" "$key1" > /dev/null
+    run_insic "cache" "delete" "$key2" > /dev/null
+    run_insic "cache" "delete" "$key3" > /dev/null
+}
 
 # --- Main Execution ---
 main() {
@@ -302,6 +378,7 @@ main() {
     test_cache_delete
     test_cache_get_non_existent
     test_cache_cli_arg_validation
+    test_cache_iterate_prefix
 
     echo -e "\n${GREEN}All TKV cache tests completed.${NC}"
 

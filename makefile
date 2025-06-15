@@ -10,6 +10,7 @@ BOLD   := $(shell tput bold)
 BUILD_DIR := build
 BINARY_SERVER := insid
 BINARY_CLIENT := insic
+BINARY_OVM := insio
 CONFIG := cluster.yaml
 CONFIG_MAC := cluster_mac.yaml
 
@@ -19,9 +20,9 @@ GOPRIVATE_SETTING := GOPRIVATE=github.com/InsulaLabs
 # Production build settings
 LDFLAGS_PROD := -ldflags="-s -w"
 
-.PHONY: all clean server client test prod server-prod client-prod
+.PHONY: all clean server client ovm test prod server-prod client-prod ovm-prod
 
-all: server client
+all: server client ovm
 	@echo "$(GREEN)✅ All builds complete! Binaries available at ${BUILD_DIR}/$(RESET)"
 
 clean:
@@ -44,6 +45,14 @@ client: ${BUILD_DIR}
 	@$(GOPRIVATE_SETTING) go build -o ${BUILD_DIR}/${BINARY_CLIENT} cmd/insic/*.go
 	@echo "$(GREEN)✅ Client $(BINARY_CLIENT) build complete! Available at ${BUILD_DIR}/${BINARY_CLIENT}$(RESET)"
 
+ovm: ${BUILD_DIR}
+	@echo "$(BLUE)🚀 Building OVM runner $(BINARY_OVM)...$(RESET)"
+	@echo "$(PURPLE)   Compiling Go code for $(BINARY_OVM)...$(RESET)"
+	@$(GOPRIVATE_SETTING) go build -o ${BUILD_DIR}/${BINARY_OVM} cmd/insio/*.go
+	@echo "$(PURPLE)   Copying scripts for $(BINARY_OVM)...$(RESET)"
+	@cp -r scripts ${BUILD_DIR}/
+	@echo "$(GREEN)✅ OVM runner $(BINARY_OVM) build complete! Available at ${BUILD_DIR}/${BINARY_OVM}$(RESET)"
+
 ${BUILD_DIR}:
 	@mkdir -p ${BUILD_DIR}
 
@@ -52,7 +61,7 @@ test:
 	@$(GOPRIVATE_SETTING) go test -v ./... || (echo "$(YELLOW)⚠️  Tests failed$(RESET)" && exit 1)
 	@echo "$(GREEN)✅ All tests passed!$(RESET)"
 
-prod: server-prod client-prod
+prod: server-prod client-prod ovm-prod
 	@echo "$(GREEN)✅ All PRODUCTION builds complete! Binaries available at ${BUILD_DIR}/$(RESET)"
 
 server-prod: ${BUILD_DIR}
@@ -68,3 +77,11 @@ client-prod: ${BUILD_DIR}
 	@echo "$(PURPLE)   Compiling Go code for $(BINARY_CLIENT) (production)...$(RESET)"
 	@$(GOPRIVATE_SETTING) go build $(LDFLAGS_PROD) -o ${BUILD_DIR}/${BINARY_CLIENT} cmd/insic/*.go
 	@echo "$(GREEN)✅ PRODUCTION Client $(BINARY_CLIENT) build complete! Available at ${BUILD_DIR}/${BINARY_CLIENT}$(RESET)"
+
+ovm-prod: ${BUILD_DIR}
+	@echo "$(BLUE)🚀 Building PRODUCTION OVM runner $(BINARY_OVM)...$(RESET)"
+	@echo "$(PURPLE)   Compiling Go code for $(BINARY_OVM) (production)...$(RESET)"
+	@$(GOPRIVATE_SETTING) go build $(LDFLAGS_PROD) -o ${BUILD_DIR}/${BINARY_OVM} cmd/insio/*.go
+	@echo "$(PURPLE)   Copying scripts for $(BINARY_OVM)...$(RESET)"
+	@cp -r scripts ${BUILD_DIR}/
+	@echo "$(GREEN)✅ PRODUCTION OVM runner $(BINARY_OVM) build complete! Available at ${BUILD_DIR}/${BINARY_OVM}$(RESET)"

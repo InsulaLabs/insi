@@ -12,6 +12,8 @@ require (
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb v0.0.0-20250225060035-8f7048cdfa53
 	github.com/jellydator/ttlcache/v3 v3.3.0
+	github.com/pkg/errors v0.9.1
+	github.com/robertkrimen/otto v0.5.1
 	golang.org/x/time v0.11.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -39,12 +41,13 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rogpeppe/go-internal v1.12.0 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 	google.golang.org/protobuf v1.34.1 // indirect
+	gopkg.in/sourcemap.v1 v1.0.5 // indirect
 )
