@@ -211,8 +211,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<key_name>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.YellowString("uses key from env or --root"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("get-limits"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.CyanString("[key_value]"), color.YellowString("Get limits. If key provided, gets for that key (--root required)."))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N"), color.YellowString("--root flag usually required"))
 	// Object Commands
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("upload"), color.CyanString("<filepath>"))
@@ -694,15 +693,16 @@ func handleApi(c *client.Client, args []string) {
 		// --root is not required for verify, as we are creating a new client with the provided key
 		handleApiVerify(subArgs)
 	case "limits":
-		handleApiLimits(c, subArgs)
-	case "get-limits":
-		// Enforce --root for get-limits
-		if !useRootKey {
-			logger.Error("api get-limits requires the --root flag to be set.")
-			fmt.Fprintf(os.Stderr, "%s api get-limits requires --root flag.\n", color.RedString("Error:"))
-			os.Exit(1)
+		if len(subArgs) == 0 {
+			handleApiGetMyLimits(c, subArgs)
+		} else {
+			if !useRootKey {
+				logger.Error("api limits <key_value> requires the --root flag to be set.")
+				fmt.Fprintf(os.Stderr, "%s api limits <key_value> requires --root flag.\n", color.RedString("Error:"))
+				os.Exit(1)
+			}
+			handleApiGetLimits(c, subArgs)
 		}
-		handleApiGetLimits(c, subArgs)
 	case "set-limits":
 		// Enforce --root for set-limits
 		if !useRootKey {
@@ -801,6 +801,7 @@ func handleApiVerify(args []string) {
 	if err != nil {
 		logger.Error("api verify: failed to create client for verification", "target_node", nodeToConnect, "error", err)
 		fmt.Fprintf(os.Stderr, "%s Failed to create client for verification: %v\n", color.RedString("Error:"), err)
+		color.HiRed("Verification FAILED")
 		os.Exit(1)
 	}
 
@@ -821,9 +822,9 @@ func handleApiVerify(args []string) {
 	}
 }
 
-func handleApiLimits(c *client.Client, args []string) {
+func handleApiGetMyLimits(c *client.Client, args []string) {
 	if len(args) != 0 {
-		logger.Error("api limits: does not take arguments")
+		logger.Error("api limits: does not take arguments for self")
 		printUsage()
 		os.Exit(1)
 	}
@@ -835,7 +836,7 @@ func handleApiLimits(c *client.Client, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Println(color.CyanString("Maximum Limits:"))
+	fmt.Println(color.CyanString("Maximum Limits (for current key):"))
 	if resp.MaxLimits.BytesOnDisk != nil {
 		fmt.Printf("  Bytes on Disk:     %d\n", *resp.MaxLimits.BytesOnDisk)
 	}
@@ -848,7 +849,7 @@ func handleApiLimits(c *client.Client, args []string) {
 	if resp.MaxLimits.Subscribers != nil {
 		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
 	}
-	fmt.Println(color.CyanString("\nCurrent Usage:"))
+	fmt.Println(color.CyanString("\nCurrent Usage (for current key):"))
 	if resp.CurrentUsage.BytesOnDisk != nil {
 		fmt.Printf("  Bytes on Disk:     %d\n", *resp.CurrentUsage.BytesOnDisk)
 	}
