@@ -596,7 +596,7 @@ func (c *Core) callerLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
-	_, ok := c.ValidateToken(r, RootOnly())
+	tdr, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -624,10 +624,23 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target, err := c.decomposeKey(req.ApiKey)
-	if err != nil {
-		http.Error(w, "Invalid target key", http.StatusBadRequest)
-		return
+	// If the target key is root key it must be the root who asks for it
+	// and not a user. we distinguish as root key construct is different from
+	// user key construct.
+	var target models.TokenData
+	if req.ApiKey == c.authToken {
+		if !c.tdIsRoot(tdr) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		target = tdr
+	} else {
+		var err error
+		target, err = c.decomposeKey(req.ApiKey)
+		if err != nil {
+			http.Error(w, "Invalid target key", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Set the limits in the FSM

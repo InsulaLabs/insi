@@ -58,6 +58,39 @@ func (e *ErrRateLimited) Error() string {
 	return fmt.Sprintf("rate limited: %s. Try again in %v. (Limit: %d, Burst: %d)", e.Message, e.RetryAfter, e.Limit, e.Burst)
 }
 
+// ErrDiskLimitExceeded is returned when the disk usage limit is exceeded.
+type ErrDiskLimitExceeded struct {
+	CurrentUsage int64
+	Limit        int64
+	Message      string
+}
+
+func (e *ErrDiskLimitExceeded) Error() string {
+	return fmt.Sprintf("disk limit exceeded: %s. Current: %d, Limit: %d", e.Message, e.CurrentUsage, e.Limit)
+}
+
+// ErrMemoryLimitExceeded is returned when the memory usage limit is exceeded.
+type ErrMemoryLimitExceeded struct {
+	CurrentUsage int64
+	Limit        int64
+	Message      string
+}
+
+func (e *ErrMemoryLimitExceeded) Error() string {
+	return fmt.Sprintf("memory limit exceeded: %s. Current: %d, Limit: %d", e.Message, e.CurrentUsage, e.Limit)
+}
+
+// ErrEventsLimitExceeded is returned when the events limit is exceeded.
+type ErrEventsLimitExceeded struct {
+	CurrentUsage int64
+	Limit        int64
+	Message      string
+}
+
+func (e *ErrEventsLimitExceeded) Error() string {
+	return fmt.Sprintf("events limit exceeded: %s. Current: %d, Limit: %d", e.Message, e.CurrentUsage, e.Limit)
+}
+
 // ObjectUploadResponse is the response from a successful object upload.
 type ObjectUploadResponse struct {
 	Status           string `json:"status,omitempty"`
@@ -197,6 +230,11 @@ func NewClient(cfg *Config) (*Client, error) {
 	}, nil
 }
 
+// GetApiKey returns the API key used by the client.
+func (c *Client) GetApiKey() string {
+	return c.apiKey
+}
+
 // internal request helper
 func (c *Client) doRequest(method, path string, queryParams map[string]string, body interface{}, target interface{}) error {
 	originalMethod := method // Save original method to preserve it across redirects
@@ -316,6 +354,51 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 				Burst:      burst,
 				Message:    strings.TrimSpace(string(bodyBytes)),
 			}
+		}
+
+		if resp.StatusCode == http.StatusBadRequest {
+			bodyBytes, _ := io.ReadAll(resp.Body) // Read the body to get more details
+
+			// Check for resource limit headers first, as they are a specific type of bad request.
+			if currentDiskUsageStr := resp.Header.Get("X-Current-Disk-Usage"); currentDiskUsageStr != "" {
+				limitStr := resp.Header.Get("X-Disk-Usage-Limit")
+				current, _ := strconv.ParseInt(currentDiskUsageStr, 10, 64)
+				limit, _ := strconv.ParseInt(limitStr, 10, 64)
+				return &ErrDiskLimitExceeded{
+					CurrentUsage: current,
+					Limit:        limit,
+					Message:      strings.TrimSpace(string(bodyBytes)),
+				}
+			}
+			if currentMemoryUsageStr := resp.Header.Get("X-Current-Memory-Usage"); currentMemoryUsageStr != "" {
+				limitStr := resp.Header.Get("X-Memory-Usage-Limit")
+				current, _ := strconv.ParseInt(currentMemoryUsageStr, 10, 64)
+				limit, _ := strconv.ParseInt(limitStr, 10, 64)
+				return &ErrMemoryLimitExceeded{
+					CurrentUsage: current,
+					Limit:        limit,
+					Message:      strings.TrimSpace(string(bodyBytes)),
+				}
+			}
+			if currentEventsStr := resp.Header.Get("X-Current-Events"); currentEventsStr != "" {
+				limitStr := resp.Header.Get("X-Events-Limit")
+				current, _ := strconv.ParseInt(currentEventsStr, 10, 64)
+				limit, _ := strconv.ParseInt(limitStr, 10, 64)
+				return &ErrEventsLimitExceeded{
+					CurrentUsage: current,
+					Limit:        limit,
+					Message:      strings.TrimSpace(string(bodyBytes)),
+				}
+			}
+
+			// If it's not a limit error, it might be a structured error response.
+			var errorResp ErrorResponse
+			if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
+				return fmt.Errorf("server error (status 400): %s - %s", errorResp.ErrorType, errorResp.Message)
+			}
+
+			// Otherwise, return a generic error with the response body.
+			return fmt.Errorf("server returned status 400 Bad Request: %s", string(bodyBytes))
 		}
 
 		if resp.StatusCode == http.StatusNotFound {

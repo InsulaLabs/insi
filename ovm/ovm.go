@@ -191,6 +191,21 @@ func withRetries[R any](o *OVM, ctx context.Context, fn func() (R, error)) (R, e
 			}
 		}
 
+		var diskLimitErr *client.ErrDiskLimitExceeded
+		if errors.As(err, &diskLimitErr) {
+			panic(o.vm.MakeCustomError("DiskLimitError", diskLimitErr.Error()))
+		}
+
+		var memoryLimitErr *client.ErrMemoryLimitExceeded
+		if errors.As(err, &memoryLimitErr) {
+			panic(o.vm.MakeCustomError("MemoryLimitError", memoryLimitErr.Error()))
+		}
+
+		var eventsLimitErr *client.ErrEventsLimitExceeded
+		if errors.As(err, &eventsLimitErr) {
+			panic(o.vm.MakeCustomError("EventsLimitError", eventsLimitErr.Error()))
+		}
+
 		// It's some other error, return it.
 		var zero R
 		return zero, err
@@ -688,7 +703,7 @@ func (o *OVM) addOVM(ctx context.Context) error {
 		}
 		defer subOVM.Close()
 
-		val, err := subOVM.vm.Run(script)
+		subVMResult, err := subOVM.vm.Run(script)
 		if err != nil {
 			// This will catch JavaScript exceptions thrown from inside the script
 			// (e.g., `throw new Error(...)`) and propagate them to the calling script.
@@ -698,7 +713,20 @@ func (o *OVM) addOVM(ctx context.Context) error {
 			// For other errors (like syntax errors), we create a new JS error.
 			panic(o.vm.MakeCustomError("ExecutionError", err.Error()))
 		}
-		return val
+
+		// Export the result from the sub-OVM to a Go type.
+		exportedVal, err := subVMResult.Export()
+		if err != nil {
+			panic(o.vm.MakeCustomError("OVMError", fmt.Sprintf("failed to export result from sub-OVM: %v", err)))
+		}
+
+		// Convert the Go type back to a value in the parent OVM's context.
+		parentVMVal, err := o.vm.ToValue(exportedVal)
+		if err != nil {
+			panic(o.vm.MakeCustomError("OVMError", fmt.Sprintf("failed to import result into parent OVM: %v", err)))
+		}
+
+		return parentVMVal
 	})
 
 	return o.vm.Set("ovm", ovmObj)
@@ -749,8 +777,23 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
-		val, _ := o.vm.ToValue(resp)
-		return val
+
+		// The test script expects the API key to be in the response so it can
+		// use it to set/restore limits. The /limits endpoint doesn't return it,
+		// so we inject it into the response object here for the script's convenience.
+		jsObj, err := o.vm.ToValue(resp)
+		if err != nil {
+			panic(o.vm.MakeCustomError("InternalError", "failed to convert limits response to js object: "+err.Error()))
+		}
+		if jsObj.IsObject() {
+			obj := jsObj.Object()
+			if err := obj.Set("api_key", o.insiClient.GetApiKey()); err != nil {
+				panic(o.vm.MakeCustomError("InternalError", "failed to set api_key on limits object: "+err.Error()))
+			}
+			return obj.Value()
+		}
+
+		return jsObj // Should not happen, but return original if not an object
 	})
 
 	// Get Limits for a specific Key

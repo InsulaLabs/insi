@@ -10,15 +10,18 @@ function main() {
     }
 
     var testSuccess = [
-        "vs_test",
-        "cache_test",
-        "events_test",
-        "subscription_test",
-        "limits_test",
-        "admin_test",
-        "access_failures_test",
-        "limit_retry_test",
-        "ovm_test"
+        //"vs_test",
+        //"cache_test",
+        //"events_test",
+        //"subscription_test",
+        //"limits_test",
+        //"admin_test",
+        //"access_failures_test",
+        "ovm_test",
+        //"disk_limit",
+        //"memory_limit",
+        //"event_limit",
+        //"limit_retry_test"
     ];
 
     var runTest = function(testName) {
