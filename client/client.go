@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/InsulaLabs/insi/db/models" // Assuming models.Event is defined here
@@ -128,10 +129,11 @@ type ErrorResponse struct {
 
 // Client is the API client for the insi service.
 type Client struct {
-	baseURL    *url.URL
-	httpClient *http.Client
-	apiKey     string
-	logger     *slog.Logger
+	baseURL         *url.URL
+	httpClient      *http.Client
+	apiKey          string
+	logger          *slog.Logger
+	redirectCoutner atomic.Uint64
 }
 
 // NewClient creates a new insi API client.
@@ -223,16 +225,25 @@ func NewClient(cfg *Config) (*Client, error) {
 	clientLogger.Debug("Insi client initialized", "base_url", baseURL.String(), "tls_skip_verify", cfg.SkipVerify /*, "explicit_tls_server_name_set", tlsClientCfg.ServerName != "" */) // tlsClientCfg.ServerName will be empty
 
 	return &Client{
-		baseURL:    baseURL,
-		httpClient: httpClient,
-		apiKey:     cfg.ApiKey,
-		logger:     clientLogger,
+		baseURL:         baseURL,
+		httpClient:      httpClient,
+		apiKey:          cfg.ApiKey,
+		logger:          clientLogger,
+		redirectCoutner: atomic.Uint64{},
 	}, nil
 }
 
 // GetApiKey returns the API key used by the client.
 func (c *Client) GetApiKey() string {
 	return c.apiKey
+}
+
+func (c *Client) GetAccumulatedRedirects() uint64 {
+	return c.redirectCoutner.Load()
+}
+
+func (c *Client) ResetAccumulatedRedirects() {
+	c.redirectCoutner.Store(0)
 }
 
 // internal request helper
@@ -312,11 +323,15 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
 			}
 
-			c.logger.Info("Request redirected",
+			c.logger.Debug("Request redirected",
 				"from_url", currentReqURL.String(),
 				"to_url", redirectURL.String(),
 				"status_code", resp.StatusCode,
 				"method", originalMethod)
+
+			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+				c.redirectCoutner.Add(1)
+			}
 
 			currentReqURL = redirectURL // Update URL for the next iteration
 			resp.Body.Close()           // Close current redirect response body before continuing

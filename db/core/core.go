@@ -132,7 +132,7 @@ func New(
 		rlLogger.Info("Initialized rate limiter for 'values'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 	if rlConfig := clusterCfg.RateLimiters.Cache; rlConfig.Limit > 0 {
-		rateLimiters["cacheEndpoints"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rateLimiters["cache"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'cacheEndpoints'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 	if rlConfig := clusterCfg.RateLimiters.System; rlConfig.Limit > 0 {

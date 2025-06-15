@@ -859,7 +859,8 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 
 	insightObj.Set("getMetrics", func(call otto.FunctionCall) otto.Value {
 		metrics := map[string]interface{}{
-			"rate_limit_retries": o.rateLimitRetries.Load(),
+			"rate_limit_retries":    o.rateLimitRetries.Load(),
+			"accumulated_redirects": o.insiClient.GetAccumulatedRedirects(),
 		}
 		val, err := o.vm.ToValue(metrics)
 		if err != nil {
@@ -870,6 +871,7 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 
 	insightObj.Set("resetMetrics", func(call otto.FunctionCall) otto.Value {
 		o.rateLimitRetries.Store(0)
+		o.insiClient.ResetAccumulatedRedirects()
 		o.logger.Debug("OVM rate limit retry metric reset")
 		return otto.Value{}
 	})
