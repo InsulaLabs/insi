@@ -16,7 +16,8 @@ function main() {
         "subscription_test",
         "limits_test",
         "admin_test",
-        "access_failures_test"
+        "access_failures_test",
+        "ovm_test"
     ];
 
     var runTest = function(testName) {

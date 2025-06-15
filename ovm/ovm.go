@@ -47,6 +47,7 @@ type OVM struct {
 	vm         *otto.Otto
 	insiClient *client.Client
 	testDir    string
+	config     *Config
 
 	// subscription management
 	subscriptionCtx    context.Context
@@ -64,6 +65,7 @@ func New(cfg *Config) (*OVM, error) {
 		subscriptionCtx:    subCtx,
 		subscriptionCancel: subCancel,
 		collectors:         make(map[string]*eventCollector),
+		config:             cfg,
 	}
 
 	if err := ovm.addValueStore(cfg.SetupCtx); err != nil {
@@ -89,6 +91,9 @@ func New(cfg *Config) (*OVM, error) {
 		}
 	}
 	if err := ovm.addTime(cfg.SetupCtx); err != nil {
+		return nil, err
+	}
+	if err := ovm.addOVM(cfg.SetupCtx); err != nil {
 		return nil, err
 	}
 	if cfg.DoAddAdmin {
@@ -586,6 +591,54 @@ func (o *OVM) addTime(ctx context.Context) error {
 	})
 
 	return o.vm.Set("time", timeObj)
+}
+
+func (o *OVM) addOVM(ctx context.Context) error {
+	ovmObj, err := o.vm.Object(`({})`)
+	if err != nil {
+		return fmt.Errorf("failed to create ovm object: %w", err)
+	}
+
+	ovmObj.Set("run", func(call otto.FunctionCall) otto.Value {
+		script, _ := call.Argument(0).ToString()
+		if script == "" {
+			return otto.UndefinedValue()
+		}
+
+		// Create a new config for the sub-OVM.
+		// Inherit most settings, but explicitly disable test running
+		// to prevent a script from starting a full test suite.
+		subOVMConfig := &Config{
+			Logger:       o.logger.WithGroup("sub-ovm"),
+			SetupCtx:     ctx,
+			InsiClient:   o.insiClient,
+			DoAddAdmin:   o.config.DoAddAdmin,
+			DoAddConsole: o.config.DoAddConsole,
+			DoAddOS:      o.config.DoAddOS,
+			DoAddTest:    false, // Do not allow running tests from here.
+		}
+
+		// Create a new, isolated OVM for the script execution.
+		subOVM, err := New(subOVMConfig)
+		if err != nil {
+			panic(o.vm.MakeCustomError("OVMError", fmt.Sprintf("failed to create sub-OVM: %v", err)))
+		}
+		defer subOVM.Close()
+
+		val, err := subOVM.vm.Run(script)
+		if err != nil {
+			// This will catch JavaScript exceptions thrown from inside the script
+			// (e.g., `throw new Error(...)`) and propagate them to the calling script.
+			if ottoErr, ok := err.(*otto.Error); ok {
+				panic(ottoErr)
+			}
+			// For other errors (like syntax errors), we create a new JS error.
+			panic(o.vm.MakeCustomError("ExecutionError", err.Error()))
+		}
+		return val
+	})
+
+	return o.vm.Set("ovm", ovmObj)
 }
 
 func (o *OVM) addAdmin(ctx context.Context) error {
