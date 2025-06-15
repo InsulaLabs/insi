@@ -138,8 +138,8 @@ func main() {
 	case "run":
 		runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 		runCmd.Usage = func() {
-			fmt.Fprintf(os.Stderr, "Usage: insio run <script_path> [flags]\n")
-			fmt.Fprintf(os.Stderr, "Executes a script against a target node.\n\n")
+			fmt.Fprintf(os.Stderr, "Usage: insio run <script_path> [script_args...] [flags]\n")
+			fmt.Fprintf(os.Stderr, "Executes a script against a target node. Script arguments are available in the 'args' array.\n\n")
 			fmt.Fprintf(os.Stderr, "Flags:\n")
 			runCmd.PrintDefaults()
 			clientFlags.PrintDefaults() // Show shared client flags
@@ -151,11 +151,12 @@ func main() {
 		runCmd.BoolVar(useRootKey, "root", false, "Use the root key for authentication.")
 		runCmd.Parse(os.Args[2:])
 
-		if runCmd.NArg() != 1 {
+		if runCmd.NArg() < 1 {
 			runCmd.Usage()
 			os.Exit(1)
 		}
 		scriptPath := runCmd.Arg(0)
+		scriptArgs := runCmd.Args()[1:]
 
 		cli, _, err := getClient(*configPath, *targetNode, *useRootKey)
 		if err != nil {
@@ -173,6 +174,7 @@ func main() {
 			Logger:       logger.WithGroup("ovm"),
 			SetupCtx:     context.Background(),
 			InsiClient:   cli,
+			ScriptArgs:   scriptArgs,
 			DoAddAdmin:   true,
 			DoAddConsole: true,
 			DoAddOS:      true,

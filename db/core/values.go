@@ -34,12 +34,10 @@ func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 
 	value, err := c.fsm.Get(fmt.Sprintf("%s:%s", td.DataScopeUUID, key))
 	if err != nil {
-		c.logger.Info("FSM Get for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
 		return
 	}
 	if value == "" {
-		c.logger.Info("FSM Get for key returned empty value, treating as Not Found", "key", key)
 		http.NotFound(w, r)
 		return
 	}

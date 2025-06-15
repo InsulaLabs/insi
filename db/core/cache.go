@@ -33,7 +33,6 @@ func (c *Core) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
 	value, err := c.fsm.GetCache(fmt.Sprintf("%s:%s", td.DataScopeUUID, key))
 	if err != nil {
-		c.logger.Info("FSM GetCache for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
 		return
 	}
