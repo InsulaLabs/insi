@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/InsulaLabs/insi/client"
@@ -54,6 +55,7 @@ type OVM struct {
 	subscriptionCancel context.CancelFunc
 	collectors         map[string]*eventCollector
 	collectorsLock     sync.RWMutex
+	rateLimitRetries   uint64
 }
 
 func New(cfg *Config) (*OVM, error) {
@@ -165,6 +167,36 @@ func (o *OVM) addConsole(ctx context.Context) error {
 	return o.vm.Set("console", console)
 }
 
+// withRetries is a generic helper that wraps a function call, adding a retry mechanism
+// specifically for rate-limiting errors.
+func withRetries[R any](o *OVM, ctx context.Context, fn func() (R, error)) (R, error) {
+	for {
+		result, err := fn()
+		if err == nil {
+			return result, nil // Success
+		}
+
+		var rateLimitErr *client.ErrRateLimited
+		if errors.As(err, &rateLimitErr) {
+			o.logger.Warn("OVM operation rate limited, sleeping", "duration", rateLimitErr.RetryAfter)
+			atomic.AddUint64(&o.rateLimitRetries, 1)
+			select {
+			case <-time.After(rateLimitErr.RetryAfter):
+				o.logger.Debug("Finished rate limit sleep, retrying operation.")
+				continue // Slept, continue to retry
+			case <-ctx.Done():
+				o.logger.Error("Context cancelled during rate limit sleep", "error", ctx.Err())
+				var zero R
+				return zero, fmt.Errorf("operation cancelled during rate limit sleep: %w", ctx.Err())
+			}
+		}
+
+		// It's some other error, return it.
+		var zero R
+		return zero, err
+	}
+}
+
 func (o *OVM) addValueStore(ctx context.Context) error {
 	vs, err := o.vm.Object(`({})`)
 	if err != nil {
@@ -178,7 +210,10 @@ func (o *OVM) addValueStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		if err := o.insiClient.Set(key, value); err != nil {
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.Set(key, value)
+		})
+		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
 		return otto.Value{}
@@ -190,7 +225,10 @@ func (o *OVM) addValueStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		if err := o.insiClient.Delete(key); err != nil {
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.Delete(key)
+		})
+		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
 		return otto.Value{}
@@ -202,7 +240,9 @@ func (o *OVM) addValueStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		value, err := o.insiClient.Get(key)
+		value, err := withRetries(o, ctx, func() (string, error) {
+			return o.insiClient.Get(key)
+		})
 		if err != nil {
 			if errors.Is(err, client.ErrKeyNotFound) {
 				return otto.NullValue()
@@ -221,7 +261,9 @@ func (o *OVM) addValueStore(ctx context.Context) error {
 		if prefix == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "prefix cannot be empty"))
 		}
-		keys, err := o.insiClient.IterateByPrefix(prefix, int(offset), int(limit))
+		keys, err := withRetries(o, ctx, func() ([]string, error) {
+			return o.insiClient.IterateByPrefix(prefix, int(offset), int(limit))
+		})
 		if err != nil {
 			if errors.Is(err, client.ErrKeyNotFound) {
 				val, _ := o.vm.ToValue([]string{})
@@ -240,7 +282,9 @@ func (o *OVM) addValueStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		err := o.insiClient.SetNX(key, value)
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.SetNX(key, value)
+		})
 		if err != nil {
 			if errors.Is(err, client.ErrConflict) {
 				val, _ := o.vm.ToValue(false)
@@ -260,7 +304,9 @@ func (o *OVM) addValueStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		err := o.insiClient.CompareAndSwap(key, oldValue, newValue)
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.CompareAndSwap(key, oldValue, newValue)
+		})
 		if err != nil {
 			if errors.Is(err, client.ErrConflict) {
 				val, _ := o.vm.ToValue(false)
@@ -288,7 +334,10 @@ func (o *OVM) addCacheStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		if err := o.insiClient.SetCache(key, value); err != nil {
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.SetCache(key, value)
+		})
+		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
 		return otto.Value{}
@@ -300,7 +349,10 @@ func (o *OVM) addCacheStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		if err := o.insiClient.DeleteCache(key); err != nil {
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.DeleteCache(key)
+		})
+		if err != nil {
 			if errors.Is(err, client.ErrKeyNotFound) {
 				return otto.Value{} // Deleting non-existent key is not an error
 			}
@@ -315,7 +367,9 @@ func (o *OVM) addCacheStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		value, err := o.insiClient.GetCache(key)
+		value, err := withRetries(o, ctx, func() (string, error) {
+			return o.insiClient.GetCache(key)
+		})
 		if err != nil {
 			if errors.Is(err, client.ErrKeyNotFound) {
 				return otto.NullValue()
@@ -334,7 +388,9 @@ func (o *OVM) addCacheStore(ctx context.Context) error {
 		if prefix == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "prefix cannot be empty"))
 		}
-		keys, err := o.insiClient.IterateCacheByPrefix(prefix, int(offset), int(limit))
+		keys, err := withRetries(o, ctx, func() ([]string, error) {
+			return o.insiClient.IterateCacheByPrefix(prefix, int(offset), int(limit))
+		})
 		if err != nil {
 			if errors.Is(err, client.ErrKeyNotFound) {
 				val, _ := o.vm.ToValue([]string{})
@@ -353,7 +409,9 @@ func (o *OVM) addCacheStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		err := o.insiClient.SetCacheNX(key, value)
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.SetCacheNX(key, value)
+		})
 		if err != nil {
 			if errors.Is(err, client.ErrConflict) {
 				val, _ := o.vm.ToValue(false)
@@ -373,7 +431,9 @@ func (o *OVM) addCacheStore(ctx context.Context) error {
 		if key == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
 		}
-		err := o.insiClient.CompareAndSwapCache(key, oldValue, newValue)
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.CompareAndSwapCache(key, oldValue, newValue)
+		})
 		if err != nil {
 			if errors.Is(err, client.ErrConflict) {
 				val, _ := o.vm.ToValue(false)
@@ -403,7 +463,10 @@ func (o *OVM) addEventEmitter(ctx context.Context) error {
 			panic(o.vm.MakeCustomError("ArgumentError", fmt.Sprintf("failed to export data: %v", err)))
 		}
 
-		if err := o.insiClient.PublishEvent(topic, data); err != nil {
+		_, err = withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.PublishEvent(topic, data)
+		})
+		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
 
@@ -653,7 +716,9 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 		if keyName == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "keyName cannot be empty"))
 		}
-		resp, err := o.insiClient.CreateAPIKey(keyName)
+		resp, err := withRetries(o, ctx, func() (*models.ApiKeyCreateResponse, error) {
+			return o.insiClient.CreateAPIKey(keyName)
+		})
 		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
@@ -667,7 +732,9 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 		if apiKey == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "apiKey cannot be empty"))
 		}
-		err := o.insiClient.DeleteAPIKey(apiKey)
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.DeleteAPIKey(apiKey)
+		})
 		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
@@ -676,7 +743,9 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 
 	// Get Caller's Limits
 	adminObj.Set("getLimits", func(call otto.FunctionCall) otto.Value {
-		resp, err := o.insiClient.GetLimits()
+		resp, err := withRetries(o, ctx, func() (*models.LimitsResponse, error) {
+			return o.insiClient.GetLimits()
+		})
 		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
@@ -690,7 +759,9 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 		if apiKey == "" {
 			panic(o.vm.MakeCustomError("ArgumentError", "apiKey cannot be empty"))
 		}
-		resp, err := o.insiClient.GetLimitsForKey(apiKey)
+		resp, err := withRetries(o, ctx, func() (*models.LimitsResponse, error) {
+			return o.insiClient.GetLimitsForKey(apiKey)
+		})
 		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
@@ -728,12 +799,35 @@ func (o *OVM) addAdmin(ctx context.Context) error {
 			limits.Subscribers = &subs
 		}
 
-		err = o.insiClient.SetLimits(apiKey, limits)
+		_, err = withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.SetLimits(apiKey, limits)
+		})
 		if err != nil {
 			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
 		}
 		return otto.Value{}
 	})
+
+	// --- Insight Object ---
+	insightObj, err := o.vm.Object(`({})`)
+	if err != nil {
+		return fmt.Errorf("failed to create insight object: %w", err)
+	}
+
+	insightObj.Set("getMetrics", func(call otto.FunctionCall) otto.Value {
+		metrics := map[string]interface{}{
+			"rate_limit_retries": atomic.LoadUint64(&o.rateLimitRetries),
+		}
+		val, err := o.vm.ToValue(metrics)
+		if err != nil {
+			panic(o.vm.MakeCustomError("InsightError", "failed to convert metrics to JS value: "+err.Error()))
+		}
+		return val
+	})
+
+	if err := adminObj.Set("insight", insightObj); err != nil {
+		return fmt.Errorf("failed to set insight object on admin: %w", err)
+	}
 
 	return o.vm.Set("admin", adminObj)
 }

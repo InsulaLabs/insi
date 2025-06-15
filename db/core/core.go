@@ -202,11 +202,21 @@ func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Hand
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow() {
+		res := limiter.Reserve()
+		// If there's a delay, the request is rate-limited.
+		if delay := res.Delay(); delay > 0 {
+			// We're not proceeding, so cancel the reservation to return the token.
+			res.Cancel()
 			c.logger.Warn("Rate limit exceeded", "category", category, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
+
+			// Set headers to inform the client about the rate limit.
+			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", delay.Seconds())) // Correctly format seconds.
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%v", limiter.Limit()))
+			w.Header().Set("X-RateLimit-Burst", fmt.Sprintf("%d", limiter.Burst()))
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }

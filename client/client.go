@@ -46,6 +46,18 @@ var (
 	ErrAPIKeyNotFound = errors.New("api key not found") // New distinct error
 )
 
+// ErrRateLimited is returned when a request is rate-limited (429).
+type ErrRateLimited struct {
+	RetryAfter time.Duration
+	Limit      int
+	Burst      int
+	Message    string
+}
+
+func (e *ErrRateLimited) Error() string {
+	return fmt.Sprintf("rate limited: %s. Try again in %v. (Limit: %d, Burst: %d)", e.Message, e.RetryAfter, e.Limit, e.Burst)
+}
+
 // ObjectUploadResponse is the response from a successful object upload.
 type ObjectUploadResponse struct {
 	Status           string `json:"status,omitempty"`
@@ -275,6 +287,36 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 		// Not a redirect, or unhandled status by the loop; this is the final response to process.
 		defer resp.Body.Close() // Ensure this final response body is closed when function returns
+
+		// Check for rate limiting first
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfterStr := resp.Header.Get("Retry-After")
+			limitStr := resp.Header.Get("X-RateLimit-Limit")
+			burstStr := resp.Header.Get("X-RateLimit-Burst")
+
+			var retryAfter time.Duration
+			if seconds, err := strconv.ParseFloat(retryAfterStr, 64); err == nil {
+				retryAfter = time.Duration(seconds * float64(time.Second))
+			} else {
+				// Fallback if parsing fails
+				retryAfter = 1 * time.Second // Default to 1s if header is missing or invalid
+				c.logger.Warn("Could not parse Retry-After header, defaulting", "value", retryAfterStr, "default", retryAfter, "error", err)
+			}
+
+			limit, _ := strconv.Atoi(limitStr)
+			burst, _ := strconv.Atoi(burstStr)
+
+			bodyBytes, _ := io.ReadAll(resp.Body)
+
+			c.logger.Warn("Request was rate limited", "url", currentReqURL.String(), "retry_after", retryAfter, "limit", limit, "burst", burst)
+
+			return &ErrRateLimited{
+				RetryAfter: retryAfter,
+				Limit:      limit,
+				Burst:      burst,
+				Message:    strings.TrimSpace(string(bodyBytes)),
+			}
+		}
 
 		if resp.StatusCode == http.StatusNotFound {
 			bodyBytes, _ := io.ReadAll(resp.Body) // Read body to check for specific errors

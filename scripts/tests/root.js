@@ -17,6 +17,7 @@ function main() {
         "limits_test",
         "admin_test",
         "access_failures_test",
+        "limit_retry_test",
         "ovm_test"
     ];
 

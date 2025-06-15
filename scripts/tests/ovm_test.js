@@ -1,4 +1,10 @@
-// This script demonstrates the sandboxed execution of `ovm.run()`.
+/* 
+  BOSLEY: June 14, 2025
+
+  This test ensures that the OVM runtime can correctly sandbox the execution of a sub-script.
+
+  It does this by storing a sub-script in the value store and then retrieving it and executing it.
+*/
 
 console.log("--- OVM Sub-Execution Demo ---");
 
