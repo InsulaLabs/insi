@@ -125,7 +125,7 @@ function event_stress(n) {
 mainLogger("Starting event/subscription stress test");
 
 var start = time.stamp();
-event_stress(100);
+event_stress(1000);
 var end = time.stamp();
 mainLogger("Time taken: " + (end - start) + "ms");
 mainLogger("Done");

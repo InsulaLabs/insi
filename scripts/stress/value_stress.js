@@ -132,7 +132,7 @@ function atomic_stress(n) {
 mainLogger("Starting atomic stress test");
 
 var start = time.stamp();
-atomic_stress(100);
+atomic_stress(1000);
 var end = time.stamp();
 mainLogger("Time taken: " + (end - start) + "ms");
 mainLogger("Done");

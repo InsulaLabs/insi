@@ -153,7 +153,7 @@ function cache_stress(n) {
 
 mainLogger("Starting cache stress test");
 var start = time.stamp();
-cache_stress(100);
+cache_stress(1000);
 var end = time.stamp();
 mainLogger("Time taken: " + (end - start) + "ms");
 mainLogger("Done");
