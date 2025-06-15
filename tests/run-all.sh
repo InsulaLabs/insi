@@ -44,7 +44,6 @@ echo "🚀 Running api-keys.sh..."
 run_test_script /tmp/insi-test-cluster/api-keys.sh
 echo "✅ Success: api-keys.sh completed."
 
-
 echo "🚀 Running crud-iter.sh..."
 run_test_script /tmp/insi-test-cluster/crud-iter.sh
 echo "✅ Success: crud-iter.sh completed."
@@ -60,6 +59,10 @@ echo "✅ Success: events.sh completed."
 echo "🚀 Running get-set-delete.sh..."
 run_test_script /tmp/insi-test-cluster/get-set-delete.sh
 echo "✅ Success: get-set-delete.sh completed."
+
+echo "🚀 Running cache-cas-setnx.sh..."
+run_test_script /tmp/insi-test-cluster/cache-cas-setnx.sh
+echo "✅ Success: cache-cas-setnx.sh completed."
 
 echo "🚀 Running objects.sh..."
 run_test_script /tmp/insi-test-cluster/objects.sh

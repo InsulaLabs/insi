@@ -37,12 +37,18 @@ type TKVDataHandler interface {
 	Delete(key string) error
 	SetNX(key string, value string) error
 	CompareAndSwap(key string, oldValue, newValue string) error
+
+	BumpInteger(key string, delta int64) error
 }
 
 type TKVCacheHandler interface {
 	CacheGet(key string) (string, error)
 	CacheSet(key string, value string) error
 	CacheDelete(key string) error
+
+	CacheSetNX(key string, value string) error
+	CacheCompareAndSwap(key string, oldValue, newValue string) error
+	CacheIterate(prefix string, offset int, limit int) ([]string, error)
 }
 
 type TKV interface {

@@ -34,12 +34,10 @@ func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 
 	value, err := c.fsm.Get(fmt.Sprintf("%s:%s", td.DataScopeUUID, key))
 	if err != nil {
-		c.logger.Info("FSM Get for key returned error, treating as Not Found for now", "key", key, "error", err)
 		http.NotFound(w, r)
 		return
 	}
 	if value == "" {
-		c.logger.Info("FSM Get for key returned empty value, treating as Not Found", "key", key)
 		http.NotFound(w, r)
 		return
 	}
@@ -169,12 +167,78 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	exists := false
+	existingValue, err := c.fsm.Get(p.Key)
+	if err != nil {
+		var nfErr *tkv.ErrKeyNotFound
+		// We only care about key not found, other errors should be returned.
+		if !errors.As(err, &nfErr) {
+			c.logger.Error("Could not get existing value for value", "error", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		exists = false
+	} else {
+		exists = true
+	}
+
+	// Get the limit for disk usage
+	limit, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// get the current disk usage
+	currentDiskUsage, err := c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	currentDiskUsageInt, err := strconv.ParseInt(currentDiskUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	if currentDiskUsageInt+int64(p.TotalLength()) > limitInt {
+		// Add headers to show them their current disk usage and the limit
+		w.Header().Set("X-Current-Disk-Usage", currentDiskUsage)
+		w.Header().Set("X-Disk-Usage-Limit", limit)
+		http.Error(w, "Disk usage limit exceeded", http.StatusBadRequest)
+		return
+	}
+
 	err = c.fsm.Set(p)
 	if err != nil {
 		c.logger.Error("Could not write key-value via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	if !exists {
+		if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), p.TotalLength()); err != nil {
+			c.logger.Error("Could not bump integer via FSM for disk usage", "error", err)
+			// continue on, we don't want to block the request on this
+		}
+	} else {
+		if err := c.fsm.BumpInteger(
+			WithApiKeyDiskUsage(td.KeyUUID),
+			CalculateDelta(models.KVPayload{Key: p.Key, Value: existingValue}, p)); err != nil {
+			c.logger.Error("Could not bump integer via FSM for disk usage", "error", err)
+			// continue on, we don't want to block the request on this
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -218,12 +282,33 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existingValue, err := c.fsm.Get(p.Key)
+	if err != nil {
+		var nfErr *tkv.ErrKeyNotFound
+		if errors.As(err, &nfErr) {
+			// Key doesn't exist, so the delete is a no-op.
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		c.logger.Error("Could not get existing value for value deletion", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	err = c.fsm.Delete(p.Key)
 	if err != nil {
 		c.logger.Error("Could not unset value via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	// Decrement memory usage
+	size := len(p.Key) + len(existingValue)
+	if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), -size); err != nil {
+		c.logger.Error("Could not bump integer via FSM for disk usage on delete", "error", err)
+		// Don't fail the whole request, but log it.
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 

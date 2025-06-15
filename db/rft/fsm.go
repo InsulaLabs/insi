@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"unsafe"
 
 	"time"
@@ -72,12 +73,17 @@ type ValueStoreIF interface {
 	Get(key string) (string, error)
 	Delete(key string) error
 	Iterate(prefix string, offset int, limit int) ([]string, error)
+
+	BumpInteger(key string, delta int) error
 }
 
 type CacheStoreIF interface {
 	SetCache(kvp models.KVPayload) error
 	GetCache(key string) (string, error)
 	DeleteCache(key string) error
+	SetCacheNX(kvp models.KVPayload) error
+	CompareAndSwapCache(p models.CASPayload) error
+	IterateCache(prefix string, offset int, limit int) ([]string, error)
 }
 
 type EventIF interface {
@@ -114,6 +120,11 @@ const (
 	cmdSetCache       = "set_cache"
 	cmdDeleteCache    = "delete_cache"
 	cmdPublishEvent   = "publish_event"
+
+	cmdSetCacheNX          = "set_cache_nx"
+	cmdCompareAndSwapCache = "compare_and_swap_cache"
+
+	cmdBumpInteger = "bump_integer"
 )
 
 // kvFsm holds references to both BadgerDB instances.
@@ -324,6 +335,34 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 			}
 			kf.logger.Debug("FSM applied delete_cache", "key", p.Key)
 			return nil
+		case cmdSetCacheNX:
+			kf.logger.Debug("Applying CmdSetCacheNX", "payload", string(cmd.Payload))
+			var p models.KVPayload
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal set_cache_nx payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal set_cache_nx payload: %w", err)
+			}
+			err := kf.tkv.CacheSetNX(p.Key, p.Value)
+			if err != nil {
+				kf.logger.Info("TKV CacheSetNX failed", "key", p.Key, "error", err)
+				return err
+			}
+			kf.logger.Debug("FSM applied set_cache_nx", "key", p.Key)
+			return nil
+		case cmdCompareAndSwapCache:
+			kf.logger.Debug("Applying CmdCompareAndSwapCache", "payload", string(cmd.Payload))
+			var p models.CASPayload
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal compare_and_swap_cache payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal compare_and_swap_cache payload: %w", err)
+			}
+			err := kf.tkv.CacheCompareAndSwap(p.Key, p.OldValue, p.NewValue)
+			if err != nil {
+				kf.logger.Info("TKV CacheCompareAndSwap failed", "key", p.Key, "error", err)
+				return err
+			}
+			kf.logger.Debug("FSM applied compare_and_swap_cache", "key", p.Key)
+			return nil
 		case cmdPublishEvent:
 			if kf.eventRecvr == nil {
 				kf.logger.Warn("No event receiver attached to FSM, skipping publish_event")
@@ -351,6 +390,28 @@ func (kf *kvFsm) Apply(l *raft.Log) any {
 				event receiver attached to the FSM so we can emit the event to the event receiver.
 			*/
 			kf.eventRecvr.Receive(p.Topic, p.Data)
+			return nil
+		case cmdBumpInteger:
+			kf.logger.Debug("Applying CmdBumpInteger", "payload", string(cmd.Payload))
+			var p models.KVPayload
+			if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+				kf.logger.Error("Could not unmarshal bump_integer payload", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal bump_integer payload: %w", err)
+			}
+			delta, err := strconv.ParseInt(p.Value, 10, 64)
+			if err != nil {
+				kf.logger.Error("Could not unmarshal bump_integer value", "error", err, "payload", string(cmd.Payload))
+				return fmt.Errorf("could not unmarshal bump_integer value: %w", err)
+			}
+
+			// Use the tkv's BumpInteger method directly.
+			// This is safe because Apply is serialized by Raft.
+			if err := kf.tkv.BumpInteger(p.Key, delta); err != nil {
+				kf.logger.Error("TKV BumpInteger failed", "key", p.Key, "error", err)
+				return fmt.Errorf("tkv BumpInteger failed for key %s: %w", p.Key, err)
+			}
+
+			kf.logger.Debug("FSM applied bump_integer", "key", p.Key)
 			return nil
 		default:
 			kf.logger.Error("Unknown raft command type in Apply", "command_type", cmd.Type)
@@ -589,8 +650,8 @@ func (kf *kvFsm) Get(key string) (string, error) {
 	var value string
 	value, err := kf.tkv.Get(key)
 	if err != nil {
-		if err != badger.ErrKeyNotFound {
-			kf.logger.Error("Failed to get value from valuesDb", "key", key, "error", err)
+		if !tkv.IsErrKeyNotFound(err) {
+			kf.logger.Debug("Failed to get value from valuesDb", "key", key, "error", err)
 		}
 		return "", err
 	}
@@ -608,6 +669,45 @@ func (kf *kvFsm) Iterate(prefix string, offset int, limit int) ([]string, error)
 	}
 	kf.logger.Debug("Iterate successful", "prefix", prefix, "offset", offset, "limit", limit)
 	return value, nil
+}
+
+func (kf *kvFsm) BumpInteger(key string, delta int) error {
+	kf.logger.Debug("BumpInteger called", "key", key, "delta", delta)
+
+	payload := models.KVPayload{
+		Key:   key,
+		Value: strconv.Itoa(delta),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for bump_integer", "key", key, "error", err)
+		return fmt.Errorf("could not marshal payload for bump_integer: %w", err)
+	}
+
+	cmd := RaftCommand{
+		Type:    cmdBumpInteger,
+		Payload: payloadBytes,
+	}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for bump_integer", "key", key, "error", err)
+		return fmt.Errorf("could not marshal raft command for bump_integer: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytes, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for BumpInteger", "key", key, "error", err)
+		return fmt.Errorf("raft Apply for BumpInteger failed (key %s): %w", key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Error("FSM application error for BumpInteger", "key", key, "error", responseErr)
+		return fmt.Errorf("fsm application error for BumpInteger (key %s): %w", key, responseErr)
+	}
+	kf.logger.Debug("BumpInteger Raft Apply successful", "key", key)
+	return nil
 }
 
 // [cache]
@@ -817,4 +917,81 @@ func (kf *kvFsm) CompareAndSwap(p models.CASPayload) error {
 	}
 	kf.logger.Debug("CompareAndSwap Raft Apply successful", "key", p.Key)
 	return nil
+}
+
+func (kf *kvFsm) SetCacheNX(kvp models.KVPayload) error {
+	kf.logger.Debug("SetCacheNX called", "key", kvp.Key)
+	cmd := RaftCommand{
+		Type: cmdSetCacheNX,
+	}
+	payloadBytes, err := json.Marshal(kvp)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for set_cache_nx", "key", kvp.Key, "error", err)
+		return fmt.Errorf("could not marshal payload for set_cache_nx: %w", err)
+	}
+	cmd.Payload = payloadBytes
+
+	cmdBytesApply, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for set_cache_nx", "key", kvp.Key, "error", err)
+		return fmt.Errorf("could not marshal raft command for set_cache_nx: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytesApply, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for SetCacheNX", "key", kvp.Key, "error", err)
+		return fmt.Errorf("raft Apply for SetCacheNX failed (key %s): %w", kvp.Key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Info("FSM application error for SetCacheNX", "key", kvp.Key, "error", responseErr)
+		return responseErr
+	}
+	kf.logger.Debug("SetCacheNX Raft Apply successful", "key", kvp.Key)
+	return nil
+}
+
+func (kf *kvFsm) CompareAndSwapCache(p models.CASPayload) error {
+	kf.logger.Debug("CompareAndSwapCache called", "key", p.Key)
+	cmd := RaftCommand{
+		Type: cmdCompareAndSwapCache,
+	}
+	payloadBytes, err := json.Marshal(p)
+	if err != nil {
+		kf.logger.Error("Could not marshal payload for compare_and_swap_cache", "key", p.Key, "error", err)
+		return fmt.Errorf("could not marshal payload for compare_and_swap_cache: %w", err)
+	}
+	cmd.Payload = payloadBytes
+
+	cmdBytesApply, err := json.Marshal(cmd)
+	if err != nil {
+		kf.logger.Error("Could not marshal raft command for compare_and_swap_cache", "key", p.Key, "error", err)
+		return fmt.Errorf("could not marshal raft command for compare_and_swap_cache: %w", err)
+	}
+
+	future := kf.r.Apply(cmdBytesApply, 500*time.Millisecond)
+	if err := future.Error(); err != nil {
+		kf.logger.Error("Raft Apply failed for CompareAndSwapCache", "key", p.Key, "error", err)
+		return fmt.Errorf("raft Apply for CompareAndSwapCache failed (key %s): %w", p.Key, err)
+	}
+
+	response := future.Response()
+	if responseErr, ok := response.(error); ok && responseErr != nil {
+		kf.logger.Info("FSM application error for CompareAndSwapCache", "key", p.Key, "error", responseErr)
+		return responseErr
+	}
+	kf.logger.Debug("CompareAndSwapCache Raft Apply successful", "key", p.Key)
+	return nil
+}
+
+func (kf *kvFsm) IterateCache(prefix string, offset int, limit int) ([]string, error) {
+	kf.logger.Debug("IterateCache called", "prefix", prefix, "offset", offset, "limit", limit)
+	keys, err := kf.tkv.CacheIterate(prefix, offset, limit)
+	if err != nil {
+		kf.logger.Error("Failed to iterate cache", "prefix", prefix, "offset", offset, "limit", limit, "error", err)
+		return nil, err
+	}
+	kf.logger.Debug("IterateCache successful", "prefix", prefix, "offset", offset, "limit", limit)
+	return keys, nil
 }

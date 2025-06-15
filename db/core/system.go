@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,6 +226,38 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 		return "", fmt.Errorf("failed to set API key in FSM for %s: %w", keyName, err)
 	}
 
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMemoryUsage(keyUUID),
+		Value: "0",
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyDiskUsage(keyUUID),
+		Value: "0",
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyEvents(keyUUID),
+		Value: "0",
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeySubscriptions(keyUUID),
+		Value: "0",
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMaxMemoryUsage(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultMaxMemoryUsage),
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMaxDiskUsage(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultMaxDiskUsage),
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMaxEvents(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultMaxEvents),
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyMaxSubscriptions(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultMaxSubscriptions),
+	})
 	return actualKey, nil
 }
 
@@ -252,6 +285,15 @@ func (c *Core) deleteExistingApiKey(key string) error {
 		c.logger.Error("Failed to delete API key from FSM", "key", apiKeyFsmStorageKey, "error", err)
 		return fmt.Errorf("failed to delete API key from FSM for %s: %w", td.Entity, err)
 	}
+
+	c.fsm.Delete(WithApiKeyMemoryUsage(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyDiskUsage(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyEvents(td.KeyUUID))
+	c.fsm.Delete(WithApiKeySubscriptions(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyMaxEvents(td.KeyUUID))
+	c.fsm.Delete(WithApiKeyMaxSubscriptions(td.KeyUUID))
 
 	c.apiCache.Delete(key)
 
@@ -351,6 +393,7 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 			return models.TokenData{
 				Entity:        EntityRoot,
 				DataScopeUUID: c.cfg.RootPrefix,
+				KeyUUID:       c.cfg.RootPrefix,
 			}, false
 		}
 	}
@@ -359,6 +402,7 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 		return models.TokenData{
 			Entity:        EntityRoot,
 			DataScopeUUID: c.cfg.RootPrefix,
+			KeyUUID:       c.cfg.RootPrefix,
 		}, true
 	}
 
@@ -411,4 +455,400 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 	c.apiCache.Set(token, tdFromFsm, c.cfg.Cache.Keys)
 
 	return tdFromFsm, true
+}
+
+// Allow any user to get their limits and current usage
+func (c *Core) callerLimitsHandler(w http.ResponseWriter, r *http.Request) {
+
+	td, ok := c.ValidateToken(r, AnyUser())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get the limit for disk usage
+	diskLimitForKey, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	diskLimitForKeyInt, err := strconv.ParseInt(diskLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	memLimitForKey, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	memLimitForKeyInt, err := strconv.ParseInt(memLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	eventsLimitForKey, err := c.fsm.Get(WithApiKeyMaxEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	eventsLimitForKeyInt, err := strconv.ParseInt(eventsLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	subscribersLimitForKey, err := c.fsm.Get(WithApiKeyMaxSubscriptions(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	subscribersLimitForKeyInt, err := strconv.ParseInt(subscribersLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for disk
+	diskUsage, err := c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	diskUsageInt, err := strconv.ParseInt(diskUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for memory
+	memUsage, err := c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	memUsageInt, err := strconv.ParseInt(memUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for events
+	eventsUsage, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	eventsUsageInt, err := strconv.ParseInt(eventsUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for subscribers
+	subscribersUsage, err := c.fsm.Get(WithApiKeySubscriptions(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	subscribersUsageInt, err := strconv.ParseInt(subscribersUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	limitsResponse := models.LimitsResponse{
+		MaxLimits: &models.Limits{
+			BytesOnDisk:   &diskLimitForKeyInt,
+			BytesInMemory: &memLimitForKeyInt,
+			EventsEmitted: &eventsLimitForKeyInt,
+			Subscribers:   &subscribersLimitForKeyInt,
+		},
+		CurrentUsage: &models.Limits{
+			BytesOnDisk:   &diskUsageInt,
+			BytesInMemory: &memUsageInt,
+			EventsEmitted: &eventsUsageInt,
+			Subscribers:   &subscribersUsageInt,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(limitsResponse)
+}
+
+func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
+
+	tdr, ok := c.ValidateToken(r, RootOnly())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
+		return
+	}
+
+	// Get the limits from the request body
+	var req models.SetLimitsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ApiKey == "" {
+		http.Error(w, "api_key is missing from request", http.StatusBadRequest)
+		return
+	}
+
+	if req.Limits == nil {
+		http.Error(w, "limits object is missing from request", http.StatusBadRequest)
+		return
+	}
+
+	// If the target key is root key it must be the root who asks for it
+	// and not a user. we distinguish as root key construct is different from
+	// user key construct.
+	var target models.TokenData
+	if req.ApiKey == c.authToken {
+		if !c.tdIsRoot(tdr) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		target = tdr
+	} else {
+		var err error
+		target, err = c.decomposeKey(req.ApiKey)
+		if err != nil {
+			http.Error(w, "Invalid target key", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Set the limits in the FSM
+	if req.Limits.BytesOnDisk != nil {
+		if err := c.fsm.Set(models.KVPayload{
+			Key:   WithApiKeyMaxDiskUsage(target.KeyUUID),
+			Value: fmt.Sprintf("%d", *req.Limits.BytesOnDisk),
+		}); err != nil {
+			c.logger.Error("failed to set disk limit", "error", err)
+			http.Error(w, "failed to set disk limit", http.StatusInternalServerError)
+			return
+		}
+	}
+	if req.Limits.BytesInMemory != nil {
+		if err := c.fsm.Set(models.KVPayload{
+			Key:   WithApiKeyMaxMemoryUsage(target.KeyUUID),
+			Value: fmt.Sprintf("%d", *req.Limits.BytesInMemory),
+		}); err != nil {
+			c.logger.Error("failed to set memory limit", "error", err)
+			http.Error(w, "failed to set memory limit", http.StatusInternalServerError)
+			return
+		}
+	}
+	if req.Limits.EventsEmitted != nil {
+		if err := c.fsm.Set(models.KVPayload{
+			Key:   WithApiKeyMaxEvents(target.KeyUUID),
+			Value: fmt.Sprintf("%d", *req.Limits.EventsEmitted),
+		}); err != nil {
+			c.logger.Error("failed to set events limit", "error", err)
+			http.Error(w, "failed to set events limit", http.StatusInternalServerError)
+			return
+		}
+	}
+	if req.Limits.Subscribers != nil {
+		if err := c.fsm.Set(models.KVPayload{
+			Key:   WithApiKeyMaxSubscriptions(target.KeyUUID),
+			Value: fmt.Sprintf("%d", *req.Limits.Subscribers),
+		}); err != nil {
+			c.logger.Error("failed to set subscribers limit", "error", err)
+			http.Error(w, "failed to set subscribers limit", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// Allow any user to get their limits and current usage
+func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
+
+	// ONLY ROOT CAN GET LIMITS FOR SPECIFIC KEYS
+	_, ok := c.ValidateToken(r, RootOnly())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req models.GetLimitsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// get the targeted key
+	td, err := c.decomposeKey(req.ApiKey)
+	if err != nil {
+		http.Error(w, "Invalid target key format", http.StatusBadRequest)
+		return
+	}
+
+	// Check if the key exists before proceeding.
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
+	if _, err := c.fsm.Get(fsmStorageKey); err != nil {
+		c.logger.Warn("Attempt to get limits for non-existent API key", "key_uuid", td.KeyUUID, "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error_type": "API_KEY_NOT_FOUND",
+			"message":    "The specified API key does not exist or has been deleted.",
+		})
+		return
+	}
+
+	// Get the limit for disk usage
+	diskLimitForKey, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	diskLimitForKeyInt, err := strconv.ParseInt(diskLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	memLimitForKey, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	memLimitForKeyInt, err := strconv.ParseInt(memLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	eventsLimitForKey, err := c.fsm.Get(WithApiKeyMaxEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	eventsLimitForKeyInt, err := strconv.ParseInt(eventsLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	subscribersLimitForKey, err := c.fsm.Get(WithApiKeyMaxSubscriptions(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	subscribersLimitForKeyInt, err := strconv.ParseInt(subscribersLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for disk
+	diskUsage, err := c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	diskUsageInt, err := strconv.ParseInt(diskUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current disk usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for memory
+	memUsage, err := c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	memUsageInt, err := strconv.ParseInt(memUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current memory usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for events
+	eventsUsage, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	eventsUsageInt, err := strconv.ParseInt(eventsUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current events usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the current usage for subscribers
+	subscribersUsage, err := c.fsm.Get(WithApiKeySubscriptions(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	subscribersUsageInt, err := strconv.ParseInt(subscribersUsage, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current subscribers usage", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	limitsResponse := models.LimitsResponse{
+		MaxLimits: &models.Limits{
+			BytesOnDisk:   &diskLimitForKeyInt,
+			BytesInMemory: &memLimitForKeyInt,
+			EventsEmitted: &eventsLimitForKeyInt,
+			Subscribers:   &subscribersLimitForKeyInt,
+		},
+		CurrentUsage: &models.Limits{
+			BytesOnDisk:   &diskUsageInt,
+			BytesInMemory: &memUsageInt,
+			EventsEmitted: &eventsUsageInt,
+			Subscribers:   &subscribersUsageInt,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(limitsResponse)
 }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/InsulaLabs/insula/security/badge"
@@ -272,6 +273,88 @@ func (t *tkv) CacheDelete(key string) error {
 	return err
 }
 
+func (t *tkv) CacheIterate(prefix string, offset int, limit int) ([]string, error) {
+	var keys []string
+	err := t.db.cache.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+
+		prefixBytes := []byte(prefix)
+		skipped := 0
+		collected := 0
+
+		for it.Seek(prefixBytes); it.ValidForPrefix(prefixBytes); it.Next() {
+			if skipped < offset {
+				skipped++
+				continue
+			}
+			if limit > 0 && collected >= limit {
+				break
+			}
+			item := it.Item()
+			keys = append(keys, string(item.Key()))
+			collected++
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func (t *tkv) CacheSetNX(key string, value string) error {
+	err := t.db.cache.Update(func(txn *badger.Txn) error {
+		_, err := txn.Get([]byte(key))
+		if err == nil {
+			return &ErrKeyExists{Key: key}
+		}
+		if !errors.Is(err, badger.ErrKeyNotFound) {
+			return &ErrInternal{Err: err}
+		}
+
+		// Key does not exist, safe to set
+		if err := txn.Set([]byte(key), []byte(value)); err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
+}
+
+func (t *tkv) CacheCompareAndSwap(key string, oldValue, newValue string) error {
+	err := t.db.cache.Update(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				return &ErrCASFailed{Key: key}
+			}
+			return &ErrInternal{Err: err}
+		}
+
+		var valBytes []byte
+		err = item.Value(func(val []byte) error {
+			valBytes = append([]byte{}, val...)
+			return nil
+		})
+
+		if err != nil {
+			return &ErrInternal{Err: err}
+		}
+
+		if string(valBytes) != oldValue {
+			return &ErrCASFailed{Key: key}
+		}
+
+		// Value matches, proceed with setting the new value.
+		if err := txn.Set([]byte(key), []byte(newValue)); err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
+}
+
 func (t *tkv) GetDataDB() *badger.DB {
 	return t.db.store
 }
@@ -377,6 +460,57 @@ func (t *tkv) CompareAndSwap(key string, oldValue, newValue string) error {
 
 		// Value matches, proceed with setting the new value.
 		if err := txn.Set([]byte(key), []byte(newValue)); err != nil {
+			return &ErrInternal{Err: err}
+		}
+		return nil
+	})
+	return err
+}
+
+func (t *tkv) BumpInteger(key string, delta int64) error {
+	err := t.db.store.Update(func(txn *badger.Txn) error {
+		var currentVal int64
+		item, err := txn.Get([]byte(key))
+
+		if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				// Key doesn't exist, we'll create it. Start from 0.
+				currentVal = 0
+			} else {
+				// For any other error, it's internal.
+				return &ErrInternal{Err: err}
+			}
+		} else {
+			// Key exists, get its value.
+			err = item.Value(func(val []byte) error {
+				// If value is empty, treat as 0
+				if len(val) == 0 {
+					currentVal = 0
+					return nil
+				}
+				// Otherwise, parse it.
+				parsedVal, parseErr := strconv.ParseInt(string(val), 10, 64)
+				if parseErr != nil {
+					// If parsing fails, return an invalid state error.
+					return &ErrInvalidState{Key: key, Reason: "value is not a valid integer"}
+				}
+				currentVal = parsedVal
+				return nil
+			})
+			if err != nil {
+				return err // This could be ErrInvalidState or another error from Value().
+			}
+		}
+
+		newValue := currentVal + delta
+
+		// Explicitly floor the value at 0.
+		if newValue < 0 {
+			newValue = 0
+		}
+
+		// Set the new value.
+		if err := txn.Set([]byte(key), []byte(strconv.FormatInt(newValue, 10))); err != nil {
 			return &ErrInternal{Err: err}
 		}
 		return nil

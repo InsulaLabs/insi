@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/InsulaLabs/insi/db/rft"
 	"github.com/InsulaLabs/insi/db/tkv"
 	"github.com/InsulaLabs/insula/security/badge"
+	"github.com/fatih/color"
 	"github.com/gorilla/websocket"
 	"github.com/jellydator/ttlcache/v3"
 	"golang.org/x/time/rate"
@@ -60,6 +63,10 @@ type Core struct {
 
 func (c *Core) GetRootClientKey() string {
 	return c.authToken
+}
+
+func (c *Core) tdIsRoot(td models.TokenData) bool {
+	return td.KeyUUID == c.cfg.RootPrefix
 }
 
 func (c *Core) GetMemoryUsageFullKey() string {
@@ -125,7 +132,7 @@ func New(
 		rlLogger.Info("Initialized rate limiter for 'values'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 	if rlConfig := clusterCfg.RateLimiters.Cache; rlConfig.Limit > 0 {
-		rateLimiters["cacheEndpoints"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rateLimiters["cache"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
 		rlLogger.Info("Initialized rate limiter for 'cacheEndpoints'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 	if rlConfig := clusterCfg.RateLimiters.System; rlConfig.Limit > 0 {
@@ -179,6 +186,8 @@ func New(
 
 	go service.eventProcessingLoop()
 
+	// Make sure root keyUUID (root prefix) has a memory tracker
+
 	return service, nil
 }
 
@@ -194,11 +203,22 @@ func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Hand
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow() {
+		res := limiter.Reserve()
+		// If there's a delay, the request is rate-limited.
+		if delay := res.Delay(); delay > 0 {
+			// We're not proceeding, so cancel the reservation to return the token.
+			res.Cancel()
 			c.logger.Warn("Rate limit exceeded", "category", category, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
+
+			// Set headers to inform the client about the rate limit.
+			retryAfterSeconds := math.Ceil(delay.Seconds())
+			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfterSeconds)) // Correctly format seconds.
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%v", limiter.Limit()))
+			w.Header().Set("X-RateLimit-Burst", fmt.Sprintf("%d", limiter.Burst()))
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -229,6 +249,9 @@ func (c *Core) Run() {
 	c.mux.Handle("/db/api/v1/cache/set", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache"))
 	c.mux.Handle("/db/api/v1/cache/get", c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache"))
 	c.mux.Handle("/db/api/v1/cache/delete", c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/setnx", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/cas", c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/iterate/prefix", c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache"))
 
 	// Events handlers
 	c.mux.Handle("/db/api/v1/events", c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events"))
@@ -238,9 +261,18 @@ func (c *Core) Run() {
 	c.mux.Handle("/db/api/v1/join", c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system"))
 	c.mux.Handle("/db/api/v1/ping", c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system"))
 
+	// System handle anyone can call with an api key to get their current usage and limits
+	c.mux.Handle("/db/api/v1/limits", c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system"))
+
+	// Only ROOT can set limits
+	c.mux.Handle("/db/api/v1/admin/limits/set", c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system"))
+
 	// Admin API Key Management handlers (system category for rate limiting)
 	c.mux.Handle("/db/api/v1/admin/api/create", c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system"))
 	c.mux.Handle("/db/api/v1/admin/api/delete", c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system"))
+
+	// Only ROOT can get limits for specific keys
+	c.mux.Handle("/db/api/v1/admin/limits/get", c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system"))
 
 	httpListenAddr := c.nodeCfg.HttpBinding
 	c.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != ""))
@@ -258,6 +290,11 @@ func (c *Core) Run() {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			c.logger.Error("Server shutdown error", "error", err)
 		}
+	}()
+
+	go func() {
+		time.Sleep(time.Second * 10)
+		c.ensureRootKeyTrackersExist()
 	}()
 
 	c.startedAt = time.Now()
@@ -290,4 +327,67 @@ func (c *Core) OnTTLCacheEviction(key string, value string) error {
 
 	fmt.Println("OnTTLCacheEviction", key, value)
 	return nil
+}
+
+func (c *Core) ensureRootKeyTrackersExist() {
+	if !c.fsm.IsLeader() {
+		return
+	}
+
+	keysToSet := []string{
+		WithApiKeyMemoryUsage(c.cfg.RootPrefix),
+		WithApiKeyDiskUsage(c.cfg.RootPrefix),
+		WithApiKeyEvents(c.cfg.RootPrefix),
+		WithApiKeySubscriptions(c.cfg.RootPrefix),
+	}
+
+	c.logger.Info("Ensuring root key trackers exist", "keys", keysToSet)
+	for _, key := range keysToSet {
+		val, err := c.fsm.Get(key)
+		if tkv.IsErrKeyNotFound(err) {
+			c.fsm.Set(models.KVPayload{
+				Key:   key,
+				Value: "0",
+			})
+			c.logger.Info("set root tracker", "key", strings.TrimSuffix(key, c.cfg.RootPrefix), "value", "0")
+			color.HiRed("set root tracker key %s value %s", strings.TrimSuffix(key, c.cfg.RootPrefix), "0")
+		} else {
+			color.HiCyan("Key already exists %s %s", strings.TrimSuffix(key, c.cfg.RootPrefix), val)
+			c.logger.Info(
+				"Key already exists",
+				"key",
+				strings.TrimSuffix(key, c.cfg.RootPrefix), // its a suffix, not a prefix
+				"value",
+				val,
+			)
+		}
+	}
+
+	keysToSet = []string{
+		WithApiKeyMaxMemoryUsage(c.cfg.RootPrefix),
+		WithApiKeyMaxDiskUsage(c.cfg.RootPrefix),
+		WithApiKeyMaxEvents(c.cfg.RootPrefix),
+		WithApiKeyMaxSubscriptions(c.cfg.RootPrefix),
+	}
+
+	for _, key := range keysToSet {
+		val, err := c.fsm.Get(key)
+		if tkv.IsErrKeyNotFound(err) {
+			c.logger.Info("set root tracker", "key", strings.TrimSuffix(key, c.cfg.RootPrefix))
+			color.HiRed("set root tracker key %s", strings.TrimSuffix(key, c.cfg.RootPrefix))
+			c.fsm.Set(models.KVPayload{
+				Key:   key,
+				Value: fmt.Sprintf("%d", 1024*1024*1024*10), // 10GB or some wild amount of events/ subscriptions
+			})
+		} else {
+			color.HiCyan("Key already exists %s %s", strings.TrimSuffix(key, c.cfg.RootPrefix), val)
+			c.logger.Info(
+				"Key already exists",
+				"key",
+				strings.TrimSuffix(key, c.cfg.RootPrefix), // its a suffix, not a prefix
+				"value",
+				val,
+			)
+		}
+	}
 }
