@@ -231,6 +231,98 @@ test_iterate_prefix() {
     run_insic "delete" "$key3" > /dev/null
 }
 
+test_bump() {
+    print_header "Test: Bump Integer Value"
+    local key="testkey_bump_$(date +%s)"
+    local output_set output_get output_bump
+    local exit_code_set exit_code_get exit_code_bump
+
+    # Set initial value
+    run_insic "set" "$key" "10" > /dev/null
+    exit_code_set=$?
+    expect_success "Set initial value for bump test ('$key' -> '10')" "$exit_code_set"
+
+    # Bump up
+    run_insic "bump" "$key" "5" > /dev/null
+    exit_code_bump=$?
+    expect_success "Bump key '$key' up by '5'" "$exit_code_bump"
+
+    output_get=$(run_insic "get" "$key")
+    exit_code_get=$?
+    expect_success "Get key '$key' after bumping up" "$exit_code_get"
+    if [[ "$output_get" == "15" ]]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}Value for '$key' is '15' as expected.${NC}"
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Value for '$key' - Expected '15', got '$output_get'${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+
+    # Bump down
+    run_insic "bump" "$key" "-10" > /dev/null
+    exit_code_bump=$?
+    expect_success "Bump key '$key' down by '-10'" "$exit_code_bump"
+
+    output_get=$(run_insic "get" "$key")
+    exit_code_get=$?
+    expect_success "Get key '$key' after bumping down" "$exit_code_get"
+    if [[ "$output_get" == "5" ]]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}Value for '$key' is '5' as expected.${NC}"
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Value for '$key' - Expected '5', got '$output_get'${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+
+    # Bump below zero - This should result in 0
+    echo -e "${INFO_EMOJI} Testing bumping below zero (expected to result in '0')..."
+    run_insic "bump" "$key" "-10" > /dev/null
+    exit_code_bump=$?
+    expect_success "Bump key '$key' by '-10' which would go below zero" "$exit_code_bump"
+
+    output_get=$(run_insic "get" "$key")
+    exit_code_get=$?
+    expect_success "Get key '$key' after bumping below zero" "$exit_code_get"
+    if [[ "$output_get" == "0" ]]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}Value for '$key' is '0' as expected. Bumping does not go below zero.${NC}"
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Value for '$key' - Expected '0', got '$output_get'${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+
+    # Bump on a non-existent key
+    local new_key="new_bump_key_$(date +%s)"
+    run_insic "bump" "$new_key" "100" > /dev/null
+    exit_code_bump=$?
+    expect_success "Bump non-existent key '$new_key' by '100'" "$exit_code_bump"
+
+    output_get=$(run_insic "get" "$new_key")
+    exit_code_get=$?
+    expect_success "Get key '$new_key' after initial bump" "$exit_code_get"
+    if [[ "$output_get" == "100" ]]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}Value for new key '$new_key' is '100' as expected.${NC}"
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Value for new key '$new_key' - Expected '100', got '$output_get'${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+
+    # Test bump with non-integer value in command
+    local bad_bump_val="not-a-number"
+    output_bump=$(run_insic "bump" "$new_key" "$bad_bump_val")
+    exit_code_bump=$?
+    expect_error "Bump key '$new_key' with non-integer value '$bad_bump_val'" "$exit_code_bump" "$output_bump"
+
+    # Test bump on a key that holds a non-integer value
+    local non_int_key="non_int_key_$(date +%s)"
+    run_insic "set" "$non_int_key" "i-am-string" > /dev/null
+    output_bump=$(run_insic "bump" "$non_int_key" "5")
+    exit_code_bump=$?
+    expect_error "Bump key '$non_int_key' which holds a string value" "$exit_code_bump" "$output_bump"
+
+    # Cleanup
+    run_insic "delete" "$key" > /dev/null
+    run_insic "delete" "$new_key" > /dev/null
+    run_insic "delete" "$non_int_key" > /dev/null
+}
+
 
 # --- Main Execution ---
 main() {
@@ -275,6 +367,7 @@ main() {
     test_get_non_existent
     test_delete
     test_iterate_prefix
+    test_bump
 
     echo -e "\n${GREEN}All TKV data tests completed.${NC}"
 

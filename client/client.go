@@ -717,6 +717,17 @@ func (c *Client) CompareAndSwap(key, oldValue, newValue string) error {
 	return c.doRequest(http.MethodPost, "db/api/v1/cas", nil, payload, nil)
 }
 
+// Bump atomically increments the integer value of a key by a given amount.
+// The key must hold a string representation of an integer.
+// If the key does not exist, it is created with the bump value.
+func (c *Client) Bump(key string, value int) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	payload := map[string]string{"key": key, "value": strconv.Itoa(value)}
+	return c.doRequest(http.MethodPost, "db/api/v1/bump", nil, payload, nil)
+}
+
 // Delete removes a key and its value.
 func (c *Client) Delete(key string) error {
 	if key == "" {
