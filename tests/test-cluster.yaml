@@ -16,6 +16,10 @@ tls:
 clientSkipVerify: true
 serverMustUseTLS: true
 
+trustedProxies:
+  - "127.0.0.1"
+  - "::1"
+
 cache:
   standard-ttl: 1m  # 1 minute default ttl for cache
   keys: 10s         # 10 seconds for api keys once they hit cache (for test wait period)

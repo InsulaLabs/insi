@@ -373,7 +373,41 @@ func (c *Core) Run() {
 		}
 	}
 
-	c.apiCache.Stop()
+	stopWg := sync.WaitGroup{}
+
+	go func() {
+		stopWg.Add(1)
+		defer stopWg.Done()
+		c.apiCache.Stop()
+	}()
+
+	go func() {
+		stopWg.Add(1)
+		defer stopWg.Done()
+		for _, subscriber := range c.eventSubscribers {
+			for session := range subscriber {
+				if session.conn != nil {
+					if err := session.conn.Close(); err != nil {
+						c.logger.Error("Error closing WebSocket connection", "error", err)
+					}
+				}
+			}
+		}
+		c.eventSubscribers = make(map[string]map[*eventSession]bool)
+	}()
+
+	go func() {
+		stopWg.Add(1)
+		defer stopWg.Done()
+		for _, limiter := range c.rateLimiters {
+			limiter.Stop()
+		}
+	}()
+
+	c.logger.Info("Waiting for server to stop - this may take a moment")
+	stopWg.Wait()
+
+	c.logger.Info("Server stopped")
 }
 
 // Whenever a cache entry expires, not from deletion, but from TTL expiration this is called

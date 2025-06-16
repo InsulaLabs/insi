@@ -993,11 +993,11 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 	}
 	query := wsURL.Query()
 	query.Set("topic", topic)
-	query.Set("token", c.apiKey) // Pass API key as a query parameter for WebSocket authentication
 	wsURL.RawQuery = query.Encode()
 
 	c.logger.Info("Attempting to connect to WebSocket for event subscription", "url", wsURL.String())
 
+	// The Authorization header is used for authentication on the WebSocket upgrade request.
 	header := http.Header{}
 	header.Set("Authorization", c.apiKey)
 

@@ -80,18 +80,10 @@ func (es *eventSubsystem) Receive(topic string, data any) error {
 
 // eventSubscribeHandler handles WebSocket requests for event subscriptions.
 func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
-	// Authentication: Extract token from query parameter
-	// Example: /db/api/v1/events/subscribe?topic=MY_TOPIC&token=API_KEY
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		c.logger.Warn("WebSocket connection attempt without token")
-		http.Error(w, "Missing token", http.StatusUnauthorized)
-		return
-	}
-
+	// Authentication is handled by ValidateToken, which checks the Authorization header.
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		http.Error(w, "Invalid or missing token", http.StatusUnauthorized)
 		return
 	}
 
