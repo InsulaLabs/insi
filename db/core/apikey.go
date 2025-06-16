@@ -27,6 +27,16 @@ const (
 	ApiTrackMaxDiskUsagePrefix     = "internal:api_key_max_disk_usage"
 	ApiTrackMaxEventsPrefix        = "internal:api_key_max_events"
 	ApiTrackMaxSubscriptionsPrefix = "internal:api_key_max_subscriptions"
+
+	ApiTrackEventLastResetPrefix = "internal:api_key_event_last_reset"
+
+	// Tombstone is used to mark an api key as deleted with the data scope uuid given so an automated
+	// runner can clean up the key from the system
+	// When the runner (on leader node only) runs it will iterate over all tombstone prefixe
+	//               <ApiTombstonePrefix[:DELETED_KEY_UUID]>   -> DELETED_KEY_DATA_SCOPE_UUID
+	//   Then it can iteratively delete all keys with that data scope uuid. Once complete, it can remove
+	// the tombstone and have all the knowledge required to do so the moment it is needed
+	ApiTombstonePrefix = "internal:api_key_tombstone"
 )
 
 func WithApiKeyMemoryUsage(key string) string {
@@ -35,6 +45,10 @@ func WithApiKeyMemoryUsage(key string) string {
 
 func WithApiKeyDiskUsage(key string) string {
 	return fmt.Sprintf("%s:%s", ApiTrackDiskPrefix, key)
+}
+
+func WithApiKeyEventLastReset(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTrackEventLastResetPrefix, key)
 }
 
 func WithApiKeyEvents(key string) string {
@@ -61,6 +75,10 @@ func WithApiKeyMaxSubscriptions(key string) string {
 	return fmt.Sprintf("%s:%s", ApiTrackMaxSubscriptionsPrefix, key)
 }
 
+func WithApiKeyTombstone(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTombstonePrefix, key)
+}
+
 // CalculateDelta returns the delta between the old and new payloads.
 // If the new payload is smaller, the delta will be negative.
 // If the new payload is larger, the delta will be positive.
@@ -72,12 +90,12 @@ func CalculateDelta(old models.KVPayload, new models.KVPayload) int {
 // These functions are meant to be used with ValidateToken. they seem silly but it helps
 // clarify the point of call when reasoning about the code
 
-func RootOnly() bool {
-	return true
+func RootOnly() AccessEntity {
+	return AccessEntityRoot
 }
 
-func AnyUser() bool {
-	return false
+func AnyUser() AccessEntity {
+	return AccessEntityAnyUser
 }
 
 func (c *Core) apiKeyCreateHandler(w http.ResponseWriter, r *http.Request) {

@@ -7,9 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -51,12 +49,8 @@ type Runtime struct {
 
 	rtClients map[string]*client.Client
 
-	services map[string]Service
-
 	currentLogLevel slog.Level
 }
-
-var _ ServiceRuntimeIF = &Runtime{}
 
 // New creates a new Runtime instance.
 // It initializes the application context, sets up signal handling,
@@ -65,7 +59,6 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r := &Runtime{
 		rawArgs:   args,
-		services:  make(map[string]Service),
 		rtClients: make(map[string]*client.Client),
 	}
 
@@ -208,11 +201,6 @@ func (r *Runtime) GetClientForToken(token string) (*client.Client, error) {
 	return rtClient, nil
 }
 
-func (r *Runtime) WithService(service Service) *Runtime {
-	r.services[service.GetName()] = service
-	return r
-}
-
 // Run executes the runtime based on the parsed flags,
 // either running as a single node or as a host managing multiple nodes.
 func (r *Runtime) Run() error {
@@ -337,50 +325,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		os.Exit(1)
 	}
 
-	// Mount the plugins
-	nodeLogger.Info("Mounting services", "count", len(r.services))
-
-	createRoute := func(service Service, route ServiceRoute) string {
-		nodeLogger.Info("Mounting service route", "service", service.GetName(), "path", route.Path)
-		pName := strings.Trim(service.GetName(), "/")
-		rPath := strings.Trim(route.Path, "/")
-		mountPath := "/" // Always start with a slash for the root
-		if pName != "" {
-			mountPath = path.Join(mountPath, pName)
-		}
-		if rPath != "" {
-			mountPath = path.Join(mountPath, rPath)
-		}
-		return mountPath
-	}
-
-	/*
-		Setup the routes for the plugin and init it so it has
-		a means to access the runtime.
-	*/
-	for _, service := range r.services {
-
-		r.logger.Info(
-			"Mounting routes for service",
-			"service", service.GetName(),
-			"count", len(service.GetRoutes()),
-		)
-
-		for _, route := range service.GetRoutes() {
-			r.service.WithRoute(
-				createRoute(service, route),
-				route.Handler,
-				route.Limit,
-				route.Burst,
-			)
-		}
-
-		service.Init(r)
-	}
-
 	r.service.Run()
-
-	nodeLogger.Info("Node instance shut down gracefully.")
 }
 
 func getMapKeys(m map[string]config.Node) []string {

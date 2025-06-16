@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,10 +24,31 @@ import (
 	"golang.org/x/time/rate"
 )
 
+type AccessEntity bool
+
+const (
+	AccessEntityAnyUser AccessEntity = false // for require root = false
+	AccessEntityRoot    AccessEntity = true  // for require root = true
+)
+
 const (
 	EntityRoot     = "root"
 	MemoryUsageKey = "memory-usage"
 	DiskUsageKey   = "disk-usage"
+)
+
+const MaxValueSize = 1024 * 1024 // 1MB
+
+var ErrDiskUsageLimitExceeded = fmt.Errorf("disk usage limit exceeded")
+var ErrMemoryUsageLimitExceeded = fmt.Errorf("memory usage limit exceeded")
+
+var TombstoneRunnerInterval = time.Second * 30
+
+type StorageTarget string
+
+const (
+	StorageTargetDisk   StorageTarget = "disk"
+	StorageTargetMemory StorageTarget = "memory"
 )
 
 /*
@@ -353,9 +375,20 @@ func (c *Core) Run() {
 		}
 	}()
 
+	/*
+		Ensure root tracking exists and start the tombstone runner
+	*/
 	go func() {
 		time.Sleep(time.Second * 10)
 		c.ensureRootKeyTrackersExist()
+
+		/*
+			Start the tombstone runner AFTER the root key trackers exist
+			just to make sure everything is in-order for deletion routines
+			It should be fine, but operationally it makes sense to do this
+			after the root key trackers exist.
+		*/
+		go c.tombstoneRunner()
 	}()
 
 	c.startedAt = time.Now()
@@ -469,6 +502,196 @@ func (c *Core) ensureRootKeyTrackersExist() {
 				"value",
 				val,
 			)
+		}
+	}
+}
+
+func (c *Core) CheckDiskUsage(td models.TokenData, bytes int64) (ok bool, current string, limit string) {
+	limit, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for disk usage", "error", err)
+		return false, "0", "0"
+	}
+	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for disk usage", "error", err)
+		return false, "0", limit
+	}
+
+	current, err = c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
+	if err != nil {
+		if tkv.IsErrKeyNotFound(err) {
+			current = "0"
+		} else {
+			c.logger.Error("Could not get current disk usage", "error", err)
+			return false, "0", limit
+		}
+	}
+	currentInt, err := strconv.ParseInt(current, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current disk usage", "error", err)
+		return false, current, limit
+	}
+
+	if currentInt+bytes > limitInt {
+		return false, current, limit
+	}
+
+	return true, current, limit
+}
+
+func (c *Core) CheckMemoryUsage(td models.TokenData, bytes int64) (ok bool, current string, limit string) {
+	limit, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for memory usage", "error", err)
+		return false, "0", "0"
+	}
+	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for memory usage", "error", err)
+		return false, "0", limit
+	}
+
+	current, err = c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
+	if err != nil {
+		if tkv.IsErrKeyNotFound(err) {
+			current = "0"
+		} else {
+			c.logger.Error("Could not get current memory usage", "error", err)
+			return false, "0", limit
+		}
+	}
+	currentInt, err := strconv.ParseInt(current, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current memory usage", "error", err)
+		return false, current, limit
+	}
+
+	if currentInt+bytes > limitInt {
+		return false, current, limit
+	}
+
+	return true, current, limit
+}
+
+func (c *Core) AssignBytesToTD(td models.TokenData, target StorageTarget, bytes int64) error {
+	switch target {
+	case StorageTargetDisk:
+		if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), int(bytes)); err != nil {
+			c.logger.Error("Could not bump disk usage", "error", err)
+			return err
+		}
+	case StorageTargetMemory:
+		if err := c.fsm.BumpInteger(WithApiKeyMemoryUsage(td.KeyUUID), int(bytes)); err != nil {
+			c.logger.Error("Could not bump memory usage", "error", err)
+			return err
+		}
+	default:
+		return fmt.Errorf("invalid storage target: %s", target)
+	}
+	return nil
+}
+
+func sizeTooLargeForStorage(value interface{}) bool {
+	return int64(len(fmt.Sprintf("%v", value))) > MaxValueSize
+}
+
+func (c *Core) tombstoneRunner() {
+	for {
+		select {
+		case <-c.appCtx.Done():
+			return
+		case <-time.After(TombstoneRunnerInterval):
+			if !c.fsm.IsLeader() {
+				continue
+			}
+			c.execTombstoneDeletion()
+		}
+	}
+
+}
+
+func (c *Core) execTombstoneDeletion() {
+	c.logger.Info("Tombstone runner executing deletion cycle")
+
+	// 1. Iterate over all tombstone keys
+	tombstoneKeys, err := c.fsm.Iterate(ApiTombstonePrefix, 0, 100)
+	if err != nil {
+		c.logger.Error("Could not get tombstone keys", "error", err)
+		return
+	}
+
+	if len(tombstoneKeys) == 0 {
+		c.logger.Info("No tombstones to process")
+		return
+	}
+
+	c.logger.Info("Found tombstones to process", "count", len(tombstoneKeys))
+
+	for _, tombstoneKeyBytes := range tombstoneKeys {
+		if c.appCtx.Err() != nil {
+			return // Application is shutting down
+		}
+
+		tombstoneKey := string(tombstoneKeyBytes)
+		keyUUID := strings.TrimPrefix(tombstoneKey, ApiTombstonePrefix+":")
+
+		dataScopeUUID, err := c.fsm.Get(tombstoneKey)
+		if err != nil {
+			c.logger.Error("Could not get data scope uuid from tombstone", "tombstone_key", tombstoneKey, "error", err)
+			continue
+		}
+
+		// 2. Iteratively delete all data associated with the dataScopeUUID
+		// We use the dataScopeUUID as the prefix for all user data.
+		keysToDelete, err := c.fsm.Iterate(dataScopeUUID, 0, 100)
+		if err != nil {
+			c.logger.Error("Could not iterate over keys for data scope", "data_scope_uuid", dataScopeUUID, "error", err)
+			continue
+		}
+
+		if len(keysToDelete) > 0 {
+			c.logger.Info("Deleting data for tombstoned key", "key_uuid", keyUUID, "data_scope_uuid", dataScopeUUID, "keys_to_delete_count", len(keysToDelete))
+			for _, key := range keysToDelete {
+				if err := c.fsm.Delete(string(key)); err != nil {
+					c.logger.Error("Could not delete key during tombstone cleanup", "key", string(key), "error", err)
+				}
+			}
+			// If we deleted keys, there might be more. We'll process them in the next run.
+			c.logger.Info("Partial data deleted for key. Will continue in next cycle.", "key_uuid", keyUUID)
+			continue
+		}
+
+		// 3. If no more data keys are found, delete the API key metadata and the key itself.
+		c.logger.Info("All user data deleted for key. Deleting metadata.", "key_uuid", keyUUID)
+
+		metaKeysToDelete := []string{
+			// Trackers
+			WithApiKeyMemoryUsage(keyUUID),
+			WithApiKeyDiskUsage(keyUUID),
+			WithApiKeyEvents(keyUUID),
+			WithApiKeySubscriptions(keyUUID),
+			// Limits
+			WithApiKeyMaxMemoryUsage(keyUUID),
+			WithApiKeyMaxDiskUsage(keyUUID),
+			WithApiKeyMaxEvents(keyUUID),
+			WithApiKeyMaxSubscriptions(keyUUID),
+			// The API key itself
+			fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, keyUUID),
+		}
+
+		for _, key := range metaKeysToDelete {
+			if err := c.fsm.Delete(key); err != nil {
+				c.logger.Error("Could not delete metadata key", "key", key, "error", err)
+				// We continue even if there's an error to attempt to delete as much as possible.
+			}
+		}
+
+		// 4. Finally, delete the tombstone key itself
+		if err := c.fsm.Delete(tombstoneKey); err != nil {
+			c.logger.Error("Could not delete tombstone key", "key", tombstoneKey, "error", err)
+		} else {
+			c.logger.Info("Successfully processed and deleted tombstone", "key_uuid", keyUUID)
 		}
 	}
 }

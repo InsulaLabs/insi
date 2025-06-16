@@ -113,10 +113,6 @@ func New(cfg *Config) (*OVM, error) {
 		}
 	}
 
-	if err := ovm.addObject(cfg.SetupCtx); err != nil {
-		return nil, err
-	}
-
 	return ovm, nil
 }
 
@@ -1021,71 +1017,4 @@ func (o *OVM) addTest(ctx context.Context) error {
 	})
 
 	return o.vm.Set("test", testObj)
-}
-
-func (o *OVM) addObject(ctx context.Context) error {
-
-	objectObj, err := o.vm.Object(`({})`)
-	if err != nil {
-		return fmt.Errorf("failed to create object object: %w", err)
-	}
-
-	objectObj.Set("upload", func(call otto.FunctionCall) otto.Value {
-		filePath, _ := call.Argument(0).ToString()
-		if filePath == "" {
-			panic(o.vm.MakeCustomError("ArgumentError", "filepath cannot be empty"))
-		}
-
-		resp, err := withRetries(o, ctx, func() (*client.ObjectUploadResponse, error) {
-			return o.insiClient.ObjectUpload(filePath)
-		})
-		if err != nil {
-			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
-		}
-		val, err := o.vm.ToValue(resp)
-		if err != nil {
-			panic(o.vm.MakeCustomError("InternalError", "failed to convert upload response to JS value: "+err.Error()))
-		}
-		return val
-	})
-
-	objectObj.Set("download", func(call otto.FunctionCall) otto.Value {
-		uuid, _ := call.Argument(0).ToString()
-		if uuid == "" {
-			panic(o.vm.MakeCustomError("ArgumentError", "uuid cannot be empty"))
-		}
-		outputPath, _ := call.Argument(1).ToString()
-		if outputPath == "" {
-			panic(o.vm.MakeCustomError("ArgumentError", "outputPath cannot be empty"))
-		}
-
-		_, err := withRetries(o, ctx, func() (any, error) {
-			return nil, o.insiClient.ObjectDownload(uuid, outputPath)
-		})
-		if err != nil {
-			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
-		}
-		return otto.Value{}
-	})
-
-	objectObj.Set("getHash", func(call otto.FunctionCall) otto.Value {
-		uuid, _ := call.Argument(0).ToString()
-		if uuid == "" {
-			panic(o.vm.MakeCustomError("ArgumentError", "uuid cannot be empty"))
-		}
-
-		resp, err := withRetries(o, ctx, func() (*client.ObjectHashResponse, error) {
-			return o.insiClient.ObjectGetHash(uuid)
-		})
-		if err != nil {
-			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
-		}
-		val, err := o.vm.ToValue(resp)
-		if err != nil {
-			panic(o.vm.MakeCustomError("InternalError", "failed to convert hash response to JS value: "+err.Error()))
-		}
-		return val
-	})
-
-	return o.vm.Set("object", objectObj)
 }
