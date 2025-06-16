@@ -120,9 +120,8 @@ func (c *Core) apiKeyCreateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK) // Explicitly set 200 OK
+	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		// Log error if encoding fails, though headers might have already been sent
 		c.logger.Error("Failed to encode API key create response", "error", err)
 	}
 }

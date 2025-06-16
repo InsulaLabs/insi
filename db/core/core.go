@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/InsulaLabs/insi/badge"
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/rft"
 	"github.com/InsulaLabs/insi/db/tkv"
-	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/fatih/color"
 	"github.com/gorilla/websocket"
 	"github.com/jellydator/ttlcache/v3"
@@ -375,14 +375,14 @@ func (c *Core) Run() {
 
 	stopWg := sync.WaitGroup{}
 
+	stopWg.Add(1)
 	go func() {
-		stopWg.Add(1)
 		defer stopWg.Done()
 		c.apiCache.Stop()
 	}()
 
+	stopWg.Add(1)
 	go func() {
-		stopWg.Add(1)
 		defer stopWg.Done()
 		for _, subscriber := range c.eventSubscribers {
 			for session := range subscriber {
@@ -396,8 +396,8 @@ func (c *Core) Run() {
 		c.eventSubscribers = make(map[string]map[*eventSession]bool)
 	}()
 
+	stopWg.Add(1)
 	go func() {
-		stopWg.Add(1)
 		defer stopWg.Done()
 		for _, limiter := range c.rateLimiters {
 			limiter.Stop()
@@ -408,20 +408,6 @@ func (c *Core) Run() {
 	stopWg.Wait()
 
 	c.logger.Info("Server stopped")
-}
-
-// Whenever a cache entry expires, not from deletion, but from TTL expiration this is called
-func (c *Core) OnTTLCacheEviction(key string, value string) error {
-
-	// Only leader should modify the counter on eviction
-	// the others can just let it die
-	if !c.fsm.IsLeader() {
-		fmt.Println("OnTTLCacheEviction not leader, skipping")
-		return nil
-	}
-
-	fmt.Println("OnTTLCacheEviction", key, value)
-	return nil
 }
 
 func (c *Core) ensureRootKeyTrackersExist() {
@@ -451,7 +437,7 @@ func (c *Core) ensureRootKeyTrackersExist() {
 			c.logger.Info(
 				"Key already exists",
 				"key",
-				strings.TrimSuffix(key, c.cfg.RootPrefix), // its a suffix, not a prefix
+				strings.TrimSuffix(key, c.cfg.RootPrefix),
 				"value",
 				val,
 			)
@@ -479,7 +465,7 @@ func (c *Core) ensureRootKeyTrackersExist() {
 			c.logger.Info(
 				"Key already exists",
 				"key",
-				strings.TrimSuffix(key, c.cfg.RootPrefix), // its a suffix, not a prefix
+				strings.TrimSuffix(key, c.cfg.RootPrefix),
 				"value",
 				val,
 			)

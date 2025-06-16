@@ -48,7 +48,7 @@ type MetaData struct {
 	SHA256           string    `json:"sha256"` // The SHA256 hash of the file.data file
 }
 
-type ObjectsPlugin struct {
+type ObjectsService struct {
 	logger *slog.Logger
 	prif   runtime.ServiceRuntimeIF
 
@@ -56,20 +56,20 @@ type ObjectsPlugin struct {
 	uploadDir string
 }
 
-var _ runtime.Service = &ObjectsPlugin{}
+var _ runtime.Service = &ObjectsService{}
 
-func New(logger *slog.Logger, uploadDir string) *ObjectsPlugin {
-	return &ObjectsPlugin{
+func New(logger *slog.Logger, uploadDir string) *ObjectsService {
+	return &ObjectsService{
 		logger:    logger,
 		uploadDir: uploadDir,
 	}
 }
 
-func (p *ObjectsPlugin) GetName() string {
+func (p *ObjectsService) GetName() string {
 	return "objects"
 }
 
-func (p *ObjectsPlugin) Init(prif runtime.ServiceRuntimeIF) *runtime.ServiceImplError {
+func (p *ObjectsService) Init(prif runtime.ServiceRuntimeIF) *runtime.ServiceImplError {
 	p.prif = prif
 	p.startedAt = time.Now()
 
@@ -85,7 +85,7 @@ func (p *ObjectsPlugin) Init(prif runtime.ServiceRuntimeIF) *runtime.ServiceImpl
 	return nil
 }
 
-func (p *ObjectsPlugin) GetRoutes() []runtime.ServiceRoute {
+func (p *ObjectsService) GetRoutes() []runtime.ServiceRoute {
 	return []runtime.ServiceRoute{
 		/*
 			IMPORTANT:
@@ -103,13 +103,13 @@ func (p *ObjectsPlugin) GetRoutes() []runtime.ServiceRoute {
 }
 
 // / -------- routes --------
-func (p *ObjectsPlugin) uploadBinaryHandler(w http.ResponseWriter, r *http.Request) {
+func (p *ObjectsService) uploadBinaryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	td, isValid := p.prif.RT_ValidateAuthToken(r, false)
+	td, isValid := p.prif.RT_ValidateAuthToken(r, true) // NOTE: ONLY ROOT CAN UPLOAD OBJECTS - SIZE LIMITS ON KEYS NOT RESPECTED BY OBJECTS SERVICE
 	if !isValid {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -270,14 +270,24 @@ func (p *ObjectsPlugin) uploadBinaryHandler(w http.ResponseWriter, r *http.Reque
 	// Store the SHA256 -> ObjectFileUUID mapping in the database
 	// This uses the already defined sha256Key
 	if err := p.prif.RT_Set(db_models.KVPayload{
-		Key:   sha256Key, // Key was defined earlier: plugin:objects:sha256:<calculatedSha256>
+		Key:   sha256Key,
 		Value: objectFileUUID,
 	}); err != nil {
-		// If this fails, we have an object but no quick SHA lookup.
-		// For now, log the error but don't delete the object as meta is already stored.
-		// Consider a rollback or cleanup strategy for production.
-		p.logger.Error("error storing sha256 to objectFileUUID mapping in database", "error", err, "sha256Key", sha256Key, "objectFileUUID", objectFileUUID)
-		// Not returning an error to client here as the primary object storage succeeded.
+
+		// On failure, we try again after a second
+		time.Sleep(time.Second * 1)
+
+		if err := p.prif.RT_Set(db_models.KVPayload{
+			Key:   sha256Key,
+			Value: objectFileUUID,
+		}); err != nil {
+			p.logger.Error(
+				"error storing sha256 to objectFileUUID mapping in database",
+				"error", err,
+				"sha256Key", sha256Key,
+				"objectFileUUID", objectFileUUID,
+			)
+		}
 	}
 
 	// Return success response
@@ -285,13 +295,13 @@ func (p *ObjectsPlugin) uploadBinaryHandler(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":           "OK",
-		"objectID":         objectFileUUID, // Return only the file's UUID part
+		"objectID":         objectFileUUID,
 		"clientSha256":     clientSha256,
 		"calculatedSha256": calculatedSha256,
 	})
 }
 
-func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Request) {
+func (p *ObjectsService) downloadBinaryHandler(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -310,12 +320,6 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Missing object ID in query parameter 'id'", http.StatusBadRequest)
 		return
 	}
-
-	// Reconstruct the full object name for path resolution using userUUID from token and objectFileUUID from client
-	fullObjectNameForPath := fmt.Sprintf("%s:%s", td.DataScopeUUID, objectFileUUID)
-	objectDir := filepath.Join(p.uploadDir, fullObjectNameForPath)
-	dataFile := filepath.Join(objectDir, "file.data")
-	// metaFile := filepath.Join(objectDir, "meta.json") // This is no longer used as we rely on metaDataFromDB
 
 	/*
 
@@ -342,9 +346,9 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Reconstruct the full object name for path resolution using the owner's UUID from metadata.
-	fullObjectNameForPath = fmt.Sprintf("%s:%s", metaDataFromDB.UserUUID, objectFileUUID)
-	objectDir = filepath.Join(p.uploadDir, fullObjectNameForPath)
-	dataFile = filepath.Join(objectDir, "file.data")
+	fullObjectNameForPath := fmt.Sprintf("%s:%s", metaDataFromDB.UserUUID, objectFileUUID)
+	objectDir := filepath.Join(p.uploadDir, fullObjectNameForPath)
+	dataFile := filepath.Join(objectDir, "file.data")
 
 	// If the object is hosted at a different node, redirect to the node that the object is hosted at
 	if metaDataFromDB.HostedAtNodeID != p.prif.RT_GetNodeID() {
@@ -379,7 +383,12 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 	// The metadata is already available in metaDataFromDB, no need to read local meta.json again.
 
 	if td.DataScopeUUID != metaDataFromDB.UserUUID {
-		p.logger.Warn("User UUID mismatch for object access", "tokenUserUUID", td.DataScopeUUID, "objectUserUUID", metaDataFromDB.UserUUID, "objectID", objectFileUUID)
+		p.logger.Warn(
+			"User UUID mismatch for object access",
+			"tokenUserUUID", td.DataScopeUUID,
+			"objectUserUUID", metaDataFromDB.UserUUID,
+			"objectID", objectFileUUID,
+		)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -397,7 +406,7 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 	defer file.Close()
 
 	originalFilename := metaDataFromDB.OriginalFilename
-	if originalFilename == "" { // Fallback filename
+	if originalFilename == "" {
 		originalFilename = "downloaded_object"
 	}
 
@@ -410,7 +419,7 @@ func (p *ObjectsPlugin) downloadBinaryHandler(w http.ResponseWriter, r *http.Req
 	http.ServeContent(w, r, originalFilename, metaDataFromDB.UploadDate, file)
 }
 
-func (p *ObjectsPlugin) getObjectHashHandler(w http.ResponseWriter, r *http.Request) {
+func (p *ObjectsService) getObjectHashHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -444,7 +453,12 @@ func (p *ObjectsPlugin) getObjectHashHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if td.DataScopeUUID != metaDataFromDB.UserUUID {
-		p.logger.Warn("User UUID mismatch for object hash access", "tokenUserUUID", td.DataScopeUUID, "objectUserUUID", metaDataFromDB.UserUUID, "objectID", objectFileUUID)
+		p.logger.Warn(
+			"User UUID mismatch for object hash access",
+			"tokenUserUUID", td.DataScopeUUID,
+			"objectUserUUID", metaDataFromDB.UserUUID,
+			"objectID", objectFileUUID,
+		)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -452,7 +466,7 @@ func (p *ObjectsPlugin) getObjectHashHandler(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"objectID": objectFileUUID, // Return only the file's UUID part
+		"objectID": objectFileUUID,
 		"sha256":   metaDataFromDB.SHA256,
 	})
 }

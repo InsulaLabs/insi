@@ -166,24 +166,11 @@ func (c *Core) decomposeKey(token string) (models.TokenData, error) {
 	return td, nil
 }
 
-/*
-
-	TODO:
-
-	 Right now we base off of entity for storage but they might not be unique
-
-	 We need to do UUID-focused storage for the api key -> token data mapping
-
-
-
-*/
-
 func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 
 	keyName = c.normalizeKeyName(keyName)
 	keyUUID := uuid.New().String()
 
-	// Use only the keyName (entity) for the FSM key, consistent with ValidateToken lookup
 	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, keyUUID)
 
 	td := models.TokenData{
@@ -263,25 +250,21 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 
 func (c *Core) deleteExistingApiKey(key string) error {
 
-	// WARNING: This must only be called by the LEADER NODE
 	if !c.fsm.IsLeader() {
 		return fmt.Errorf("this operation must be performed by the leader node")
 	}
 
-	td, err := c.decomposeKey(key) // We only need the entity to form the FSM key
+	td, err := c.decomposeKey(key)
 	if err != nil {
 		return fmt.Errorf("could not decompose key: %w", err)
 	}
 
-	// The FSM key is based on the entity (key name)
 	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
 
 	// TODO: Add the UUID to some preserved structure that we can have run delete iterations on
 	// to clean out old keys in a non-demending way
 
-	// Apply to FSM
 	if err := c.fsm.Delete(apiKeyFsmStorageKey); err != nil {
-		// Add FSM error handling if s.fsm.Delete can return an error
 		c.logger.Error("Failed to delete API key from FSM", "key", apiKeyFsmStorageKey, "error", err)
 		return fmt.Errorf("failed to delete API key from FSM for %s: %w", td.Entity, err)
 	}
@@ -294,9 +277,7 @@ func (c *Core) deleteExistingApiKey(key string) error {
 	c.fsm.Delete(WithApiKeyMaxDiskUsage(td.KeyUUID))
 	c.fsm.Delete(WithApiKeyMaxEvents(td.KeyUUID))
 	c.fsm.Delete(WithApiKeyMaxSubscriptions(td.KeyUUID))
-
 	c.apiCache.Delete(key)
-
 	return nil
 }
 
@@ -340,39 +321,6 @@ func (c *Core) decrypt(data []byte) ([]byte, error) {
 	}
 	return plaintext, nil
 }
-
-/*
-// DO NOT DELETE THIS CODE
-func (c *Core) compressFlate(data []byte) ([]byte, error) {
-	var b bytes.Buffer
-	fw, err := flate.NewWriter(&b, flate.BestCompression)
-	if err != nil {
-		return nil, err
-	}
-	_, err = fw.Write(data)
-	if err != nil {
-		return nil, err
-	}
-	err = fw.Close()
-	if err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
-}
-
-// DO NOT DELETE THIS CODE
-func (c *Core) decompressFlate(data []byte) (string, error) {
-	b := bytes.NewReader(data)
-	fr := flate.NewReader(b)
-	defer fr.Close()
-	var buf bytes.Buffer
-	_, err := io.Copy(&buf, fr)
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
-}
-*/
 
 // This is still a system level operation, but it is used by all endpoints
 // and is made public so it can be exposed to the plugin system for validation

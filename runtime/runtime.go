@@ -25,11 +25,11 @@ import (
 	"net"
 	"time"
 
+	"github.com/InsulaLabs/insi/badge"
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/db/core"
 	"github.com/InsulaLabs/insi/db/tkv"
-	"github.com/InsulaLabs/insula/security/badge"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
@@ -378,10 +378,6 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		service.Init(r)
 	}
 
-	// Run the service. This should block until the service is done or context is cancelled.
-	// We need to handle the completion of this service within the broader context
-	// of the runtime (e.g., if one node fails, does it affect others in host mode?).
-	// For now, each node runs somewhat independently until the main appCtx is cancelled.
 	r.service.Run()
 
 	nodeLogger.Info("Node instance shut down gracefully.")
@@ -453,12 +449,6 @@ func (r *Runtime) setupKeys(keyPath string) {
 		r.logger.Error("Failed to create keys directory", "path", keyPath, "error", err)
 		os.Exit(1)
 	}
-
-	/*
-
-		Generate self signed TLS certificate
-
-	*/
 
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

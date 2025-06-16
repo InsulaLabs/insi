@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/InsulaLabs/insula/security/badge"
+	"github.com/InsulaLabs/insi/badge"
 	"github.com/dgraph-io/badger/v3"
 )
 
