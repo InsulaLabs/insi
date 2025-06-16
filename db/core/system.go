@@ -17,13 +17,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Raft limits on single writes "should" be enforced by us here to max 1MB for congestion
-// If we re-think how we take data and sync in-addition to raft rather than ONLY with raft
-// then we can remove this or otherwise adjust it
-func sizeTooLargeForStorage(value string) bool {
-	return len(value) >= 1024*1024
-}
-
 // used by all endpoints to redirect WRITE related operations to the leader
 func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string) {
 
@@ -170,11 +163,12 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 
 	keyName = c.normalizeKeyName(keyName)
 	keyUUID := uuid.New().String()
+	dsUUID := uuid.New().String()
 
 	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, keyUUID)
 
 	td := models.TokenData{
-		DataScopeUUID: keyUUID,
+		DataScopeUUID: dsUUID,
 		KeyUUID:       keyUUID,
 	}
 
@@ -261,23 +255,26 @@ func (c *Core) deleteExistingApiKey(key string) error {
 
 	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
 
-	// TODO: Add the UUID to some preserved structure that we can have run delete iterations on
-	// to clean out old keys in a non-demending way
+	// Confirm its real and had a value
+	apiKeyFsmStorageValue, err := c.fsm.Get(apiKeyFsmStorageKey)
+	if err != nil {
+		return fmt.Errorf("could not get API key from FSM: %w", err)
+	}
+	if apiKeyFsmStorageValue == "" {
 
-	if err := c.fsm.Delete(apiKeyFsmStorageKey); err != nil {
-		c.logger.Error("Failed to delete API key from FSM", "key", apiKeyFsmStorageKey, "error", err)
-		return fmt.Errorf("failed to delete API key from FSM for %s: %w", td.Entity, err)
+		// If the key is not found, it means it was already deleted
+		return nil
 	}
 
-	c.fsm.Delete(WithApiKeyMemoryUsage(td.KeyUUID))
-	c.fsm.Delete(WithApiKeyDiskUsage(td.KeyUUID))
-	c.fsm.Delete(WithApiKeyEvents(td.KeyUUID))
-	c.fsm.Delete(WithApiKeySubscriptions(td.KeyUUID))
-	c.fsm.Delete(WithApiKeyMaxMemoryUsage(td.KeyUUID))
-	c.fsm.Delete(WithApiKeyMaxDiskUsage(td.KeyUUID))
-	c.fsm.Delete(WithApiKeyMaxEvents(td.KeyUUID))
-	c.fsm.Delete(WithApiKeyMaxSubscriptions(td.KeyUUID))
+	if err := c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyTombstone(td.KeyUUID),
+		Value: td.DataScopeUUID,
+	}); err != nil {
+		return fmt.Errorf("could not set tombstone for api key: %w", err)
+	}
+
 	c.apiCache.Delete(key)
+
 	return nil
 }
 
@@ -325,7 +322,7 @@ func (c *Core) decrypt(data []byte) ([]byte, error) {
 // This is still a system level operation, but it is used by all endpoints
 // and is made public so it can be exposed to the plugin system for validation
 // of tokens.
-func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData, bool) {
+func (c *Core) ValidateToken(r *http.Request, rootOnly AccessEntity) (models.TokenData, bool) {
 
 	authHeader := r.Header.Get("Authorization")
 	const bearerPrefix = "Bearer "
@@ -336,7 +333,7 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 		token = strings.TrimPrefix(authHeader, bearerPrefix)
 	}
 
-	if mustBeRoot {
+	if rootOnly {
 		if token != c.authToken {
 			return models.TokenData{
 				Entity:        EntityRoot,
@@ -362,6 +359,14 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 	td, err := c.decomposeKey(token)
 	if err != nil {
 		c.logger.Error("Could not decompose key", "error", err)
+		return models.TokenData{}, false
+	}
+
+	// Ensure theres no tombstone (deleted key)
+	tombstoneKey := WithApiKeyTombstone(td.KeyUUID)
+	_, err = c.fsm.Get(tombstoneKey)
+	if err == nil {
+		c.logger.Error("Tombstone found for key (marked for deletion)", "key", td.KeyUUID)
 		return models.TokenData{}, false
 	}
 
@@ -657,6 +662,23 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	td, err := c.decomposeKey(req.ApiKey)
 	if err != nil {
 		http.Error(w, "Invalid target key format", http.StatusBadRequest)
+		return
+	}
+
+	// Ensure theres no tombstone (deleted key)
+	tombstoneKey := WithApiKeyTombstone(td.KeyUUID)
+	_, err = c.fsm.Get(tombstoneKey)
+	if err == nil {
+		c.logger.Error("Tombstone found for key (marked for deletion)", "key", td.KeyUUID)
+
+		// We return the same as if the key did not exist to prevent
+		// leaking information about the key to the caller
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error_type": "API_KEY_NOT_FOUND",
+			"message":    "The specified API key does not exist or has been deleted.",
+		})
 		return
 	}
 

@@ -109,43 +109,21 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 		exists = true
 	}
 
-	// Get the limit for memory usage
-	limit, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
-	if err != nil {
-		c.logger.Error("Could not get limit for memory usage", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	limitInt, err := strconv.ParseInt(limit, 10, 64)
-	if err != nil {
-		c.logger.Error("Could not parse limit for memory usage", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+	var delta int64
+	if exists {
+		delta = int64(len(p.Value) - len(existingValue))
+	} else {
+		delta = int64(p.TotalLength())
 	}
 
-	// get the current memory usage
-	currentMemoryUsage, err := c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
-	if err != nil {
-		c.logger.Error("Could not get current memory usage", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	currentMemoryUsageInt, err := strconv.ParseInt(currentMemoryUsage, 10, 64)
-	if err != nil {
-		c.logger.Error("Could not parse current memory usage", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
-	if currentMemoryUsageInt+int64(p.TotalLength()) > limitInt {
+	ok, current, limit := c.CheckMemoryUsage(td, delta)
+	if !ok {
 		// Add headers to show them their current memory usage and the limit
-		w.Header().Set("X-Current-Memory-Usage", currentMemoryUsage)
+		w.Header().Set("X-Current-Memory-Usage", current)
 		w.Header().Set("X-Memory-Usage-Limit", limit)
 		http.Error(w, "Memory usage limit exceeded", http.StatusBadRequest)
 		return
 	}
-
-	// set the cache
 
 	err = c.fsm.SetCache(p)
 	if err != nil {
@@ -154,48 +132,39 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !exists {
-		if err := c.fsm.BumpInteger(WithApiKeyMemoryUsage(td.KeyUUID), p.TotalLength()); err != nil {
-			c.logger.Error("Could not bump integer via FSM for memory usage", "error", err)
-			// continue on, we don't want to block the request on this
-		}
-	} else {
-		if err := c.fsm.BumpInteger(
-			WithApiKeyMemoryUsage(td.KeyUUID),
-			CalculateDelta(models.KVPayload{Key: p.Key, Value: existingValue}, p)); err != nil {
-			c.logger.Error("Could not bump integer via FSM for memory usage", "error", err)
-			// continue on, we don't want to block the request on this
-		}
+	if err := c.AssignBytesToTD(td, StorageTargetMemory, delta); err != nil {
+		c.logger.Error("could not assign bytes to td for memory", "error", err)
+		// continue on, we don't want to block the request on this
 	}
 
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
+func (c *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	td, ok := s.ValidateToken(r, AnyUser())
+	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	s.logger.Debug("DeleteCacheHandler", "entity", td.Entity)
+	c.logger.Debug("DeleteCacheHandler", "entity", td.Entity)
 
-	if !s.fsm.IsLeader() {
-		s.redirectToLeader(w, r, r.URL.Path)
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path)
 		return
 	}
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.Error("Could not read body for delete cache request", "error", err)
+		c.logger.Error("Could not read body for delete cache request", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var p models.KeyPayload
 	if err := json.Unmarshal(bodyBytes, &p); err != nil {
-		s.logger.Error("Invalid JSON payload for delete cache request", "error", err)
+		c.logger.Error("Invalid JSON payload for delete cache request", "error", err)
 		http.Error(w, "Invalid JSON payload for delete cache: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -211,27 +180,27 @@ func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existingValue, err := s.fsm.GetCache(p.Key)
+	existingValue, err := c.fsm.GetCache(p.Key)
 	if err != nil {
 		if tkv.IsErrKeyNotFound(err) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		s.logger.Error("Could not get existing value for cache deletion", "error", err)
+		c.logger.Error("Could not get existing value for cache deletion", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
-	err = s.fsm.DeleteCache(p.Key)
+	err = c.fsm.DeleteCache(p.Key)
 	if err != nil {
-		s.logger.Error("Could not delete cache via FSM", "error", err)
+		c.logger.Error("Could not delete cache via FSM", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	size := len(p.Key) + len(existingValue)
-	if err := s.fsm.BumpInteger(WithApiKeyMemoryUsage(td.KeyUUID), -size); err != nil {
-		s.logger.Error("Could not bump integer via FSM for memory usage on delete", "error", err)
+	if err := c.AssignBytesToTD(td, StorageTargetMemory, -int64(size)); err != nil {
+		c.logger.Error("Could not bump integer via FSM for memory usage on delete", "error", err)
 		// Don't fail the whole request, but log it.
 	}
 
@@ -269,6 +238,23 @@ func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
 
 	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
+	if sizeTooLargeForStorage(p.Value) {
+		http.Error(w, "Value is too large", http.StatusBadRequest)
+		return
+	}
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
+
+	ok, current, limit := c.CheckMemoryUsage(td, int64(p.TotalLength()))
+	if !ok {
+		w.Header().Set("X-Current-Memory-Usage", current)
+		w.Header().Set("X-Memory-Usage-Limit", limit)
+		http.Error(w, "Memory usage limit exceeded", http.StatusBadRequest)
+		return
+	}
+
 	if err := c.fsm.SetCacheNX(p); err != nil {
 		var keyExistsErr *tkv.ErrKeyExists
 		if errors.As(err, &keyExistsErr) {
@@ -279,6 +265,12 @@ func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	if err := c.AssignBytesToTD(td, StorageTargetMemory, int64(p.TotalLength())); err != nil {
+		c.logger.Error("could not assign bytes to td for memory on setnx", "error", err)
+		// continue on, we don't want to block the request on this
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -312,6 +304,44 @@ func (c *Core) compareAndSwapCacheHandler(w http.ResponseWriter, r *http.Request
 
 	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
+	if sizeTooLargeForStorage(p.NewValue) {
+		http.Error(w, "Value is too large", http.StatusBadRequest)
+		return
+	}
+	if sizeTooLargeForStorage(p.Key) {
+		http.Error(w, "Key is too large", http.StatusBadRequest)
+		return
+	}
+
+	// First, check if the old value matches.
+	existingValue, err := c.fsm.GetCache(p.Key)
+	if err != nil {
+		var nfErr *tkv.ErrKeyNotFound
+		if errors.As(err, &nfErr) {
+			// Key doesn't exist, so CAS fails.
+			http.Error(w, "key does not exist", http.StatusPreconditionFailed)
+			return
+		}
+		c.logger.Error("Could not get existing value for CAS", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	if existingValue != p.OldValue {
+		http.Error(w, "conflict: value has changed", http.StatusConflict)
+		return
+	}
+
+	// If old values match, calculate the delta and check disk usage.
+	delta := int64(len(p.NewValue) - len(existingValue))
+	ok, current, limit := c.CheckMemoryUsage(td, delta)
+	if !ok {
+		w.Header().Set("X-Current-Memory-Usage", current)
+		w.Header().Set("X-Memory-Usage-Limit", limit)
+		http.Error(w, "Disk usage limit exceeded", http.StatusBadRequest)
+		return
+	}
+
 	if err := c.fsm.CompareAndSwapCache(p); err != nil {
 		var casFailedErr *tkv.ErrCASFailed
 		if errors.As(err, &casFailedErr) {
@@ -322,6 +352,13 @@ func (c *Core) compareAndSwapCacheHandler(w http.ResponseWriter, r *http.Request
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	// If CAS was successful, assign the new bytes.
+	if err := c.AssignBytesToTD(td, StorageTargetMemory, delta); err != nil {
+		c.logger.Error("could not assign bytes to td for memory on cas", "error", err)
+		// Don't fail the request, but log it.
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 

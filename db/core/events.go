@@ -10,6 +10,7 @@ import (
 
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/rft"
+	"github.com/InsulaLabs/insi/db/tkv"
 	"github.com/gorilla/websocket"
 )
 
@@ -382,39 +383,86 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit, err := c.fsm.Get(WithApiKeyMaxEvents(td.KeyUUID))
+	limitStr, err := c.fsm.Get(WithApiKeyMaxEvents(td.KeyUUID))
 	if err != nil {
-		c.logger.Error("Could not get limit for events", "error", err)
+		c.logger.Error("Could not get limit for events", "key", td.KeyUUID, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	limit, err := strconv.ParseInt(limitStr, 10, 64)
 	if err != nil {
-		c.logger.Error("Could not parse limit for events", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
-	// get the current events
-	currentEvents, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
-	if err != nil {
-		c.logger.Error("Could not get current events", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	currentEventsInt, err := strconv.ParseInt(currentEvents, 10, 64)
-	if err != nil {
-		c.logger.Error("Could not parse current events", "error", err)
+		c.logger.Error("Could not parse limit for events", "key", td.KeyUUID, "limit", limitStr, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
-	if currentEventsInt+1 > limitInt {
-		// Add headers to show them their current events and the limit
-		w.Header().Set("X-Current-Events", currentEvents)
-		w.Header().Set("X-Events-Limit", limit)
-		http.Error(w, "Events limit exceeded", http.StatusBadRequest)
+	currentEventsStr, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	if err != nil && !tkv.IsErrKeyNotFound(err) {
+		c.logger.Error("Could not get current events", "key", td.KeyUUID, "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
+	}
+	currentEvents, _ := strconv.ParseInt(currentEventsStr, 10, 64)
+
+	if currentEvents >= limit {
+		lastResetStr, err := c.fsm.Get(WithApiKeyEventLastReset(td.KeyUUID))
+		if err != nil {
+			if !tkv.IsErrKeyNotFound(err) {
+				c.logger.Error("Could not get last reset time", "key", td.KeyUUID, "error", err)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+
+			// Key not found: this is the first time they have hit the limit.
+			// Set the timestamp and reject this event. The reset cycle will start now.
+			if err := c.fsm.Set(models.KVPayload{
+				Key:   WithApiKeyEventLastReset(td.KeyUUID),
+				Value: time.Now().UTC().Format(time.RFC3339),
+			}); err != nil {
+				c.logger.Error("Could not set initial last reset time", "key", td.KeyUUID, "error", err)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("X-Current-Events", strconv.FormatInt(currentEvents, 10))
+			w.Header().Set("X-Events-Limit", limitStr)
+			http.Error(w, "Daily event limit reached. Please try again tomorrow.", http.StatusBadRequest)
+			return
+		}
+
+		lastResetTime, err := time.Parse(time.RFC3339, lastResetStr)
+		if err != nil {
+			c.logger.Error("Could not parse last reset time", "key", td.KeyUUID, "lastReset", lastResetStr, "error", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
+		if time.Since(lastResetTime) < 24*time.Hour {
+			w.Header().Set("X-Current-Events", strconv.FormatInt(currentEvents, 10))
+			w.Header().Set("X-Events-Limit", limitStr)
+			http.Error(w, "Daily event limit exceeded. Please try again tomorrow.", http.StatusBadRequest)
+			return
+		}
+
+		// It has been more than 24 hours. Reset the counters and proceed with the event.
+		// 1. Reset the usage tracker to "0". It will be bumped to 1 after this event is published.
+		if err := c.fsm.Set(models.KVPayload{
+			Key:   WithApiKeyEvents(td.KeyUUID),
+			Value: "0",
+		}); err != nil {
+			c.logger.Error("Could not reset events tracker", "key", td.KeyUUID, "error", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		// 2. Reset the last reset time to now.
+		if err := c.fsm.Set(models.KVPayload{
+			Key:   WithApiKeyEventLastReset(td.KeyUUID),
+			Value: time.Now().UTC().Format(time.RFC3339),
+		}); err != nil {
+			c.logger.Error("Could not set last reset time", "key", td.KeyUUID, "error", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Prefix the topic with the entity's UUID to scope it
@@ -433,6 +481,11 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	/*
+		Increment the current events tracker.
+		This will update the value considered the "usage" tracker,
+		which is what we compare their max limit to (set by admin)
+	*/
 	if err := c.fsm.BumpInteger(WithApiKeyEvents(td.KeyUUID), 1); err != nil {
 		c.logger.Error("Could not bump integer via FSM for events", "error", err)
 		// Don't fail the whole request, but log it.

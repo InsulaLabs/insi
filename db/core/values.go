@@ -182,37 +182,17 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 		exists = true
 	}
 
-	// Get the limit for disk usage
-	limit, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
-	if err != nil {
-		c.logger.Error("Could not get limit for disk usage", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	limitInt, err := strconv.ParseInt(limit, 10, 64)
-	if err != nil {
-		c.logger.Error("Could not parse limit for disk usage", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+	var delta int64
+	if exists {
+		delta = int64(len(p.Value) - len(existingValue))
+	} else {
+		delta = int64(p.TotalLength())
 	}
 
-	// get the current disk usage
-	currentDiskUsage, err := c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
-	if err != nil {
-		c.logger.Error("Could not get current disk usage", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	currentDiskUsageInt, err := strconv.ParseInt(currentDiskUsage, 10, 64)
-	if err != nil {
-		c.logger.Error("Could not parse current disk usage", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
-	if currentDiskUsageInt+int64(p.TotalLength()) > limitInt {
+	ok, current, limit := c.CheckDiskUsage(td, delta)
+	if !ok {
 		// Add headers to show them their current disk usage and the limit
-		w.Header().Set("X-Current-Disk-Usage", currentDiskUsage)
+		w.Header().Set("X-Current-Disk-Usage", current)
 		w.Header().Set("X-Disk-Usage-Limit", limit)
 		http.Error(w, "Disk usage limit exceeded", http.StatusBadRequest)
 		return
@@ -225,18 +205,9 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !exists {
-		if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), p.TotalLength()); err != nil {
-			c.logger.Error("Could not bump integer via FSM for disk usage", "error", err)
-			// continue on, we don't want to block the request on this
-		}
-	} else {
-		if err := c.fsm.BumpInteger(
-			WithApiKeyDiskUsage(td.KeyUUID),
-			CalculateDelta(models.KVPayload{Key: p.Key, Value: existingValue}, p)); err != nil {
-			c.logger.Error("Could not bump integer via FSM for disk usage", "error", err)
-			// continue on, we don't want to block the request on this
-		}
+	if err := c.AssignBytesToTD(td, StorageTargetDisk, delta); err != nil {
+		c.logger.Error("could not assign bytes to td for disk", "error", err)
+		// continue on, we don't want to block the request on this
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -304,7 +275,7 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Decrement memory usage
 	size := len(p.Key) + len(existingValue)
-	if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), -size); err != nil {
+	if err := c.AssignBytesToTD(td, StorageTargetDisk, -int64(size)); err != nil {
 		c.logger.Error("Could not bump integer via FSM for disk usage on delete", "error", err)
 		// Don't fail the whole request, but log it.
 	}
@@ -356,6 +327,14 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ok, current, limit := c.CheckDiskUsage(td, int64(p.TotalLength()))
+	if !ok {
+		w.Header().Set("X-Current-Disk-Usage", current)
+		w.Header().Set("X-Disk-Usage-Limit", limit)
+		http.Error(w, "Disk usage limit exceeded", http.StatusBadRequest)
+		return
+	}
+
 	err = c.fsm.SetNX(p)
 	if err != nil {
 		var keyExistsErr *tkv.ErrKeyExists
@@ -367,6 +346,12 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	if err := c.AssignBytesToTD(td, StorageTargetDisk, int64(p.TotalLength())); err != nil {
+		c.logger.Error("could not assign bytes to td for disk on setnx", "error", err)
+		// continue on, we don't want to block the request on this
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -414,6 +399,35 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// First, check if the old value matches.
+	existingValue, err := c.fsm.Get(p.Key)
+	if err != nil {
+		var nfErr *tkv.ErrKeyNotFound
+		if errors.As(err, &nfErr) {
+			// Key doesn't exist, so CAS fails.
+			http.Error(w, "key does not exist", http.StatusPreconditionFailed)
+			return
+		}
+		c.logger.Error("Could not get existing value for CAS", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	if existingValue != p.OldValue {
+		http.Error(w, "conflict: value has changed", http.StatusConflict)
+		return
+	}
+
+	// If old values match, calculate the delta and check disk usage.
+	delta := int64(len(p.NewValue) - len(existingValue))
+	ok, current, limit := c.CheckDiskUsage(td, delta)
+	if !ok {
+		w.Header().Set("X-Current-Disk-Usage", current)
+		w.Header().Set("X-Disk-Usage-Limit", limit)
+		http.Error(w, "Disk usage limit exceeded", http.StatusBadRequest)
+		return
+	}
+
 	err = c.fsm.CompareAndSwap(p)
 	if err != nil {
 		var casFailedErr *tkv.ErrCASFailed
@@ -425,5 +439,12 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	// If CAS was successful, assign the new bytes.
+	if err := c.AssignBytesToTD(td, StorageTargetDisk, delta); err != nil {
+		c.logger.Error("could not assign bytes to td for disk on cas", "error", err)
+		// Don't fail the request, but log it.
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
