@@ -146,12 +146,93 @@ function testIterate() {
     test.Yay("testIterate: PASS");
 }
 
+function testBump() {
+    console.log("running testBump");
+    var key = "vs_test_key_bump";
+
+    // Cleanup
+    vs.delete(key);
+    time.sleep(200);
+
+    // Test: Set initial value, bump up, bump down
+    vs.set(key, "10");
+    time.sleep(200);
+
+    vs.bump(key, 5); // 10 + 5 = 15
+    time.sleep(200);
+    var retrieved = vs.get(key);
+    if (retrieved !== "15") {
+        let errMsg = "vs.bump up failed: expected '15', got '" + retrieved + "'";
+        test.Aww(errMsg);
+        throw new Error(errMsg);
+    }
+
+    vs.bump(key, -10); // 15 - 10 = 5
+    time.sleep(200);
+    retrieved = vs.get(key);
+    if (retrieved !== "5") {
+        let errMsg = "vs.bump down failed: expected '5', got '" + retrieved + "'";
+        test.Aww(errMsg);
+        throw new Error(errMsg);
+    }
+
+    // Test bumping below zero (should be clamped at 0 by server)
+    vs.bump(key, -10); // 5 - 10 should be 0
+    time.sleep(200);
+    retrieved = vs.get(key);
+    if (retrieved !== "0") {
+        let errMsg = "vs.bump below zero failed: expected '0', got '" + retrieved + "'";
+        test.Aww(errMsg);
+        throw new Error(errMsg);
+    }
+    vs.delete(key);
+    time.sleep(200);
+
+    // Test: Bump non-existent key
+    var newKey = "vs_test_key_bump_new";
+    vs.delete(newKey); // ensure clean
+    time.sleep(200);
+
+    vs.bump(newKey, 100);
+    time.sleep(200);
+    retrieved = vs.get(newKey);
+    if (retrieved !== "100") {
+        let errMsg = "vs.bump on new key failed: expected '100', got '" + retrieved + "'";
+        test.Aww(errMsg);
+        throw new Error(errMsg);
+    }
+    vs.delete(newKey);
+    time.sleep(200);
+
+    // Test: Bump key with non-integer value (should throw)
+    var nonIntKey = "vs_test_key_bump_non_int";
+    vs.set(nonIntKey, "i-am-not-a-number");
+    time.sleep(200);
+
+    var didThrow = false;
+    try {
+        vs.bump(nonIntKey, 5);
+    } catch (e) {
+        didThrow = true;
+        console.log("Caught expected error for bumping non-integer value: " + e.message);
+    }
+    if (!didThrow) {
+        let errMsg = "vs.bump on a non-integer value should have thrown an error";
+        test.Aww(errMsg);
+        throw new Error(errMsg);
+    }
+    vs.delete(nonIntKey);
+
+    test.Yay("testBump: PASS");
+}
+
 
 try {
     testSetGetDelete();
     testSetNX();
     testCAS();
     testIterate();
+    testBump();
     0; // success
 } catch (e) {
     // The error is already reported by test.Aww in the functions.
