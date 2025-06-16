@@ -39,9 +39,9 @@ type Config struct {
 
 type eventCollector struct {
 	topic  string
-	events []any // Store the 'data' part of the event
+	events []any
 	lock   sync.Mutex
-	cancel context.CancelFunc // To stop the subscription goroutine
+	cancel context.CancelFunc
 }
 
 type OVM struct {
