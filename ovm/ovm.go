@@ -337,6 +337,25 @@ func (o *OVM) addValueStore(ctx context.Context) error {
 		return val
 	})
 
+	// Bump
+	vs.Set("bump", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		value, err := call.Argument(1).ToInteger()
+		if err != nil {
+			panic(o.vm.MakeCustomError("ArgumentError", "value to bump by must be an integer"))
+		}
+		if key == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
+		}
+		_, err = withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.Bump(key, int(value))
+		})
+		if err != nil {
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		return otto.Value{}
+	})
+
 	return o.vm.Set("vs", vs)
 }
 

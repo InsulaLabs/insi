@@ -149,6 +149,8 @@ func main() {
 		handleSetNX(cli, cmdArgs)
 	case "cas":
 		handleCAS(cli, cmdArgs)
+	case "bump":
+		handleBump(cli, cmdArgs)
 	case "delete":
 		handleDelete(cli, cmdArgs)
 	case "iterate":
@@ -181,6 +183,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("setnx"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cas"), color.CyanString("<key>"), color.CyanString("<old_value>"), color.CyanString("<new_value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("bump"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
@@ -349,6 +352,29 @@ func handleCAS(c *client.Client, args []string) {
 			logger.Error("CAS failed", "key", key, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		}
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleBump(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("bump: requires <key> <value>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	valueStr := args[1]
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		logger.Error("bump: value must be an integer", "error", err)
+		fmt.Fprintf(os.Stderr, "%s Value must be an integer: %v\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	err = c.Bump(key, value)
+	if err != nil {
+		logger.Error("Bump failed", "key", key, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
 	color.HiGreen("OK")
