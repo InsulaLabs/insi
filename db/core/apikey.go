@@ -27,6 +27,8 @@ const (
 	ApiTrackMaxDiskUsagePrefix     = "internal:api_key_max_disk_usage"
 	ApiTrackMaxEventsPrefix        = "internal:api_key_max_events"
 	ApiTrackMaxSubscriptionsPrefix = "internal:api_key_max_subscriptions"
+
+	ApiTrackEventLastResetPrefix = "internal:api_key_event_last_reset"
 )
 
 func WithApiKeyMemoryUsage(key string) string {
@@ -35,6 +37,10 @@ func WithApiKeyMemoryUsage(key string) string {
 
 func WithApiKeyDiskUsage(key string) string {
 	return fmt.Sprintf("%s:%s", ApiTrackDiskPrefix, key)
+}
+
+func WithApiKeyEventLastReset(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTrackEventLastResetPrefix, key)
 }
 
 func WithApiKeyEvents(key string) string {
