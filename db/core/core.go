@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -48,7 +49,7 @@ type Core struct {
 
 	startedAt time.Time
 
-	rateLimiters map[string]*rate.Limiter
+	rateLimiters map[string]*ttlcache.Cache[string, *rate.Limiter]
 
 	// WebSocket event handling
 	eventSubscribers     map[string]map[*eventSession]bool // Changed to store *eventSession
@@ -124,27 +125,36 @@ func New(
 	authToken := rootApiKey
 
 	// Initialize rate limiters
-	rateLimiters := make(map[string]*rate.Limiter)
+	rateLimiters := make(map[string]*ttlcache.Cache[string, *rate.Limiter])
 	rlLogger := logger.With("component", "rate-limiter")
 
+	makeCategoryRateLimiter := func(category string) *ttlcache.Cache[string, *rate.Limiter] {
+		cache := ttlcache.New[string, *rate.Limiter](
+			ttlcache.WithTTL[string, *rate.Limiter](time.Minute*1),
+			ttlcache.WithDisableTouchOnHit[string, *rate.Limiter](),
+		)
+		go cache.Start()
+		return cache
+	}
+
 	if rlConfig := clusterCfg.RateLimiters.Values; rlConfig.Limit > 0 {
-		rateLimiters["values"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rateLimiters["values"] = makeCategoryRateLimiter("values")
 		rlLogger.Info("Initialized rate limiter for 'values'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 	if rlConfig := clusterCfg.RateLimiters.Cache; rlConfig.Limit > 0 {
-		rateLimiters["cache"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rateLimiters["cache"] = makeCategoryRateLimiter("cache")
 		rlLogger.Info("Initialized rate limiter for 'cacheEndpoints'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 	if rlConfig := clusterCfg.RateLimiters.System; rlConfig.Limit > 0 {
-		rateLimiters["system"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rateLimiters["system"] = makeCategoryRateLimiter("system")
 		rlLogger.Info("Initialized rate limiter for 'system'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 	if rlConfig := clusterCfg.RateLimiters.Default; rlConfig.Limit > 0 {
-		rateLimiters["default"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rateLimiters["default"] = makeCategoryRateLimiter("default")
 		rlLogger.Info("Initialized rate limiter for 'default'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 	if rlConfig := clusterCfg.RateLimiters.Events; rlConfig.Limit > 0 {
-		rateLimiters["events"] = rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		rateLimiters["events"] = makeCategoryRateLimiter("events")
 		rlLogger.Info("Initialized rate limiter for 'events'", "limit", rlConfig.Limit, "burst", rlConfig.Burst)
 	}
 
@@ -191,18 +201,69 @@ func New(
 	return service, nil
 }
 
-func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Handler {
-	limiter, ok := c.rateLimiters[category]
-	if !ok {
-		// Fallback to default limiter if category-specific one isn't found or configured
-		limiter, ok = c.rateLimiters["default"]
-		if !ok { // If no default limiter, then no rate limiting for this handler
-			c.logger.Warn("No rate limiter configured for category and no default limiter present", "category", category)
-			return next
-		}
+func (c *Core) getRemoteAddress(r *http.Request) string {
+	remoteIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		c.logger.Debug("Could not split host and port from remote address", "remote_addr", r.RemoteAddr, "error", err)
+		remoteIP = r.RemoteAddr
 	}
 
+	trusted := make(map[string]struct{})
+	for _, proxy := range c.cfg.TrustedProxies {
+		trusted[proxy] = struct{}{}
+	}
+
+	for _, node := range c.cfg.Nodes {
+		nodeHost, _, err := net.SplitHostPort(node.HttpBinding)
+		if err != nil {
+			c.logger.Warn("Could not parse node httpBinding", "binding", node.HttpBinding, "error", err)
+			continue
+		}
+		trusted[nodeHost] = struct{}{}
+	}
+
+	if _, ok := trusted[remoteIP]; ok {
+		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+			ips := strings.Split(forwardedFor, ",")
+			clientIP := strings.TrimSpace(ips[0])
+			return clientIP
+		}
+	}
+	return remoteIP
+}
+
+func (c *Core) getRateLimiter(category string, r *http.Request) *rate.Limiter {
+	limiterCategory, ok := c.rateLimiters[category]
+	if !ok {
+		// Fallback to default if category not found, though this shouldn't happen with proper setup
+		limiterCategory = c.rateLimiters["default"]
+	}
+	ip := c.getRemoteAddress(r)
+	limiterItem := limiterCategory.Get(ip)
+	if limiterItem == nil {
+		var rlConfig config.RateLimiterConfig
+		switch category {
+		case "values":
+			rlConfig = c.cfg.RateLimiters.Values
+		case "cache":
+			rlConfig = c.cfg.RateLimiters.Cache
+		case "system":
+			rlConfig = c.cfg.RateLimiters.System
+		case "events":
+			rlConfig = c.cfg.RateLimiters.Events
+		default:
+			rlConfig = c.cfg.RateLimiters.Default
+		}
+		limiter := rate.NewLimiter(rate.Limit(rlConfig.Limit), rlConfig.Burst)
+		limiterItem = limiterCategory.Set(ip, limiter, time.Minute*1)
+	}
+	return limiterItem.Value()
+}
+
+func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Handler {
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limiter := c.getRateLimiter(category, r)
 		res := limiter.Reserve()
 		// If there's a delay, the request is rate-limited.
 		if delay := res.Delay(); delay > 0 {
