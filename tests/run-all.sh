@@ -7,7 +7,6 @@ cp test-cluster.yaml /tmp/insi-test-cluster/cluster.yaml
 cp tkv-event-tests/* /tmp/insi-test-cluster/
 cp tkv-data-tests/* /tmp/insi-test-cluster/
 cp tkv-cache-tests/* /tmp/insi-test-cluster/
-cp plugins/* /tmp/insi-test-cluster/
 cd /tmp/insi-test-cluster
 
 function start_insid() {
@@ -63,10 +62,6 @@ echo "✅ Success: get-set-delete.sh completed."
 echo "🚀 Running cache-cas-setnx.sh..."
 run_test_script /tmp/insi-test-cluster/cache-cas-setnx.sh
 echo "✅ Success: cache-cas-setnx.sh completed."
-
-echo "🚀 Running objects.sh..."
-run_test_script /tmp/insi-test-cluster/objects.sh
-echo "✅ Success: objects.sh completed."
 
 sleep 5 # wait for insid to finish stopping and logging out
 

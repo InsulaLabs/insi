@@ -72,12 +72,12 @@ func CalculateDelta(old models.KVPayload, new models.KVPayload) int {
 // These functions are meant to be used with ValidateToken. they seem silly but it helps
 // clarify the point of call when reasoning about the code
 
-func RootOnly() bool {
-	return true
+func RootOnly() AccessEntity {
+	return AccessEntityRoot
 }
 
-func AnyUser() bool {
-	return false
+func AnyUser() AccessEntity {
+	return AccessEntityAnyUser
 }
 
 func (c *Core) apiKeyCreateHandler(w http.ResponseWriter, r *http.Request) {

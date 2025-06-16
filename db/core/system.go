@@ -325,7 +325,7 @@ func (c *Core) decrypt(data []byte) ([]byte, error) {
 // This is still a system level operation, but it is used by all endpoints
 // and is made public so it can be exposed to the plugin system for validation
 // of tokens.
-func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData, bool) {
+func (c *Core) ValidateToken(r *http.Request, rootOnly AccessEntity) (models.TokenData, bool) {
 
 	authHeader := r.Header.Get("Authorization")
 	const bearerPrefix = "Bearer "
@@ -336,7 +336,7 @@ func (c *Core) ValidateToken(r *http.Request, mustBeRoot bool) (models.TokenData
 		token = strings.TrimPrefix(authHeader, bearerPrefix)
 	}
 
-	if mustBeRoot {
+	if rootOnly {
 		if token != c.authToken {
 			return models.TokenData{
 				Entity:        EntityRoot,

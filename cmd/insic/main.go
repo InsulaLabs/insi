@@ -165,8 +165,6 @@ func main() {
 		handleSubscribe(cli, cmdArgs)
 	case "api":
 		handleApi(cli, cmdArgs)
-	case "object":
-		handleObject(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -195,10 +193,6 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s\n", color.GreenString("ping"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("publish"), color.CyanString("<topic>"), color.CyanString("<data>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("subscribe"), color.CyanString("<topic>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<filepath>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("get"), color.CyanString("<key>"), color.CyanString("<output_filepath>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("delete"), color.CyanString("<key>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("object"), color.CyanString("list"), color.CyanString("[prefix]"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchset"), color.CyanString("<filepath.json>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchdelete"), color.CyanString("<filepath.json>"))
 
@@ -990,82 +984,4 @@ func handleApiSetLimits(c *client.Client, args []string) {
 	}
 
 	color.HiGreen("OK")
-}
-
-// --- Object Command Handlers ---
-func handleObject(c *client.Client, args []string) {
-	if len(args) < 1 {
-		logger.Error("object: requires <sub-command> [args...]")
-		printUsage()
-		os.Exit(1)
-	}
-	subCommand := args[0]
-	subArgs := args[1:]
-
-	switch subCommand {
-	case "upload":
-		handleObjectUpload(c, subArgs)
-	case "download":
-		handleObjectDownload(c, subArgs)
-	case "hash":
-		handleObjectHash(c, subArgs)
-	default:
-		logger.Error("object: unknown sub-command", "sub_command", subCommand)
-		printUsage()
-		os.Exit(1)
-	}
-}
-
-func handleObjectUpload(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("object upload: requires <filepath>")
-		printUsage()
-		os.Exit(1)
-	}
-	filePath := args[0]
-	resp, err := c.ObjectUpload(filePath)
-	if err != nil {
-		logger.Error("Object upload failed", "file", filePath, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	fmt.Printf("Object uploaded successfully:\n")
-	fmt.Printf("  ObjectID: %s\n", color.CyanString(resp.ObjectID))
-	if resp.Message != "" {
-		fmt.Printf("  Message: %s\n", resp.Message)
-	}
-}
-
-func handleObjectDownload(c *client.Client, args []string) {
-	if len(args) != 2 {
-		logger.Error("object download: requires <uuid> <output_path>")
-		printUsage()
-		os.Exit(1)
-	}
-	uuid := args[0]
-	outputPath := args[1]
-	err := c.ObjectDownload(uuid, outputPath)
-	if err != nil {
-		logger.Error("Object download failed", "uuid", uuid, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-}
-
-func handleObjectHash(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("object hash: requires <uuid>")
-		printUsage()
-		os.Exit(1)
-	}
-	uuid := args[0]
-	resp, err := c.ObjectGetHash(uuid)
-	if err != nil {
-		logger.Error("Object hash failed", "uuid", uuid, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	fmt.Printf("Object Hash:\n")
-	fmt.Printf("  ObjectID: %s\n", color.CyanString(resp.ObjectID))
-	fmt.Printf("  SHA256:   %s\n", color.GreenString(resp.Sha256))
 }
