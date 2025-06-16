@@ -11,20 +11,16 @@ import (
 	db_models "github.com/InsulaLabs/insi/db/models"
 )
 
-// ------------------------------------------------------------
-// PluginRuntimeIF implementation
-// ------------------------------------------------------------
-
 /*
 	A note on implementation decsisions:
 
 		Instead of having an interface that connects directlry to the
 		service internals that can put directly to the raft fsm, i opted
 		to use http clients to request onto the network. This is about
-		distributing the load of requests from all node plugins across
+		distributing the load of requests from all node services across
 		all nodes equally.
 
-		In a once node cluster, this is a bit of a waste of resources, but
+		In a one-node cluster, this is a bit of a waste of resources, but
 		consider the scale. In a 5 node cluster, inundating one server with
 		requests can cause lots of problems. With the client-map setup we
 		can distribute the load (reads) across all nodes
@@ -76,21 +72,17 @@ func (r *Runtime) RT_GetClientForToken(token string) (*client.Client, error) {
 	return r.GetClientForToken(token)
 }
 
-// ------------------------------------------------------------
-// PluginRuntimeIF implementation
-// ------------------------------------------------------------
-
 func (r *Runtime) RT_GetClusterConfig() *config.Cluster {
 	return r.clusterCfg
 }
 
-// A Special case command made for static plugin (no better way - only exception)
+// A Special case command made for static service (no better way - only exception)
 func (r *Runtime) RT_MountStatic(caller Service, fs http.Handler) error {
-	pluginName := strings.Trim(caller.GetName(), "/")
-	if pluginName == "" {
-		return fmt.Errorf("plugin name cannot be empty for mounting static files")
+	serviceName := strings.Trim(caller.GetName(), "/")
+	if serviceName == "" {
+		return fmt.Errorf("service name cannot be empty for mounting static files")
 	}
-	mountPathPrefix := fmt.Sprintf("/%s/", pluginName)
+	mountPathPrefix := fmt.Sprintf("/%s/", serviceName)
 
 	strippedHandler := http.StripPrefix(mountPathPrefix, fs)
 	return r.service.AddHandler(mountPathPrefix, strippedHandler)

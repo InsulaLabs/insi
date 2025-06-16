@@ -26,25 +26,24 @@ var (
 	logger     *slog.Logger
 	configPath string
 	clusterCfg *config.Cluster
-	targetNode string // Added for --target flag
-	useRootKey bool   // Added for --root flag
+	targetNode string // --target flag
+	useRootKey bool   // --root flag
 )
 
 func init() {
 	// Initialize logger
 	logOpts := &slog.HandlerOptions{
-		Level: slog.LevelInfo, // Default level, can be configured further
+		Level: slog.LevelInfo,
 	}
 	handler := slog.NewTextHandler(os.Stderr, logOpts)
 	logger = slog.New(handler)
 
 	flag.StringVar(&configPath, "config", "cluster.yaml", "Path to the cluster configuration file")
-	flag.StringVar(&targetNode, "target", "", "Target node ID (e.g., node0, node1). Defaults to DefaultLeader in config.") // Added target flag
+	flag.StringVar(&targetNode, "target", "", "Target node ID (e.g., node0, node1). Defaults to DefaultLeader in config.")
 	flag.BoolVar(&useRootKey, "root", false, "Use the root key for the cluster. Defaults to false.")
 }
 
 func loadConfig(path string) (*config.Cluster, error) {
-	// logger.Info("Loading configuration", "path", path) // Reduced verbosity
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
@@ -55,7 +54,6 @@ func loadConfig(path string) (*config.Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config data from %s: %w", path, err)
 	}
-	// logger.Info("Configuration loaded successfully") // Reduced verbosity
 	return &cfg, nil
 }
 
@@ -75,8 +73,6 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 	}
 
 	clientLogger := logger.WithGroup("client")
-
-	// clientLogger.Info("Client is using instanceSecret for token generation", "secret_value", cfg.InstanceSecret) // Too verbose for default
 
 	var apiKey string
 
@@ -111,12 +107,11 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.HttpBinding, err)
 	}
-	// logger.Info("Client created successfully", "target_node", nodeToConnect, "hostport", nodeDetails.HttpBinding) // Reduced verbosity
 	return c, nil
 }
 
 func main() {
-	flag.Parse() // Parse command-line flags first
+	flag.Parse()
 
 	var err error
 	clusterCfg, err = loadConfig(configPath)
@@ -137,7 +132,7 @@ func main() {
 	// Default client (usually to DefaultLeader)
 	// For 'join', a specific client will be created.
 	var cli *client.Client
-	if command != "join" { // 'join' command handles its client creation specifically
+	if command != "join" {
 		cli, err = getClient(clusterCfg, targetNode)
 		if err != nil {
 			logger.Error("Failed to initialize default API client", "error", err)
@@ -182,7 +177,7 @@ func main() {
 func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage: insic [flags] <command> [args...]\n")
 	fmt.Fprintf(os.Stderr, "Flags:\n")
-	flag.PrintDefaults() // Uses default formatting, consider customizing if needed
+	flag.PrintDefaults()
 	fmt.Fprintf(os.Stderr, "\nCommands:\n")
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
@@ -213,6 +208,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.CyanString("[key_value]"), color.YellowString("Get limits. If key provided, gets for that key (--root required)."))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N"), color.YellowString("--root flag usually required"))
+
 	// Object Commands
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("upload"), color.CyanString("<filepath>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("download"), color.CyanString("<uuid>"), color.CyanString("<output_path>"))
@@ -229,8 +225,6 @@ func handlePublish(c *client.Client, args []string) {
 	dataStr := args[1]
 
 	var dataToPublish any
-	// Try to unmarshal the data argument as JSON.
-	// If it fails, we assume it's a plain string.
 	var jsonData any
 	if err := json.Unmarshal([]byte(dataStr), &jsonData); err == nil {
 		dataToPublish = jsonData
@@ -244,7 +238,6 @@ func handlePublish(c *client.Client, args []string) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	// logger.Info("Publish successful", "topic", topic) // Redundant with "OK"
 	color.HiGreen("OK")
 }
 
@@ -259,14 +252,13 @@ func handleSubscribe(c *client.Client, args []string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
 		sig := <-sigChan
 		logger.Info("Received signal, requesting WebSocket closure...", "signal", sig.String())
-		cancel() // Cancel the context to signal SubscribeToEvents to close
+		cancel()
 	}()
 
 	cb := func(data any) {
@@ -276,13 +268,11 @@ func handleSubscribe(c *client.Client, args []string) {
 	logger.Info("Attempting to subscribe to events", "topic", color.CyanString(topic))
 	err := c.SubscribeToEvents(topic, ctx, cb)
 	if err != nil {
-		// context.Canceled is an expected error on graceful shutdown, others are not.
 		if err == context.Canceled {
 			logger.Info("Subscription cancelled gracefully.", "topic", color.CyanString(topic))
 		} else {
 			logger.Error("Subscription failed", "topic", topic, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-			// os.Exit(1) // Exiting here might be too abrupt if there's a non-critical error during teardown.
 		}
 	}
 	logger.Info("Subscription process finished.", "topic", color.CyanString(topic))
@@ -299,7 +289,6 @@ func handleGet(c *client.Client, args []string) {
 	value, err := c.Get(key)
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
-			// logger.Error("Get failed: Key not found", "key", key) // Already handled by specific message
 			fmt.Fprintf(os.Stderr, "%s Key '%s' not found.\n", color.RedString("Error:"), color.CyanString(key))
 		} else {
 			logger.Error("Get failed", "key", key, "error", err)
@@ -323,7 +312,6 @@ func handleSet(c *client.Client, args []string) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	// logger.Info("Set successful", "key", key) // Redundant
 	color.HiGreen("OK")
 }
 
@@ -357,7 +345,12 @@ func handleCAS(c *client.Client, args []string) {
 	err := c.CompareAndSwap(key, oldValue, newValue)
 	if err != nil {
 		if errors.Is(err, client.ErrConflict) {
-			fmt.Fprintf(os.Stderr, "%s Compare-and-swap failed for key '%s'. The current value does not match the expected old value.\n", color.RedString("Conflict:"), color.CyanString(key))
+			fmt.Fprintf(
+				os.Stderr,
+				"%s Compare-and-swap failed for key '%s'. The current value does not match the expected old value.\n",
+				color.RedString("Conflict:"),
+				color.CyanString(key),
+			)
 		} else {
 			logger.Error("CAS failed", "key", key, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
@@ -376,14 +369,10 @@ func handleDelete(c *client.Client, args []string) {
 	key := args[0]
 	err := c.Delete(key)
 	if err != nil {
-		// The client.Delete method already returns nil if the key is not found (matching server behavior).
-		// So, specific client.ErrKeyNotFound check might not be triggered here unless client.Delete changes.
-		// However, maintaining consistency in error logging if other types of errors occur.
 		logger.Error("Delete failed", "key", key, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	// logger.Info("Delete successful", "key", key) // Redundant
 	color.HiGreen("OK")
 }
 
@@ -395,7 +384,7 @@ func handleIterate(c *client.Client, args []string) {
 	}
 	iterType := args[0]
 	value := args[1]
-	offset, limit := 0, 100 // Defaults
+	offset, limit := 0, 100
 
 	var err error
 	if len(args) > 2 {
@@ -436,7 +425,6 @@ func handleIterate(c *client.Client, args []string) {
 		}
 		os.Exit(1)
 	}
-	// logger.Info("Iterate successful", "type", iterType, "value", value, "offset", offset, "limit", limit, "count", len(results))
 	for _, item := range results {
 		fmt.Println(item)
 	}
@@ -476,11 +464,15 @@ func handleCache(c *client.Client, args []string) {
 		value, err := c.GetCache(key)
 		if err != nil {
 			if errors.Is(err, client.ErrKeyNotFound) {
-				// logger.Error("Cache get failed: Key not found", "key", key) // Already handled
-				fmt.Fprintf(os.Stderr, "%s Key '%s' not found in cache.\n", color.RedString("Error:"), color.CyanString(key))
+				fmt.Fprintf(
+					os.Stderr,
+					"%s Key '%s' not found in cache.\n",
+					color.RedString("Error:"),
+					color.CyanString(key),
+				)
 			} else {
 				logger.Error("Cache get failed", "key", key, "error", err)
-				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err) // May include "not found" type errors from client
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 			}
 			os.Exit(1)
 		}
@@ -491,20 +483,23 @@ func handleCache(c *client.Client, args []string) {
 			printUsage()
 			os.Exit(1)
 		}
-		key := subArgs[0] // redefine key for this scope
+		key := subArgs[0]
 		err := c.DeleteCache(key)
 		if err != nil {
 			if errors.Is(err, client.ErrKeyNotFound) {
-				logger.Info("Cache delete: Key not found, no action taken.", "key", key) // Info level as it's not strictly an error
-				fmt.Fprintf(os.Stderr, "%s Key '%s' not found in cache. Nothing to delete.\n", color.YellowString("Warning:"), color.CyanString(key))
-				// os.Exit(0) // Or exit successfully
+				logger.Info("Cache delete: Key not found, no action taken.", "key", key)
+				fmt.Fprintf(
+					os.Stderr,
+					"%s Key '%s' not found in cache. Nothing to delete.\n",
+					color.YellowString("Warning:"),
+					color.CyanString(key),
+				)
 			} else {
 				logger.Error("Cache delete failed", "key", key, "error", err)
 				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 			}
-			os.Exit(1) // Exit with error unless it was ErrKeyNotFound and we decided to exit 0 above
+			os.Exit(1)
 		}
-		// logger.Info("Cache delete successful", "key", key) // Redundant
 		color.HiGreen("OK")
 	case "setnx":
 		if len(subArgs) != 2 {
@@ -534,7 +529,12 @@ func handleCache(c *client.Client, args []string) {
 		err := c.CompareAndSwapCache(key, oldValue, newValue)
 		if err != nil {
 			if errors.Is(err, client.ErrConflict) {
-				fmt.Fprintf(os.Stderr, "%s Cache compare-and-swap failed for key '%s'.\n", color.RedString("Precondition Failed:"), color.CyanString(key))
+				fmt.Fprintf(
+					os.Stderr,
+					"%s Cache compare-and-swap failed for key '%s'.\n",
+					color.RedString("Precondition Failed:"),
+					color.CyanString(key),
+				)
 			} else {
 				logger.Error("Cache CAS failed", "key", key, "error", err)
 				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
@@ -559,7 +559,7 @@ func handleCacheIterate(c *client.Client, args []string) {
 	}
 	iterType := args[0]
 	value := args[1]
-	offset, limit := 0, 100 // Defaults
+	offset, limit := 0, 100
 
 	var err error
 	if len(args) > 2 {
@@ -623,13 +623,25 @@ func handleJoin(args []string) {
 
 	followerDetails, ok := clusterCfg.Nodes[followerNodeID]
 	if !ok {
-		logger.Error("Follower node ID not found in configuration", "follower_node_id", followerNodeID)
-		fmt.Fprintf(os.Stderr, "%s Follower node ID '%s' not found in configuration.\n", color.RedString("Error:"), color.CyanString(followerNodeID))
+		logger.Error(
+			"Follower node ID not found in configuration",
+			"follower_node_id", followerNodeID,
+		)
+		fmt.Fprintf(
+			os.Stderr,
+			"%s Follower node ID '%s' not found in configuration.\n",
+			color.RedString("Error:"),
+			color.CyanString(followerNodeID),
+		)
 		os.Exit(1)
 	}
 
-	// The Join method in the client expects the Raft address of the follower
-	logger.Info("Attempting to join follower", "follower_id", color.CyanString(followerNodeID), "follower_raft_addr", followerDetails.RaftBinding, "via_leader", color.CyanString(leaderNodeID))
+	logger.Info(
+		"Attempting to join follower",
+		"follower_id", color.CyanString(followerNodeID),
+		"follower_raft_addr", followerDetails.RaftBinding,
+		"via_leader", color.CyanString(leaderNodeID),
+	)
 
 	err = leaderClient.Join(followerNodeID, followerDetails.RaftBinding)
 	if err != nil {
@@ -637,7 +649,11 @@ func handleJoin(args []string) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	logger.Info("Join successful", "leader_node", color.CyanString(leaderNodeID), "follower_node", color.CyanString(followerNodeID))
+	logger.Info(
+		"Join successful",
+		"leader_node", color.CyanString(leaderNodeID),
+		"follower_node", color.CyanString(followerNodeID),
+	)
 	color.HiGreen("OK")
 }
 
@@ -653,8 +669,6 @@ func handlePing(c *client.Client, args []string) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	// logger.Info("Ping successful") // Redundant with response
-	// Pretty print the map
 	fmt.Println("Ping Response:")
 	for k, v := range resp {
 		fmt.Printf("  %s: %s\n", color.CyanString(k), v)
@@ -764,23 +778,36 @@ func handleApiVerify(args []string) {
 	}
 	apiKeyToVerify := args[0]
 
-	// We need to create a new client instance with the provided API key.
-	// Re-use logic from getClient for node details but override API key.
-	nodeToConnect := targetNode // Use the global targetNode flag
+	nodeToConnect := targetNode
 	if nodeToConnect == "" {
 		if clusterCfg.DefaultLeader == "" {
-			logger.Error("api verify: targetNode is empty and no DefaultLeader is set in config")
-			fmt.Fprintf(os.Stderr, "%s Target node must be specified via --target or DefaultLeader in config.\n", color.RedString("Error:"))
+			logger.Error(
+				"api verify: targetNode is empty and no DefaultLeader is set in config",
+			)
+			fmt.Fprintf(
+				os.Stderr,
+				"%s Target node must be specified via --target or DefaultLeader in config.\n",
+				color.RedString("Error:"),
+			)
 			os.Exit(1)
 		}
 		nodeToConnect = clusterCfg.DefaultLeader
-		logger.Info("No target node specified for verify, using DefaultLeader", "node_id", color.CyanString(nodeToConnect))
+		logger.Info(
+			"No target node specified for verify, using DefaultLeader", "node_id", color.CyanString(nodeToConnect),
+		)
 	}
 
 	nodeDetails, ok := clusterCfg.Nodes[nodeToConnect]
 	if !ok {
-		logger.Error("api verify: node ID not found in configuration", "node_id", nodeToConnect)
-		fmt.Fprintf(os.Stderr, "%s Node ID '%s' not found in configuration.\n", color.RedString("Error:"), color.CyanString(nodeToConnect))
+		logger.Error(
+			"api verify: node ID not found in configuration", "node_id", nodeToConnect,
+		)
+		fmt.Fprintf(
+			os.Stderr,
+			"%s Node ID '%s' not found in configuration.\n",
+			color.RedString("Error:"),
+			color.CyanString(nodeToConnect),
+		)
 		os.Exit(1)
 	}
 
@@ -794,7 +821,7 @@ func handleApiVerify(args []string) {
 				ClientDomain: nodeDetails.ClientDomain,
 			},
 		},
-		ApiKey:     apiKeyToVerify, // Use the key passed as argument
+		ApiKey:     apiKeyToVerify,
 		SkipVerify: clusterCfg.ClientSkipVerify,
 		Logger:     verifyClientLogger,
 	})

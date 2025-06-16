@@ -173,12 +173,6 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 
-	/*
-
-		NOTE: Due to limiting restrictions, caches have been set
-			  to root-only operations
-
-	*/
 	td, ok := s.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -210,7 +204,6 @@ func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Key) {
@@ -236,7 +229,6 @@ func (s *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decrement memory usage
 	size := len(p.Key) + len(existingValue)
 	if err := s.fsm.BumpInteger(WithApiKeyMemoryUsage(td.KeyUUID), -size); err != nil {
 		s.logger.Error("Could not bump integer via FSM for memory usage on delete", "error", err)

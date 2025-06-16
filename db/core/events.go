@@ -18,6 +18,7 @@ const (
 	pongWait       = 60 * time.Second    // Time allowed to read the next pong message from the peer.
 	pingPeriod     = (pongWait * 9) / 10 // Send pings to peer with this period. Must be less than pongWait.
 	maxMessageSize = 512                 // Maximum message size allowed from peer.
+	sendBufferSize = 256                 // Buffer size for the send channel.
 )
 
 // A session of someone connected wanting to receive events from one of the topics
@@ -58,12 +59,6 @@ func (es *eventSubsystem) Receive(topic string, data any) error {
 		Topic: topic,
 		Data:  data,
 	}
-
-	// The service's event loop (to be created) will read from es.eventCh
-	// and then use es.service.dispatchToSubscribers.
-	// For now, let's assume a simple direct dispatch or a new method in service.
-	// This design means the FSM (via rft.EventReceiverIF) signals the service,
-	// and the service handles the fan-out.
 
 	// Send to the service's central event channel first.
 	// A separate goroutine in the Service will pick this up and dispatch.
@@ -118,7 +113,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 	session := &eventSession{
 		conn:    conn,
 		topic:   prefixedTopic,
-		send:    make(chan []byte, 256), // Buffered channel
+		send:    make(chan []byte, sendBufferSize),
 		service: c,
 		keyUUID: td.KeyUUID,
 	}
@@ -138,20 +133,17 @@ func (c *Core) registerSubscriber(session *eventSession) {
 	defer c.wsConnectionLock.Unlock()
 
 	if c.activeWsConnections >= int32(c.cfg.Sessions.MaxConnections) {
-		// This is a secondary check, primary check is in eventSubscribeHandler
-		// If reached here, it's a race condition or an issue. Log and don't register.
 		c.logger.Error("Attempted to register subscriber when max connections already met or exceeded", "active", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections)
-		// We should not proceed to add the session if the limit is hit. Close the connection that was just upgraded.
-		go session.conn.Close() // Close it in a goroutine to avoid blocking here
+		go session.conn.Close()
 		return
 	}
 	c.activeWsConnections++
 	c.logger.Info("Incremented active WebSocket connections", "count", c.activeWsConnections)
 
 	if _, ok := c.eventSubscribers[session.topic]; !ok {
-		c.eventSubscribers[session.topic] = make(map[*eventSession]bool) // Inner map stores *eventSession
+		c.eventSubscribers[session.topic] = make(map[*eventSession]bool)
 	}
-	c.eventSubscribers[session.topic][session] = true // Store the session itself
+	c.eventSubscribers[session.topic][session] = true
 
 	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), 1); err != nil {
 		c.logger.Error("Could not bump integer via FSM for subscribers", "error", err)
@@ -226,7 +218,7 @@ func (c *Core) dispatchEventToSubscribersViaSessionSend(event models.Event) {
 	c.eventSubscribersLock.RLock()
 	defer c.eventSubscribersLock.RUnlock()
 
-	sessionsForTopic, ok := c.eventSubscribers[event.Topic] // Changed variable name for clarity
+	sessionsForTopic, ok := c.eventSubscribers[event.Topic]
 	if !ok {
 		c.logger.Debug("No WebSocket subscribers for topic in dispatchViaSessionSend", "topic", event.Topic)
 		return
@@ -244,51 +236,12 @@ func (c *Core) dispatchEventToSubscribersViaSessionSend(event models.Event) {
 		c.logger.Error("Failed to marshal event for WebSocket dispatch (dispatchViaSessionSend)", "topic", event.Topic, "error", err)
 		return
 	}
-
-	// POTENTIAL BOTTLENECK:
-	// The for loop in dispatchEventToSubscribersViaSessionSend iterates sequentially
-	// through all subscribers for a given topic to queue the event message.
-	// If an event has a very large number of subscribers (e.g., thousands),
-	// this sequential iteration, even with non-blocking sends to session.send,
-	// could make dispatchEventToSubscribersViaSessionSend take a significant
-	// amount of time to complete. This, in turn, can slow down the main
-	// eventProcessingLoop, potentially causing the central eventCh to fill up if
-	// events are being produced by the FSM at a high rate.
-	//
-	// POTENTIAL SOLUTION OVERVIEW:
-	// To parallelize the queuing of messages to subscriber send channels, one could
-	// consider:
-	// 1. Launching a new goroutine for each subscriber within the loop:
-	//    for session := range sessionsForTopic {
-	//        go func(s *eventSession, msg []byte) {
-	//            select {
-	//            case s.send <- msg:
-	//                // log success
-	//            default:
-	//                // log drop, potentially close connection
-	//            }
-	//        }(session, message) // Pass session and message as args
-	//    }
-	//    This has the overhead of goroutine creation/scheduling for each subscriber.
-	// 2. Using a fixed-size worker pool: Dispatch tasks (to send a message to a
-	//    specific session's 'send' channel) to a pool of worker goroutines. This
-	//    can limit the number of concurrent dispatch operations and reuse goroutines.
-	//
-	// Such changes would need careful consideration of goroutine management, error
-	// handling, and potential impacts on overall system complexity and resource usage.
-
-	for session := range sessionsForTopic { // session is now *eventSession correctly
+	for session := range sessionsForTopic {
 		select {
 		case session.send <- message:
 			c.logger.Debug("Message queued for WebSocket subscriber", "topic", event.Topic, "remote_addr", session.conn.RemoteAddr())
 		default:
 			c.logger.Warn("Subscriber send channel full, message dropped", "topic", event.Topic, "remote_addr", session.conn.RemoteAddr())
-			// To prevent a stuck writer, we might close the connection here.
-			// This will trigger readPump to exit and unregister.
-			// Be careful with closing from a different goroutine.
-			// A common pattern is to launch the close in a new goroutine to avoid deadlock if session.conn.Close() blocks
-			// or if unregisterSubscriber (called by readPump) tries to acquire the same lock.
-			// go session.conn.Close() // Consider implications
 		}
 	}
 }
@@ -301,37 +254,45 @@ func (s *eventSession) readPump() {
 	defer func() {
 		s.service.unregisterSubscriber(s)
 		s.conn.Close()
-		s.service.logger.Info("WebSocket readPump finished, connection closed and unregistered", "remote_addr", s.conn.RemoteAddr(), "topic", s.topic)
+		s.service.logger.Info(
+			"WebSocket readPump finished, connection closed and unregistered",
+			"remote_addr", s.conn.RemoteAddr(),
+			"topic", s.topic,
+		)
 	}()
 	s.conn.SetReadLimit(maxMessageSize)
-	// s.conn.SetReadDeadline(time.Now().Add(pongWait)) // Set initial read deadline
-	// As per user request: "does _not_ timeout from inactivity" for the client-side subscription
-	// So, we should not set a read deadline here based on pongs, or make it very long.
-	// The client will send pings, and our pong handler (if any, or default) will reply.
-	// If the client doesn't send pings and the connection drops, ReadMessage will error.
-	s.conn.SetReadDeadline(time.Time{}) // No read deadline initially.
+	s.conn.SetReadDeadline(time.Time{})
 
-	s.conn.SetPongHandler(func(string) error { // APP defined pong
+	s.conn.SetPongHandler(func(string) error {
 		s.service.logger.Debug("WebSocket pong received", "remote_addr", s.conn.RemoteAddr())
-		// s.conn.SetReadDeadline(time.Now().Add(pongWait)) // Reset read deadline
-		s.conn.SetReadDeadline(time.Time{}) // Keep no read deadline
+		s.conn.SetReadDeadline(time.Time{})
 		return nil
 	})
 
 	for {
-		// If SetReadDeadline is time.Time{}, ReadMessage will block indefinitely until a message or error.
 		_, message, err := s.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
-				s.service.logger.Error("WebSocket read error", "remote_addr", s.conn.RemoteAddr(), "topic", s.topic, "error", err)
+			if websocket.IsUnexpectedCloseError(
+				err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
+				s.service.logger.Error(
+					"WebSocket read error",
+					"remote_addr",
+					s.conn.RemoteAddr(), "topic",
+					s.topic, "error", err,
+				)
 			} else {
-				s.service.logger.Info("WebSocket connection closed", "remote_addr", s.conn.RemoteAddr(), "topic", s.topic, "error", err)
+				s.service.logger.Info(
+					"WebSocket connection closed",
+					"remote_addr", s.conn.RemoteAddr(),
+					"topic", s.topic, "error", err,
+				)
 			}
-			break // Exit loop on error (including clean close)
+			break
 		}
-		// Messages from client on this WebSocket are typically ignored for a subscribe-only connection.
-		// We could handle client-side pings if they come as messages, or other control messages.
-		s.service.logger.Debug("Received message from client on event WebSocket (typically ignored)", "remote_addr", s.conn.RemoteAddr(), "message_type", message)
+		s.service.logger.Debug(
+			"Received message from client on event WebSocket (typically ignored)",
+			"remote_addr", s.conn.RemoteAddr(),
+			"message_type", message)
 	}
 }
 
@@ -345,7 +306,6 @@ func (s *eventSession) writePump() {
 		ticker.Stop()
 		s.conn.Close() // Ensure connection is closed if writePump exits
 		s.service.logger.Info("WebSocket writePump finished", "remote_addr", s.conn.RemoteAddr(), "topic", s.topic)
-		// Unregistration should happen in readPump's defer, or if writePump errors significantly.
 	}()
 	for {
 		select {
@@ -369,14 +329,6 @@ func (s *eventSession) writePump() {
 				// Do not return here, try to close writer
 			}
 
-			// Add queued chat messages to the current WebSocket message.
-			// This is an optimization for chatty applications, may not be strictly needed here.
-			// n := len(s.send)
-			// for i := 0; i < n; i++ {
-			//  w.Write([]byte{'\n'})
-			// 	w.Write(<-s.send)
-			// }
-
 			if err := w.Close(); err != nil {
 				s.service.logger.Error("WebSocket writer close error", "remote_addr", s.conn.RemoteAddr(), "topic", s.topic, "error", err)
 				return
@@ -390,10 +342,7 @@ func (s *eventSession) writePump() {
 			}
 		case <-s.service.appCtx.Done():
 			s.service.logger.Info("Service context done, closing WebSocket connection from writePump", "remote_addr", s.conn.RemoteAddr())
-			// Don't send CloseMessage here if readPump will also do it on appCtx.Done via its own select.
-			// Or, ensure only one path sends it. Typically, readPump closing triggers unregister, which closes send chan, which makes writePump exit.
 			return
-
 		}
 	}
 }
@@ -470,7 +419,12 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Prefix the topic with the entity's UUID to scope it
 	prefixedTopic := fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Topic)
-	c.logger.Debug("Publishing event with prefixed topic", "original_topic", p.Topic, "prefixed_topic", prefixedTopic, "entity_uuid", td.DataScopeUUID)
+	c.logger.Debug(
+		"Publishing event with prefixed topic",
+		"original_topic", p.Topic,
+		"prefixed_topic", prefixedTopic,
+		"entity_uuid", td.DataScopeUUID,
+	)
 
 	err = c.fsm.Publish(prefixedTopic, p.Data)
 	if err != nil {

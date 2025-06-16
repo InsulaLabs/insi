@@ -31,7 +31,7 @@ type WebServerIF interface {
 	RT_IsRoot(db_models.TokenData) bool
 }
 
-// The restricted interfaces that permit the plugin
+// The restricted interfaces that permit the service
 // implementation to interact with the runtime.
 type ServiceRuntimeIF interface {
 	RT_IsRunning() bool
@@ -47,8 +47,8 @@ type ServiceRuntimeIF interface {
 }
 
 /*
-Set of errors that the plugin implementation can return
-to calls into the Plugin interface to inform the runtime
+Set of errors that the service implementation can return
+to calls into the Service interface to inform the runtime
 of specfic failures and hint towards possible recovery.
 */
 type ServiceImplError struct {
@@ -64,13 +64,13 @@ func (e *ServiceImplError) Unwrap() error {
 }
 
 /*
-The plugin interface is the entry point for the plugin
+The service interface is the entry point for the service
 implementation to interact with the runtime.
 
-Plugins are loaded at runtime and are expected to implement
+Services are loaded at runtime and are expected to implement
 this interface.
 
-Plugins are expected to be loaded from the plugin directory.
+Services are expected to be loaded from the service directory.
 */
 
 type ServiceRoute struct {
@@ -90,22 +90,22 @@ Service paths are then mounted to
 
 	   and the Handler is the http.Handler that will be used to handle the request.
 
-Using the sif interface the route internals can interface with the runtime
+Using the ServiceRuntimeIF interface the route internals can interface with the runtime
 to perform runtime operations upon request.
 */
 
 type Service interface {
 
-	// Used to mount the plugin to the runtime.
-	// and must be unique to the mounted plugins.
+	// Used to mount the service to the runtime.
+	// and must be unique to the mounted services.
 	GetName() string
 
-	// Inform the plugin that the runtime is about to start
+	// Inform the service that the runtime is about to start
 	// and to be ready to handle requests.
 	Init(sif ServiceRuntimeIF) *ServiceImplError
 
 	// Get all of the http routes and their rate limit specifications
-	// for the plugin.
+	// for the service.
 	// We _could_ allow them to limit themselves but if we force
 	// them to specify we know they will defintely be limited (good.)
 	GetRoutes() []ServiceRoute
