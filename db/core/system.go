@@ -17,13 +17,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Raft limits on single writes "should" be enforced by us here to max 1MB for congestion
-// If we re-think how we take data and sync in-addition to raft rather than ONLY with raft
-// then we can remove this or otherwise adjust it
-func sizeTooLargeForStorage(value string) bool {
-	return len(value) >= 1024*1024
-}
-
 // used by all endpoints to redirect WRITE related operations to the leader
 func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string) {
 

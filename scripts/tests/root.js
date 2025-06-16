@@ -20,6 +20,7 @@ function main() {
         "admin_test",
         "access_failures_test",
         "disk_limit",
+        "cache_limit",
         "memory_limit",
         "event_limit"
     ];

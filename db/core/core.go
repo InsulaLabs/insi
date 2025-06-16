@@ -37,6 +37,8 @@ const (
 	DiskUsageKey   = "disk-usage"
 )
 
+const MaxValueSize = 1024 * 1024 // 1MB
+
 var ErrDiskUsageLimitExceeded = fmt.Errorf("disk usage limit exceeded")
 var ErrMemoryUsageLimitExceeded = fmt.Errorf("memory usage limit exceeded")
 
@@ -491,90 +493,92 @@ func (c *Core) ensureRootKeyTrackersExist() {
 	}
 }
 
-func (c *Core) AssignBytesToTD(td models.TokenData, target StorageTarget, bytes int64) error {
-
-	switch target {
-	case StorageTargetDisk:
-		return c.assignBytesToTDDisk(td, bytes)
-	case StorageTargetMemory:
-		return c.assignBytesToTDMemory(td, bytes)
-	default:
-		return fmt.Errorf("invalid storage target: %s", target)
-	}
-}
-
-func (c *Core) assignBytesToTDDisk(td models.TokenData, bytes int64) error {
-
-	// Get the limit for disk usage
+func (c *Core) CheckDiskUsage(td models.TokenData, bytes int64) (ok bool, current string, limit string) {
 	limit, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
 	if err != nil {
 		c.logger.Error("Could not get limit for disk usage", "error", err)
-		return err
+		return false, "0", "0"
 	}
 	limitInt, err := strconv.ParseInt(limit, 10, 64)
 	if err != nil {
 		c.logger.Error("Could not parse limit for disk usage", "error", err)
-		return err
+		return false, "0", limit
 	}
 
-	// get the current disk usage
-	currentDiskUsage, err := c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
+	current, err = c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
 	if err != nil {
-		c.logger.Error("Could not get current disk usage", "error", err)
-		return err
+		if tkv.IsErrKeyNotFound(err) {
+			current = "0"
+		} else {
+			c.logger.Error("Could not get current disk usage", "error", err)
+			return false, "0", limit
+		}
 	}
-	currentDiskUsageInt, err := strconv.ParseInt(currentDiskUsage, 10, 64)
+	currentInt, err := strconv.ParseInt(current, 10, 64)
 	if err != nil {
 		c.logger.Error("Could not parse current disk usage", "error", err)
-		return err
+		return false, current, limit
 	}
 
-	if currentDiskUsageInt+bytes > limitInt {
-		return fmt.Errorf("disk usage limit exceeded")
+	if currentInt+bytes > limitInt {
+		return false, current, limit
 	}
 
-	if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), int(bytes)); err != nil {
-		c.logger.Error("Could not bump disk usage", "error", err)
-		return err
+	return true, current, limit
+}
+
+func (c *Core) CheckMemoryUsage(td models.TokenData, bytes int64) (ok bool, current string, limit string) {
+	limit, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get limit for memory usage", "error", err)
+		return false, "0", "0"
+	}
+	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse limit for memory usage", "error", err)
+		return false, "0", limit
 	}
 
+	current, err = c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
+	if err != nil {
+		if tkv.IsErrKeyNotFound(err) {
+			current = "0"
+		} else {
+			c.logger.Error("Could not get current memory usage", "error", err)
+			return false, "0", limit
+		}
+	}
+	currentInt, err := strconv.ParseInt(current, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current memory usage", "error", err)
+		return false, current, limit
+	}
+
+	if currentInt+bytes > limitInt {
+		return false, current, limit
+	}
+
+	return true, current, limit
+}
+
+func (c *Core) AssignBytesToTD(td models.TokenData, target StorageTarget, bytes int64) error {
+	switch target {
+	case StorageTargetDisk:
+		if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), int(bytes)); err != nil {
+			c.logger.Error("Could not bump disk usage", "error", err)
+			return err
+		}
+	case StorageTargetMemory:
+		if err := c.fsm.BumpInteger(WithApiKeyMemoryUsage(td.KeyUUID), int(bytes)); err != nil {
+			c.logger.Error("Could not bump memory usage", "error", err)
+			return err
+		}
+	default:
+		return fmt.Errorf("invalid storage target: %s", target)
+	}
 	return nil
 }
 
-func (c *Core) assignBytesToTDMemory(td models.TokenData, bytes int64) error {
-
-	// Get the limit for memory usage
-	limit, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
-	if err != nil {
-		c.logger.Error("Could not get limit for disk usage", "error", err)
-		return err
-	}
-	limitInt, err := strconv.ParseInt(limit, 10, 64)
-	if err != nil {
-		c.logger.Error("Could not parse limit for disk usage", "error", err)
-		return err
-	}
-
-	// get the current memory usage
-	currentMemoryUsage, err := c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
-	if err != nil {
-		c.logger.Error("Could not get current memory usage", "error", err)
-		return err
-	}
-	currentMemoryUsageInt, err := strconv.ParseInt(currentMemoryUsage, 10, 64)
-	if err != nil {
-		c.logger.Error("Could not parse current memory usage", "error", err)
-		return err
-	}
-
-	if currentMemoryUsageInt+bytes > limitInt {
-		return fmt.Errorf("memory usage limit exceeded")
-	}
-
-	if err := c.fsm.BumpInteger(WithApiKeyMemoryUsage(td.KeyUUID), int(bytes)); err != nil {
-		c.logger.Error("Could not bump memory usage", "error", err)
-		return err
-	}
-
-	return nil
+func sizeTooLargeForStorage(value interface{}) bool {
+	return int64(len(fmt.Sprintf("%v", value))) > MaxValueSize
 }
