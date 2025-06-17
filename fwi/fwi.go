@@ -285,9 +285,11 @@ func (f *fwiImpl) CreateEntity(
 	}
 
 	cfgc := client.Config{
-		ApiKey:    key.Key,
-		Endpoints: f.insiCfg.Endpoints,
-		Logger:    f.insiCfg.Logger.WithGroup(name),
+		ApiKey:         key.Key,
+		Endpoints:      f.insiCfg.Endpoints,
+		Logger:         f.insiCfg.Logger.WithGroup(name),
+		ConnectionType: f.insiCfg.ConnectionType,
+		SkipVerify:     f.insiCfg.SkipVerify,
 	}
 
 	entityClient, err := client.NewClient(&cfgc)
@@ -458,7 +460,22 @@ func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, er
 		}
 
 		if er.Name == name {
-			entityClient := f.rootInsiClient.DeriveWithApiKey(er.Name, er.Key)
+			// When finding an entity, we must create a new client for it
+			// with the correct API key and configuration inherited from the FWI instance.
+			cfgc := client.Config{
+				ApiKey:         er.Key,
+				Endpoints:      f.insiCfg.Endpoints,
+				Logger:         f.insiCfg.Logger.WithGroup(er.Name),
+				ConnectionType: f.insiCfg.ConnectionType,
+				SkipVerify:     f.insiCfg.SkipVerify,
+			}
+			entityClient, err := client.NewClient(&cfgc)
+			if err != nil {
+				// Log the error but continue, as other entities might be valid.
+				f.logger.Error("Failed to create client for found entity", "name", er.Name, "error", err)
+				continue
+			}
+
 			entity := &entityImpl{
 				name:       er.Name,
 				insiClient: entityClient,
