@@ -195,6 +195,16 @@ type Client struct {
 	redirectCoutner atomic.Uint64
 }
 
+func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
+	return &Client{
+		baseURL:         c.baseURL,
+		httpClient:      c.httpClient,
+		apiKey:          apiKey,
+		logger:          c.logger.WithGroup(name),
+		redirectCoutner: atomic.Uint64{},
+	}
+}
+
 // NewClient creates a new insi API client.
 func NewClient(cfg *Config) (*Client, error) {
 
@@ -297,6 +307,10 @@ func NewClient(cfg *Config) (*Client, error) {
 // GetApiKey returns the API key used by the client.
 func (c *Client) GetApiKey() string {
 	return c.apiKey
+}
+
+func (c *Client) GetBaseURL() *url.URL {
+	return c.baseURL
 }
 
 func (c *Client) GetAccumulatedRedirects() uint64 {

@@ -298,7 +298,6 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 
 	kvm, err := tkv.New(tkv.Config{
-		Identity:       b,
 		Logger:         nodeLogger.WithGroup("tkv"),
 		BadgerLogLevel: r.currentLogLevel,
 		Directory:      nodeDir,
@@ -382,6 +381,10 @@ func (r *Runtime) Wait() {
 func (r *Runtime) Stop() {
 	r.logger.Info("Runtime stop requested.")
 	r.appCancel()
+}
+
+func (r *Runtime) GetRootApiKey() string {
+	return r.rootApiKey
 }
 
 func (r *Runtime) GetHomeDir() string {

@@ -4,12 +4,10 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/InsulaLabs/insi/badge"
 	"github.com/dgraph-io/badger/v3"
 )
 
 type Config struct {
-	Identity       badge.Badge
 	Logger         *slog.Logger
 	BadgerLogLevel slog.Level
 	Directory      string
