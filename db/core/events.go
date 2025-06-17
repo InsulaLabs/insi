@@ -146,9 +146,10 @@ func (c *Core) registerSubscriber(session *eventSession) {
 	}
 	c.eventSubscribers[session.topic][session] = true
 
-	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), 1); err != nil {
-		c.logger.Error("Could not bump integer via FSM for subscribers", "error", err)
-		// Don't fail the registration, but log it.
+	if c.fsm.IsLeader() {
+		if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), 1); err != nil {
+			c.logger.Error("Could not bump integer via FSM for subscribers", "error", err)
+		}
 	}
 
 	c.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
@@ -166,9 +167,11 @@ func (c *Core) unregisterSubscriber(session *eventSession) {
 			delete(c.eventSubscribers[session.topic], session)
 			c.logger.Info("Subscriber unregistered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 
-			if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), -1); err != nil {
-				c.logger.Error("Could not bump integer via FSM for subscribers on unregister", "error", err)
-				// Don't fail, just log.
+			if c.fsm.IsLeader() {
+				if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), -1); err != nil {
+					c.logger.Error("Could not bump integer via FSM for subscribers on unregister", "error", err)
+					// Don't fail, just log.
+				}
 			}
 
 			// Decrement connection count only if we actually found and removed the session
