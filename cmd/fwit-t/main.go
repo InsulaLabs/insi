@@ -416,7 +416,7 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 		switch op {
 		case 0: // Set Value
 			start = time.Now()
-			err = valueStore.Set(key, value)
+			err = valueStore.Set(ctx, key, value)
 			duration = time.Since(start)
 			if err == nil {
 				atomic.AddInt64(&metrics.Sets, 1)
@@ -429,7 +429,7 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 			}
 		case 1: // Get Value
 			start = time.Now()
-			_, err = valueStore.Get(key)
+			_, err = valueStore.Get(ctx, key)
 			duration = time.Since(start)
 			if err == nil || err == client.ErrKeyNotFound {
 				atomic.AddInt64(&metrics.Gets, 1)
@@ -437,7 +437,7 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 			}
 		case 2: // Set Cache
 			start = time.Now()
-			err = cacheStore.Set(key, value)
+			err = cacheStore.Set(ctx, key, value)
 			duration = time.Since(start)
 			if err == nil {
 				atomic.AddInt64(&metrics.Caches, 1)
@@ -445,7 +445,7 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 			}
 		case 3: // Publish Event
 			start = time.Now()
-			err = events.Publish("stress-topic", map[string]string{"key": key, "value": value})
+			err = events.Publish(ctx, "stress-topic", map[string]string{"key": key, "value": value})
 			duration = time.Since(start)
 			if err == nil {
 				atomic.AddInt64(&metrics.Publishes, 1)
@@ -453,7 +453,7 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 			}
 		case 4: // Bump
 			start = time.Now()
-			err = entity.Bump("stress-counter", 1)
+			err = entity.Bump(ctx, "stress-counter", 1)
 			duration = time.Since(start)
 			if err == nil {
 				atomic.AddInt64(&metrics.Bumps, 1)
@@ -464,7 +464,7 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 				idx := rand.Intn(len(knownKeys))
 				keyToDelete := knownKeys[idx]
 				start = time.Now()
-				err = valueStore.Delete(keyToDelete)
+				err = valueStore.Delete(ctx, keyToDelete)
 				duration = time.Since(start)
 				if err == nil {
 					atomic.AddInt64(&metrics.Deletes, 1)

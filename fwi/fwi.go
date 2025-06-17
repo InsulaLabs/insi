@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/db/models"
+	"github.com/fatih/color"
 	"github.com/google/uuid"
 )
 
@@ -22,20 +25,65 @@ var (
 	errEntityNotFound = errors.New("entity not found")
 )
 
+func withRetries[R any](ctx context.Context, logger *slog.Logger, fn func() (R, error)) (R, error) {
+	for {
+		result, err := fn()
+		if err == nil {
+			return result, nil // Success
+		}
+
+		var rateLimitErr *client.ErrRateLimited
+		if errors.As(err, &rateLimitErr) {
+			logger.Warn("FWI operation rate limited, sleeping", "duration", rateLimitErr.RetryAfter)
+			select {
+			case <-time.After(rateLimitErr.RetryAfter):
+				logger.Debug("Finished rate limit sleep, retrying operation.")
+				continue // Slept, continue to retry
+			case <-ctx.Done():
+				logger.Error("Context cancelled during rate limit sleep", "error", ctx.Err())
+				var zero R
+				return zero, fmt.Errorf("operation cancelled during rate limit sleep: %w", ctx.Err())
+			}
+		}
+
+		// It's some other error, just return it. FWI is a library, so it should propagate them.
+		var zero R
+		return zero, err
+	}
+}
+
+func withRetriesVoid(ctx context.Context, logger *slog.Logger, fn func() error) error {
+	_, err := withRetries(ctx, logger, func() (any, error) {
+		return nil, fn()
+	})
+	return err
+}
+
 // Abstracts
 type KV interface {
-	Get(key string) (string, error)
-	Set(key string, value string) error
-	IterateKeys(prefix string, offset, limit int) ([]string, error)
-	Delete(key string) error
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key string, value string) error
+	IterateKeys(ctx context.Context, prefix string, offset, limit int) ([]string, error)
+	Delete(ctx context.Context, key string) error
 
-	CompareAndSwap(key string, oldValue, newValue string) error
-	SetNX(key string, value string) error
+	CompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error
+	SetNX(ctx context.Context, key string, value string) error
+
+	// Adds a scope to the key to scope the data operations to a sub-scope
+	// When the system scopes data to an entity (internally) it prefixes by a magic hidden string,
+	// we will call "U" All items on the entity are scoped as:
+	// U:values U:cache U:events in their respective stores
+	// Push-scope is an abstraction layer specific to the fwi package that adds another scope to the kv
+	// prefix on the underlying KV storage (cache or values)
+	// i.e:			U.scope.scope0.scope1.scope2.key etc
+	PushScope(scope string)
+
+	PopScope() // if scope prefix is empty its a no-op
 }
 
 type Events interface {
 	Subscribe(ctx context.Context, topic string, onEvent func(data any)) error
-	Publish(topic string, data any) error
+	Publish(ctx context.Context, topic string, data any) error
 }
 
 type Entity interface {
@@ -44,7 +92,7 @@ type Entity interface {
 	GetUUID() string
 
 	// Use the insi client to bump an integer value
-	Bump(key string, value int) error
+	Bump(ctx context.Context, key string, value int) error
 	GetValueStore() KV // Get the value store for the entity
 	GetCacheStore() KV // Get the cache store for the entity
 	GetEvents() Events // Get the event pub/sub for the entity
@@ -89,18 +137,24 @@ type entityImpl struct {
 	name       string
 	insiClient *client.Client
 	record     *entityRecord
+	logger     *slog.Logger
 }
 
 type valueStoreImpl struct {
 	insiClient *client.Client
+	scope      string
+	logger     *slog.Logger
 }
 
 type cacheStoreImpl struct {
 	insiClient *client.Client
+	scope      string
+	logger     *slog.Logger
 }
 
 type eventsImpl struct {
 	insiClient *client.Client
+	logger     *slog.Logger
 }
 
 type fwiImpl struct {
@@ -132,8 +186,10 @@ func (e *entityImpl) GetKey() string {
 	return e.insiClient.GetApiKey()
 }
 
-func (e *entityImpl) Bump(key string, value int) error {
-	return e.insiClient.Bump(key, value)
+func (e *entityImpl) Bump(ctx context.Context, key string, value int) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.Bump(key, value)
+	})
 }
 
 func (e *entityImpl) GetUUID() string {
@@ -143,67 +199,117 @@ func (e *entityImpl) GetUUID() string {
 func (e *entityImpl) GetValueStore() KV {
 	return &valueStoreImpl{
 		insiClient: e.insiClient,
+		logger:     e.logger.WithGroup("vs"),
 	}
 }
 
 func (e *entityImpl) GetCacheStore() KV {
 	return &cacheStoreImpl{
 		insiClient: e.insiClient,
+		logger:     e.logger.WithGroup("cache"),
 	}
 }
 
 func (e *entityImpl) GetEvents() Events {
 	return &eventsImpl{
 		insiClient: e.insiClient,
+		logger:     e.logger.WithGroup("events"),
 	}
 }
 
-func (e *valueStoreImpl) Get(key string) (string, error) {
-	return e.insiClient.Get(key)
+func assembleKey(scope, key string) string {
+	if scope == "" {
+		return key
+	}
+	return fmt.Sprintf("%s.%s", scope, key)
 }
 
-func (e *valueStoreImpl) Set(key string, value string) error {
-	return e.insiClient.Set(key, value)
+func (e *valueStoreImpl) Get(ctx context.Context, key string) (string, error) {
+	return withRetries(ctx, e.logger, func() (string, error) {
+		return e.insiClient.Get(assembleKey(e.scope, key))
+	})
 }
 
-func (e *valueStoreImpl) IterateKeys(prefix string, offset, limit int) ([]string, error) {
-	return e.insiClient.IterateByPrefix(prefix, offset, limit)
+func (e *valueStoreImpl) Set(ctx context.Context, key string, value string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.Set(assembleKey(e.scope, key), value)
+	})
 }
 
-func (e *valueStoreImpl) Delete(key string) error {
-	return e.insiClient.Delete(key)
+func (e *valueStoreImpl) IterateKeys(ctx context.Context, prefix string, offset, limit int) ([]string, error) {
+	return withRetries(ctx, e.logger, func() ([]string, error) {
+		return e.insiClient.IterateByPrefix(assembleKey(e.scope, prefix), offset, limit)
+	})
 }
 
-func (e *valueStoreImpl) CompareAndSwap(key string, oldValue, newValue string) error {
-	return e.insiClient.CompareAndSwap(key, oldValue, newValue)
+func (e *valueStoreImpl) Delete(ctx context.Context, key string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.Delete(assembleKey(e.scope, key))
+	})
 }
 
-func (e *valueStoreImpl) SetNX(key string, value string) error {
-	return e.insiClient.SetNX(key, value)
+func (e *valueStoreImpl) CompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.CompareAndSwap(assembleKey(e.scope, key), oldValue, newValue)
+	})
 }
 
-func (e *cacheStoreImpl) Get(key string) (string, error) {
-	return e.insiClient.GetCache(key)
+func (e *valueStoreImpl) SetNX(ctx context.Context, key string, value string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.SetNX(assembleKey(e.scope, key), value)
+	})
 }
 
-func (e *cacheStoreImpl) Set(key string, value string) error {
-	return e.insiClient.SetCache(key, value)
+func (e *valueStoreImpl) PushScope(scope string) {
+	e.scope = fmt.Sprintf("%s.%s", e.scope, scope)
 }
 
-func (e *cacheStoreImpl) IterateKeys(prefix string, offset, limit int) ([]string, error) {
-	return e.insiClient.IterateCacheByPrefix(prefix, offset, limit)
+func (e *valueStoreImpl) PopScope() {
+	e.scope = strings.TrimSuffix(e.scope, fmt.Sprintf(".%s", e.scope))
 }
 
-func (e *cacheStoreImpl) Delete(key string) error {
-	return e.insiClient.DeleteCache(key)
+func (e *cacheStoreImpl) Get(ctx context.Context, key string) (string, error) {
+	return withRetries(ctx, e.logger, func() (string, error) {
+		return e.insiClient.GetCache(assembleKey(e.scope, key))
+	})
 }
 
-func (e *cacheStoreImpl) CompareAndSwap(key string, oldValue, newValue string) error {
-	return e.insiClient.CompareAndSwapCache(key, oldValue, newValue)
+func (e *cacheStoreImpl) Set(ctx context.Context, key string, value string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.SetCache(assembleKey(e.scope, key), value)
+	})
 }
 
-func (e *cacheStoreImpl) SetNX(key string, value string) error {
-	return e.insiClient.SetCacheNX(key, value)
+func (e *cacheStoreImpl) IterateKeys(ctx context.Context, prefix string, offset, limit int) ([]string, error) {
+	return withRetries(ctx, e.logger, func() ([]string, error) {
+		return e.insiClient.IterateCacheByPrefix(assembleKey(e.scope, prefix), offset, limit)
+	})
+}
+
+func (e *cacheStoreImpl) Delete(ctx context.Context, key string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.DeleteCache(assembleKey(e.scope, key))
+	})
+}
+
+func (e *cacheStoreImpl) CompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.CompareAndSwapCache(assembleKey(e.scope, key), oldValue, newValue)
+	})
+}
+
+func (e *cacheStoreImpl) SetNX(ctx context.Context, key string, value string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.SetCacheNX(assembleKey(e.scope, key), value)
+	})
+}
+
+func (e *cacheStoreImpl) PushScope(scope string) {
+	e.scope = fmt.Sprintf("%s.%s", e.scope, scope)
+}
+
+func (e *cacheStoreImpl) PopScope() {
+	e.scope = strings.TrimSuffix(e.scope, fmt.Sprintf(".%s", e.scope))
 }
 
 func (e *eventsImpl) Subscribe(
@@ -214,8 +320,10 @@ func (e *eventsImpl) Subscribe(
 	return e.insiClient.SubscribeToEvents(topic, ctx, onEvent)
 }
 
-func (e *eventsImpl) Publish(topic string, data any) error {
-	return e.insiClient.PublishEvent(topic, data)
+func (e *eventsImpl) Publish(ctx context.Context, topic string, data any) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.PublishEvent(topic, data)
+	})
 }
 
 func NewFWI(insiCfg *client.Config, rootInsiClient *client.Client, logger *slog.Logger) (FWI, error) {
@@ -261,7 +369,9 @@ func (f *fwiImpl) CreateEntity(
 		return nil, fmt.Errorf("entity with name '%s' already exists", name)
 	}
 
-	key, err := f.rootInsiClient.CreateAPIKey(name)
+	key, err := withRetries(ctx, f.logger, func() (*models.ApiKeyCreateResponse, error) {
+		return f.rootInsiClient.CreateAPIKey(name)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +390,41 @@ func (f *fwiImpl) CreateEntity(
 		return nil, err
 	}
 
-	if err := f.rootInsiClient.Set(entityKey, string(entityEncoded)); err != nil {
+	if err := withRetriesVoid(ctx, f.logger, func() error {
+		return f.rootInsiClient.Set(entityKey, string(entityEncoded))
+	}); err != nil {
+		return nil, err
+	}
+
+	if maxlimits.BytesInMemory == nil {
+		maxlimits.BytesInMemory = new(int64)
+		*maxlimits.BytesInMemory = 1024 * 1024 * 1024 // 1GB
+	}
+
+	if maxlimits.BytesOnDisk == nil {
+		maxlimits.BytesOnDisk = new(int64)
+		*maxlimits.BytesOnDisk = 1024 * 1024 * 1024 // 1GB
+	}
+
+	if *maxlimits.BytesInMemory > *maxlimits.BytesOnDisk {
+		return nil, fmt.Errorf("bytes in memory cannot be greater than bytes on disk")
+	}
+
+	if maxlimits.EventsEmitted == nil {
+		maxlimits.EventsEmitted = new(int64)
+		*maxlimits.EventsEmitted = 1000
+	}
+
+	if maxlimits.Subscribers == nil {
+		maxlimits.Subscribers = new(int64)
+		*maxlimits.Subscribers = 100
+	}
+
+	// set the limits on the entity key
+	if err := withRetriesVoid(ctx, f.logger, func() error {
+		return f.rootInsiClient.SetLimits(key.Key, maxlimits)
+	}); err != nil {
+		color.HiRed("Failed to set the limits on new entity: %s %v", key.Key, err)
 		return nil, err
 	}
 
@@ -301,6 +445,7 @@ func (f *fwiImpl) CreateEntity(
 		name:       name,
 		insiClient: entityClient,
 		record:     entityRecord,
+		logger:     f.logger.WithGroup("entity").WithGroup(name),
 	}
 
 	f.mu.Lock()
@@ -343,7 +488,9 @@ func (f *fwiImpl) CreateOrLoadEntity(
 }
 
 func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
-	keys, err := f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
+	keys, err := withRetries(ctx, f.logger, func() ([]string, error) {
+		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
+	})
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
 			return []Entity{}, nil // No entities found is not an error.
@@ -354,7 +501,9 @@ func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 	entities := make([]Entity, 0, len(keys))
 
 	for _, key := range keys {
-		entityRecordStr, err := f.rootInsiClient.Get(key)
+		entityRecordStr, err := withRetries(ctx, f.logger, func() (string, error) {
+			return f.rootInsiClient.Get(key)
+		})
 		if err != nil {
 			f.logger.Warn("Failed to get entity record during GetAll, skipping", "key", key, "error", err)
 			continue
@@ -371,6 +520,7 @@ func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 			name:       er.Name,
 			insiClient: entityClient,
 			record:     &er,
+			logger:     f.logger.WithGroup("entity").WithGroup(er.Name),
 		}
 
 		entities = append(entities, entity)
@@ -418,11 +568,15 @@ func (f *fwiImpl) DeleteEntity(ctx context.Context, name string) error {
 	entityUUID := entity.GetUUID()
 	entityKeyInDB := fmt.Sprintf("%s%s", EntityPrefix, entityUUID)
 
-	if err := f.rootInsiClient.Delete(entityKeyInDB); err != nil {
+	if err := withRetriesVoid(ctx, f.logger, func() error {
+		return f.rootInsiClient.Delete(entityKeyInDB)
+	}); err != nil {
 		return fmt.Errorf("failed to delete entity record from db: %w", err)
 	}
 
-	if err := f.rootInsiClient.DeleteAPIKey(entity.GetKey()); err != nil {
+	if err := withRetriesVoid(ctx, f.logger, func() error {
+		return f.rootInsiClient.DeleteAPIKey(entity.GetKey())
+	}); err != nil {
 		f.logger.Error("Failed to delete API key for entity, but entity record was deleted. Manual cleanup of API key may be required.",
 			"entityName", name,
 			"apiKey", entity.GetKey(),
@@ -437,7 +591,9 @@ func (f *fwiImpl) DeleteEntity(ctx context.Context, name string) error {
 }
 
 func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, error) {
-	keys, err := f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
+	keys, err := withRetries(ctx, f.logger, func() ([]string, error) {
+		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
+	})
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
 			return nil, errEntityNotFound
@@ -446,7 +602,9 @@ func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, er
 	}
 
 	for _, key := range keys {
-		entityRecordStr, err := f.rootInsiClient.Get(key)
+		entityRecordStr, err := withRetries(ctx, f.logger, func() (string, error) {
+			return f.rootInsiClient.Get(key)
+		})
 		if err != nil {
 			f.logger.Warn("Failed to get entity record during name search, skipping", "key", key, "error", err)
 			continue
@@ -480,6 +638,7 @@ func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, er
 				name:       er.Name,
 				insiClient: entityClient,
 				record:     &er,
+				logger:     f.logger.WithGroup("entity").WithGroup(er.Name),
 			}
 			return entity, nil
 		}

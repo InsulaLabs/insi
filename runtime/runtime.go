@@ -384,6 +384,10 @@ func (r *Runtime) Stop() {
 	r.appCancel()
 }
 
+func (r *Runtime) GetRootApiKey() string {
+	return r.rootApiKey
+}
+
 func (r *Runtime) GetHomeDir() string {
 	return r.clusterCfg.InsidHome
 }
