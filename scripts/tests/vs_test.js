@@ -162,7 +162,7 @@ function testBump() {
     time.sleep(200);
     var retrieved = vs.get(key);
     if (retrieved !== "15") {
-        let errMsg = "vs.bump up failed: expected '15', got '" + retrieved + "'";
+        var errMsg = "vs.bump up failed: expected '15', got '" + retrieved + "'";
         test.Aww(errMsg);
         throw new Error(errMsg);
     }
@@ -171,7 +171,7 @@ function testBump() {
     time.sleep(200);
     retrieved = vs.get(key);
     if (retrieved !== "5") {
-        let errMsg = "vs.bump down failed: expected '5', got '" + retrieved + "'";
+        var errMsg = "vs.bump down failed: expected '5', got '" + retrieved + "'";
         test.Aww(errMsg);
         throw new Error(errMsg);
     }
@@ -181,7 +181,7 @@ function testBump() {
     time.sleep(200);
     retrieved = vs.get(key);
     if (retrieved !== "0") {
-        let errMsg = "vs.bump below zero failed: expected '0', got '" + retrieved + "'";
+        var errMsg = "vs.bump below zero failed: expected '0', got '" + retrieved + "'";
         test.Aww(errMsg);
         throw new Error(errMsg);
     }
@@ -197,7 +197,7 @@ function testBump() {
     time.sleep(200);
     retrieved = vs.get(newKey);
     if (retrieved !== "100") {
-        let errMsg = "vs.bump on new key failed: expected '100', got '" + retrieved + "'";
+        var errMsg = "vs.bump on new key failed: expected '100', got '" + retrieved + "'";
         test.Aww(errMsg);
         throw new Error(errMsg);
     }
@@ -217,7 +217,7 @@ function testBump() {
         console.log("Caught expected error for bumping non-integer value: " + e.message);
     }
     if (!didThrow) {
-        let errMsg = "vs.bump on a non-integer value should have thrown an error";
+        var errMsg = "vs.bump on a non-integer value should have thrown an error";
         test.Aww(errMsg);
         throw new Error(errMsg);
     }

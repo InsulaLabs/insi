@@ -10,15 +10,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/InsulaLabs/insi/badge"
 	"github.com/dgraph-io/badger/v3"
 )
 
 type tkv struct {
-	logger   *slog.Logger
-	appCtx   context.Context
-	db       *data
-	identity badge.Badge
+	logger *slog.Logger
+	appCtx context.Context
+	db     *data
 }
 
 var _ TKV = &tkv{}
@@ -120,7 +118,6 @@ func New(config Config) (TKV, error) {
 			store: db,
 			cache: cache,
 		},
-		identity: config.Identity,
 	}
 
 	return tkv, nil
