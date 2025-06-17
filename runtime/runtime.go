@@ -298,7 +298,6 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 
 	kvm, err := tkv.New(tkv.Config{
-		Identity:       b,
 		Logger:         nodeLogger.WithGroup("tkv"),
 		BadgerLogLevel: r.currentLogLevel,
 		Directory:      nodeDir,

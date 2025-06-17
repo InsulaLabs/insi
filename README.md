@@ -1,4 +1,4 @@
-# Insi
+# Insi 
 
 Insi is a high-performance, distributed data platform designed for developers who need a scalable and secure backend for their applications. It provides a simple yet powerful set of features, including persistent key-value storage, volatile caching, and a real-time eventing system, all accessible through a unified HTTP API.
 
@@ -217,3 +217,65 @@ The backend of Insi is a custom-built distributed database system designed for h
     -   The `tkv` package provides a foundational abstraction over BadgerDB, offering the primitive operations (`Get`, `Set`, `SetNX`, `CompareAndSwap`, `BumpInteger`) used by the rest of the system.
     -   The `rft` package contains the FSM implementation, managing the interaction between the Raft consensus layer and the `tkv` storage layer. It handles command processing, snapshotting for log compaction, and cluster membership.
     -   The `core` package serves as the API layer, validating requests and dispatching write operations to the Raft FSM.
+
+## Building
+
+The project includes a comprehensive `Makefile` to simplify the build process. All compiled binaries and necessary assets are placed in the `build/` directory.
+
+### Main Commands
+
+-   `make all`: (Default) Compiles all development binaries:
+    -   `insid`: The Insi server daemon.
+    -   `insic`: The legacy command-line client.
+    -   `insio`: The OVM runner for executing JS scripts.
+    -   `fwit-t`: The stress testing tool.
+-   `make prod`: Compiles all binaries optimized for production (smaller and stripped of debug information).
+-   `make test`: Runs the full Go test suite for all packages.
+-   `make clean`: Removes the `build/` directory and all compiled artifacts.
+
+### Individual Components
+
+You can also build each component individually for both development and production environments:
+
+-   **Server**: `make server` or `make server-prod`
+-   **Client**: `make client` or `make client-prod`
+-   **OVM Runner**: `make ovm` or `make ovm-prod`
+-   **Stress Test Tool**: `make fwit` or `make fwit-prod`
+
+When building the OVM runner (`insio`), the `Makefile` also automatically copies the `scripts/` directory into the `build/` directory, ensuring that the runner has access to all necessary test and utility scripts.
+
+# Testing
+
+
+## JS Automation
+
+Terminal One
+
+```
+make prod && cd build
+./insio server --host --config cluster.yaml
+```
+
+If its a new system give it ~10 seconds to let file system creation and installation to occur.
+
+Terminal Two
+
+```
+cd build
+./insio run  --root scripts/tests/root.js  
+```
+
+## Bash
+
+The bash tests don't require you to launch a cluster yourself, it handles everything
+as long as `make build` has been run, then you can simply:
+
+```
+cd tests && bash run-all.sh
+```
+
+I recommend:
+
+```
+bash run-all.sh > out.log
+```
