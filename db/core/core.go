@@ -82,16 +82,6 @@ type Core struct {
 	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
 
 	apiCache *ttlcache.Cache[string, models.TokenData]
-
-	_inTestMode bool
-}
-
-func (c *Core) SetInTest() {
-	color.HiYellow("🧪 ⚡️ 🔬 TEST MODE ENGAGED 🔬 ⚡️ 🧪")
-	color.HiRed("🚨 WARNING: System running in test mode - Cannot be disabled until restart! 🚨")
-	color.HiCyan("🎯 All operations will be executed in test context 🎯")
-	color.HiMagenta("⚠️  =====================================  ⚠️")
-	c._inTestMode = true
 }
 
 func (c *Core) GetRootClientKey() string {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -37,10 +38,16 @@ type StressMetrics struct {
 	EntityName string
 	Sets       int64
 	Gets       int64
+	Deletes    int64
 	Caches     int64
 	Publishes  int64
 	Bumps      int64
 	Failures   int64
+}
+
+type SafeEntityPool struct {
+	mu       sync.RWMutex
+	entities []fwi.Entity
 }
 
 func main() {
@@ -54,6 +61,7 @@ func main() {
 	numEntities := flag.Int("entities", 10, "Number of entities to create for the stress test.")
 	duration := flag.Duration("duration", 1*time.Minute, "Duration of the stress test.")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error).")
+	disableChaos := flag.Bool("disable-chaos", false, "Disable the chaos monkey for deleting entities.")
 	flag.Parse()
 
 	// Setup logger
@@ -135,20 +143,38 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create entities
-	entities := make([]fwi.Entity, 0, *numEntities)
-	for i := 0; i < *numEntities; i++ {
+	// Create entities and store them in a thread-safe pool
+	entityPool := &SafeEntityPool{
+		entities: make([]fwi.Entity, 0, *numEntities),
+	}
+
+	cyan.Printf("👥 Creating %d entities...\n", *numEntities)
+	for i := 0; i < *numEntities; {
 		entityName := fmt.Sprintf("entity-%d", i)
 		entity, err := fwiClient.CreateOrLoadEntity(context.Background(), entityName, models.Limits{})
-		if err != nil {
-			yellow.Printf("⚠️ Failed to create entity %s: %v\n", entityName, err)
+
+		if err == nil {
+			entityPool.entities = append(entityPool.entities, entity)
+			i++ // Move to the next entity only on success
 			continue
 		}
-		entities = append(entities, entity)
-	}
-	green.Printf("✅ Successfully created %d entities\n", len(entities))
 
-	if len(entities) == 0 {
+		// Handle rate limiting by waiting and retrying
+		var rateLimitErr *client.ErrRateLimited
+		if errors.As(err, &rateLimitErr) {
+			yellow.Printf("⏳ Rate limited creating entity %s. Waiting for %s...\n", entityName, rateLimitErr.RetryAfter.String())
+			time.Sleep(rateLimitErr.RetryAfter)
+			continue // Retry creating the same entity
+		}
+
+		// Any other error during initial creation is fatal
+		red.Printf("❌ Failed to create entity %s: %v. Aborting.\n", entityName, err)
+		os.Exit(1)
+	}
+
+	green.Printf("✅ Successfully created %d entities\n", len(entityPool.entities))
+
+	if len(entityPool.entities) == 0 {
 		red.Println("❌ No entities were created, cannot run stress test.")
 		rt.Stop()
 		wg.Wait()
@@ -159,9 +185,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *duration)
 	defer cancel()
 
-	metricsChan := make(chan StressMetrics, len(entities))
+	metricsChan := make(chan StressMetrics, len(entityPool.entities))
 	var stressWg sync.WaitGroup
-	for _, entity := range entities {
+	entityPool.mu.RLock()
+	for _, entity := range entityPool.entities {
 		stressWg.Add(1)
 		go func(e fwi.Entity) {
 			defer stressWg.Done()
@@ -169,7 +196,24 @@ func main() {
 			metricsChan <- metrics
 		}(entity)
 	}
-	cyan.Printf("🚀 Stress test started! Duration: %s, Entities: %d\n", duration.String(), len(entities))
+	entityPool.mu.RUnlock()
+
+	deletedEntities := struct {
+		sync.RWMutex
+		m map[string]bool
+	}{m: make(map[string]bool)}
+
+	// Start the chaos monkey to delete entities, if not disabled
+	if !*disableChaos {
+		stressWg.Add(1)
+		go func() {
+			defer stressWg.Done()
+			chaosMonkey(ctx, fwiClient, entityPool, &deletedEntities, yellow)
+		}()
+		cyan.Printf("🚀 Stress test started! Duration: %s, Entities: %d (Chaos Monkey Enabled 🔥)\n", duration.String(), len(entityPool.entities))
+	} else {
+		cyan.Printf("🚀 Stress test started! Duration: %s, Entities: %d (Chaos Monkey Disabled)\n", duration.String(), len(entityPool.entities))
+	}
 
 	// Wait for shutdown signal or test completion
 	sigChan := make(chan os.Signal, 1)
@@ -188,11 +232,11 @@ func main() {
 	green.Println("✅ Stress test finished.")
 
 	// Collect and print metrics
-	allMetrics := make([]StressMetrics, 0, len(entities))
+	allMetrics := make([]StressMetrics, 0, len(entityPool.entities))
 	for m := range metricsChan {
 		allMetrics = append(allMetrics, m)
 	}
-	printMetricsSummary(allMetrics)
+	printMetricsSummary(allMetrics, &deletedEntities)
 
 	// Stop the runtime
 	yellow.Println("🛑 Shutting down cluster...")
@@ -237,11 +281,11 @@ func generateClusterConfig(size int, homeDir string) (*config.Cluster, error) {
 		},
 		RootPrefix: "stress-test-root",
 		RateLimiters: config.RateLimiters{
-			Values:  config.RateLimiterConfig{Limit: 1000, Burst: 2000},
-			Cache:   config.RateLimiterConfig{Limit: 1000, Burst: 2000},
-			System:  config.RateLimiterConfig{Limit: 500, Burst: 1000},
-			Default: config.RateLimiterConfig{Limit: 1000, Burst: 2000},
-			Events:  config.RateLimiterConfig{Limit: 2000, Burst: 4000},
+			Values:  config.RateLimiterConfig{Limit: 10000, Burst: 20000},
+			Cache:   config.RateLimiterConfig{Limit: 10000, Burst: 20000},
+			System:  config.RateLimiterConfig{Limit: 50000, Burst: 100000},
+			Default: config.RateLimiterConfig{Limit: 10000, Burst: 20000},
+			Events:  config.RateLimiterConfig{Limit: 20000, Burst: 40000},
 		},
 		Sessions: config.SessionsConfig{
 			EventChannelSize:         1000,
@@ -269,7 +313,7 @@ func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 
 	// Create a root client to initialize FWI
 	rootClient, err := client.NewClient(&client.Config{
-		ConnectionType: client.ConnectionTypeDirect,
+		ConnectionType: client.ConnectionTypeRandom,
 		Endpoints:      endpoints,
 		SkipVerify:     true,
 		ApiKey:         rootApiKey,
@@ -281,7 +325,7 @@ func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 
 	return fwi.NewFWI(
 		&client.Config{
-			ConnectionType: client.ConnectionTypeDirect,
+			ConnectionType: client.ConnectionTypeRandom,
 			Endpoints:      endpoints,
 			SkipVerify:     true,
 			Logger:         logger.WithGroup("fwi-entities"),
@@ -299,12 +343,15 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
+	knownKeys := make([]string, 0, 100)
+	const keyPoolSize = 100
+
 	for {
 		select {
 		case <-ctx.Done():
 			return metrics
 		case <-ticker.C:
-			op := rand.Intn(5)
+			op := rand.Intn(6) // Now 6 operations including delete
 			key := "stress-key-" + strconv.Itoa(rand.Intn(1000))
 			value := "stress-value-" + strconv.Itoa(rand.Intn(100000))
 
@@ -314,6 +361,12 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 				err = valueStore.Set(key, value)
 				if err == nil {
 					atomic.AddInt64(&metrics.Sets, 1)
+					// Add key to our pool for potential deletion
+					if len(knownKeys) < keyPoolSize {
+						knownKeys = append(knownKeys, key)
+					} else {
+						knownKeys[rand.Intn(keyPoolSize)] = key // Replace random key if pool is full
+					}
 				}
 			case 1: // Get Value
 				_, err = valueStore.Get(key)
@@ -335,6 +388,17 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 				if err == nil {
 					atomic.AddInt64(&metrics.Bumps, 1)
 				}
+			case 5: // Delete Value
+				if len(knownKeys) > 0 {
+					idx := rand.Intn(len(knownKeys))
+					keyToDelete := knownKeys[idx]
+					err = valueStore.Delete(keyToDelete)
+					if err == nil {
+						atomic.AddInt64(&metrics.Deletes, 1)
+						// Remove from pool
+						knownKeys = append(knownKeys[:idx], knownKeys[idx+1:]...)
+					}
+				}
 			}
 			if err != nil && err != client.ErrKeyNotFound {
 				atomic.AddInt64(&metrics.Failures, 1)
@@ -345,7 +409,10 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 	}
 }
 
-func printMetricsSummary(metrics []StressMetrics) {
+func printMetricsSummary(metrics []StressMetrics, deleted *struct {
+	sync.RWMutex
+	m map[string]bool
+}) {
 	header := color.New(color.FgYellow, color.Bold)
 	cyan := color.New(color.FgCyan)
 	red := color.New(color.FgRed)
@@ -353,15 +420,24 @@ func printMetricsSummary(metrics []StressMetrics) {
 	bold := color.New(color.Bold)
 
 	header.Println("\n--- 📊 Stress Test Summary ---")
-	fmt.Printf("%-12s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s\n", "Entity", "Sets", "Gets", "Caches", "Publishes", "Bumps", "Failures")
-	fmt.Println("---------------------------------------------------------------------------------------")
+	fmt.Printf("%-15s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s\n", "Entity", "Sets", "Gets", "Deletes", "Caches", "Publishes", "Bumps", "Failures")
+	fmt.Println("---------------------------------------------------------------------------------------------------")
 
 	var total StressMetrics
 	for _, m := range metrics {
-		fmt.Printf("%-12s | ", m.EntityName)
+		entityName := m.EntityName
+		deleted.RLock()
+		if _, ok := deleted.m[m.EntityName]; ok {
+			entityName = m.EntityName + " 🔥"
+		}
+		deleted.RUnlock()
+
+		fmt.Printf("%-15s | ", entityName)
 		cyan.Printf("%-10d", m.Sets)
 		fmt.Print(" | ")
 		cyan.Printf("%-10d", m.Gets)
+		fmt.Print(" | ")
+		cyan.Printf("%-10d", m.Deletes)
 		fmt.Print(" | ")
 		cyan.Printf("%-10d", m.Caches)
 		fmt.Print(" | ")
@@ -376,17 +452,20 @@ func printMetricsSummary(metrics []StressMetrics) {
 		}
 		total.Sets += m.Sets
 		total.Gets += m.Gets
+		total.Deletes += m.Deletes
 		total.Caches += m.Caches
 		total.Publishes += m.Publishes
 		total.Bumps += m.Bumps
 		total.Failures += m.Failures
 	}
 
-	fmt.Println("---------------------------------------------------------------------------------------")
-	bold.Printf("%-12s | ", "TOTALS")
+	fmt.Println("---------------------------------------------------------------------------------------------------")
+	bold.Printf("%-15s | ", "TOTALS")
 	cyan.Printf("%-10d", total.Sets)
 	fmt.Print(" | ")
 	cyan.Printf("%-10d", total.Gets)
+	fmt.Print(" | ")
+	cyan.Printf("%-10d", total.Deletes)
 	fmt.Print(" | ")
 	cyan.Printf("%-10d", total.Caches)
 	fmt.Print(" | ")
@@ -400,4 +479,46 @@ func printMetricsSummary(metrics []StressMetrics) {
 		green.Printf("%-10d\n", total.Failures)
 	}
 	fmt.Println()
+}
+
+func chaosMonkey(ctx context.Context, fwiClient fwi.FWI, pool *SafeEntityPool, deleted *struct {
+	sync.RWMutex
+	m map[string]bool
+}, yellow *color.Color) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// 25% chance to delete an entity
+			if rand.Intn(4) == 0 {
+				pool.mu.Lock()
+				if len(pool.entities) <= 1 { // Don't delete the last entity
+					pool.mu.Unlock()
+					continue
+				}
+
+				// Pick a random entity to delete
+				idx := rand.Intn(len(pool.entities))
+				entityToDelete := pool.entities[idx]
+
+				// Remove from pool
+				pool.entities = append(pool.entities[:idx], pool.entities[idx+1:]...)
+				pool.mu.Unlock()
+
+				deleted.Lock()
+				deleted.m[entityToDelete.GetName()] = true
+				deleted.Unlock()
+
+				// Perform the deletion
+				yellow.Printf("🔥 Chaos Monkey is deleting entity: %s\n", entityToDelete.GetName())
+				if err := fwiClient.DeleteEntity(ctx, entityToDelete.GetName()); err != nil {
+					yellow.Printf("🔥 Chaos Monkey failed to delete entity %s: %v\n", entityToDelete.GetName(), err)
+				}
+			}
+		}
+	}
 }
