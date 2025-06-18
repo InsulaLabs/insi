@@ -84,6 +84,9 @@ type KV interface {
 type Events interface {
 	Subscribe(ctx context.Context, topic string, onEvent func(data any)) error
 	Publish(ctx context.Context, topic string, data any) error
+
+	PushScope(scope string)
+	PopScope()
 }
 
 type Entity interface {
@@ -154,6 +157,7 @@ type cacheStoreImpl struct {
 
 type eventsImpl struct {
 	insiClient *client.Client
+	scope      string
 	logger     *slog.Logger
 }
 
@@ -317,13 +321,21 @@ func (e *eventsImpl) Subscribe(
 	topic string,
 	onEvent func(data any),
 ) error {
-	return e.insiClient.SubscribeToEvents(topic, ctx, onEvent)
+	return e.insiClient.SubscribeToEvents(assembleKey(e.scope, topic), ctx, onEvent)
 }
 
 func (e *eventsImpl) Publish(ctx context.Context, topic string, data any) error {
 	return withRetriesVoid(ctx, e.logger, func() error {
-		return e.insiClient.PublishEvent(topic, data)
+		return e.insiClient.PublishEvent(assembleKey(e.scope, topic), data)
 	})
+}
+
+func (e *eventsImpl) PushScope(scope string) {
+	e.scope = fmt.Sprintf("%s.%s", e.scope, scope)
+}
+
+func (e *eventsImpl) PopScope() {
+	e.scope = strings.TrimSuffix(e.scope, fmt.Sprintf(".%s", e.scope))
 }
 
 func NewFWI(insiCfg *client.Config, rootInsiClient *client.Client, logger *slog.Logger) (FWI, error) {
