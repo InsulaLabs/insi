@@ -265,11 +265,19 @@ func (e *valueStoreImpl) SetNX(ctx context.Context, key string, value string) er
 }
 
 func (e *valueStoreImpl) PushScope(scope string) {
-	e.scope = fmt.Sprintf("%s.%s", e.scope, scope)
+	if e.scope == "" {
+		e.scope = scope
+	} else {
+		e.scope = e.scope + "." + scope
+	}
 }
 
 func (e *valueStoreImpl) PopScope() {
-	e.scope = strings.TrimSuffix(e.scope, fmt.Sprintf(".%s", e.scope))
+	if i := strings.LastIndex(e.scope, "."); i != -1 {
+		e.scope = e.scope[:i]
+	} else {
+		e.scope = ""
+	}
 }
 
 func (e *cacheStoreImpl) Get(ctx context.Context, key string) (string, error) {
@@ -309,11 +317,19 @@ func (e *cacheStoreImpl) SetNX(ctx context.Context, key string, value string) er
 }
 
 func (e *cacheStoreImpl) PushScope(scope string) {
-	e.scope = fmt.Sprintf("%s.%s", e.scope, scope)
+	if e.scope == "" {
+		e.scope = scope
+	} else {
+		e.scope = e.scope + "." + scope
+	}
 }
 
 func (e *cacheStoreImpl) PopScope() {
-	e.scope = strings.TrimSuffix(e.scope, fmt.Sprintf(".%s", e.scope))
+	if i := strings.LastIndex(e.scope, "."); i != -1 {
+		e.scope = e.scope[:i]
+	} else {
+		e.scope = ""
+	}
 }
 
 func (e *eventsImpl) Subscribe(
@@ -331,11 +347,19 @@ func (e *eventsImpl) Publish(ctx context.Context, topic string, data any) error 
 }
 
 func (e *eventsImpl) PushScope(scope string) {
-	e.scope = fmt.Sprintf("%s.%s", e.scope, scope)
+	if e.scope == "" {
+		e.scope = scope
+	} else {
+		e.scope = e.scope + "." + scope
+	}
 }
 
 func (e *eventsImpl) PopScope() {
-	e.scope = strings.TrimSuffix(e.scope, fmt.Sprintf(".%s", e.scope))
+	if i := strings.LastIndex(e.scope, "."); i != -1 {
+		e.scope = e.scope[:i]
+	} else {
+		e.scope = ""
+	}
 }
 
 func NewFWI(insiCfg *client.Config, rootInsiClient *client.Client, logger *slog.Logger) (FWI, error) {
