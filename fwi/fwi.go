@@ -99,6 +99,9 @@ type Entity interface {
 	GetValueStore() KV // Get the value store for the entity
 	GetCacheStore() KV // Get the cache store for the entity
 	GetEvents() Events // Get the event pub/sub for the entity
+
+	// GetUsageInfo retrieves the current usage and limits for the entity.
+	GetUsageInfo(ctx context.Context) (*models.LimitsResponse, error)
 }
 
 // FWI is the instance that contains a client with the root key
@@ -222,6 +225,12 @@ func (e *entityImpl) GetEvents() Events {
 		insiClient: e.insiClient,
 		logger:     e.logger.WithGroup("events"),
 	}
+}
+
+func (e *entityImpl) GetUsageInfo(ctx context.Context) (*models.LimitsResponse, error) {
+	return withRetries(ctx, e.logger, func() (*models.LimitsResponse, error) {
+		return e.insiClient.GetLimits()
+	})
 }
 
 func assembleKey(scope, key string) string {
