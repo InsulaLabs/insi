@@ -213,6 +213,22 @@ func main() {
 	// Wait a moment to ensure the event is processed before we shut down.
 	time.Sleep(1 * time.Second)
 
+	// -- Update Entity Limits Example --
+	logger.Info("--- Demonstrating Entity Limit Updates ---")
+	// You can update limits for an entity after it has been created.
+	// For example, to increase the number of events this entity can emit per time window.
+	// Any limits you don't specify in the `models.Limits` struct will remain unchanged.
+	newEventsLimit := int64(5000)
+	newLimits := models.Limits{
+		EventsEmitted: &newEventsLimit,
+	}
+	logger.Info("updating entity limits", "name", appEntity.GetName(), "new_events_limit", newEventsLimit)
+	if err := fwiInstance.UpdateEntityLimits(ctx, appEntity.GetName(), newLimits); err != nil {
+		logger.Error("failed to update entity limits", "error", err)
+	} else {
+		logger.Info("successfully requested entity limit update")
+	}
+
 	// --- SHUTDOWN ---
 	logger.Info("example finished, initiating shutdown.")
 	// Cancel the context to signal subscribers and other background tasks to stop.

@@ -132,6 +132,9 @@ type FWI interface {
 
 	// Delete an entity
 	DeleteEntity(ctx context.Context, name string) error
+
+	// Update the limits for an entity.
+	UpdateEntityLimits(ctx context.Context, name string, newLimits models.Limits) error
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -623,6 +626,64 @@ func (f *fwiImpl) DeleteEntity(ctx context.Context, name string) error {
 	delete(f.entities, name)
 	f.logger.Info("Successfully deleted entity", "name", name, "uuid", entityUUID)
 
+	return nil
+}
+
+func (f *fwiImpl) UpdateEntityLimits(
+	ctx context.Context,
+	name string,
+	newLimits models.Limits,
+) error {
+	entity, err := f.GetEntity(ctx, name)
+	if err != nil {
+		return err // Will be errEntityNotFound if it doesn't exist.
+	}
+
+	apiKey := entity.GetKey()
+
+	// Get current limits to merge with the new limits and validate.
+	currentLimitsResp, err := withRetries(ctx, f.logger, func() (*models.LimitsResponse, error) {
+		return f.rootInsiClient.GetLimitsForKey(apiKey)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get current limits for entity '%s': %w", name, err)
+	}
+
+	// Start with existing limits, or a fresh struct if none are set.
+	mergedLimits := models.Limits{}
+	if currentLimitsResp.MaxLimits != nil {
+		mergedLimits = *currentLimitsResp.MaxLimits
+	}
+
+	if newLimits.BytesInMemory != nil {
+		mergedLimits.BytesInMemory = newLimits.BytesInMemory
+	}
+	if newLimits.BytesOnDisk != nil {
+		mergedLimits.BytesOnDisk = newLimits.BytesOnDisk
+	}
+	if newLimits.EventsEmitted != nil {
+		mergedLimits.EventsEmitted = newLimits.EventsEmitted
+	}
+	if newLimits.Subscribers != nil {
+		mergedLimits.Subscribers = newLimits.Subscribers
+	}
+
+	// Validate the merged limits.
+	if mergedLimits.BytesInMemory != nil && mergedLimits.BytesOnDisk != nil {
+		if *mergedLimits.BytesInMemory > *mergedLimits.BytesOnDisk {
+			return fmt.Errorf("validation failed: bytes in memory (%d) cannot be greater than bytes on disk (%d)",
+				*mergedLimits.BytesInMemory, *mergedLimits.BytesOnDisk)
+		}
+	}
+
+	// Now set the updated and validated limits.
+	if err := withRetriesVoid(ctx, f.logger, func() error {
+		return f.rootInsiClient.SetLimits(apiKey, mergedLimits)
+	}); err != nil {
+		return fmt.Errorf("failed to update limits for entity '%s': %w", name, err)
+	}
+
+	f.logger.Info("Successfully updated limits for entity", "name", name)
 	return nil
 }
 
