@@ -306,6 +306,17 @@ func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Hand
 	})
 }
 
+func (c *Core) ipFilterMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !c.isPermittedIP(r) {
+			c.logger.Warn("IP address not permitted", "remote_addr", r.RemoteAddr)
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (c *Core) WithRoute(path string, handler http.Handler, limit int, burst int) {
 	limiter := rate.NewLimiter(rate.Limit(limit), burst)
 	c.mux.Handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -317,46 +328,63 @@ func (c *Core) WithRoute(path string, handler http.Handler, limit int, burst int
 	}))
 }
 
+func (c *Core) isPermittedIP(r *http.Request) bool {
+	// If no IPs are configured, deny all traffic for security.
+	if len(c.cfg.PermittedIPs) == 0 {
+		return false
+	}
+
+	remoteIP := c.getRemoteAddress(r)
+
+	for _, ip := range c.cfg.PermittedIPs {
+		if ip == remoteIP {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Run forever until the context is cancelled
 func (c *Core) Run() {
 
 	// Values handlers
-	c.mux.Handle("/db/api/v1/set", c.rateLimitMiddleware(http.HandlerFunc(c.setHandler), "values"))
-	c.mux.Handle("/db/api/v1/get", c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values"))
-	c.mux.Handle("/db/api/v1/delete", c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values"))
-	c.mux.Handle("/db/api/v1/iterate/prefix", c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values"))
-	c.mux.Handle("/db/api/v1/setnx", c.rateLimitMiddleware(http.HandlerFunc(c.setNXHandler), "values"))
-	c.mux.Handle("/db/api/v1/cas", c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values"))
-	c.mux.Handle("/db/api/v1/bump", c.rateLimitMiddleware(http.HandlerFunc(c.bumpHandler), "values"))
+	c.mux.Handle("/db/api/v1/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setHandler), "values")))
+	c.mux.Handle("/db/api/v1/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values")))
+	c.mux.Handle("/db/api/v1/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values")))
+	c.mux.Handle("/db/api/v1/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values")))
+	c.mux.Handle("/db/api/v1/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setNXHandler), "values")))
+	c.mux.Handle("/db/api/v1/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values")))
+	c.mux.Handle("/db/api/v1/bump", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.bumpHandler), "values")))
 
 	// Cache handlers
-	c.mux.Handle("/db/api/v1/cache/set", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache"))
-	c.mux.Handle("/db/api/v1/cache/get", c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache"))
-	c.mux.Handle("/db/api/v1/cache/delete", c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache"))
-	c.mux.Handle("/db/api/v1/cache/setnx", c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache"))
-	c.mux.Handle("/db/api/v1/cache/cas", c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache"))
-	c.mux.Handle("/db/api/v1/cache/iterate/prefix", c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache"))
+	c.mux.Handle("/db/api/v1/cache/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache")))
+	c.mux.Handle("/db/api/v1/cache/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache")))
+	c.mux.Handle("/db/api/v1/cache/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache")))
+	c.mux.Handle("/db/api/v1/cache/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache")))
+	c.mux.Handle("/db/api/v1/cache/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache")))
+	c.mux.Handle("/db/api/v1/cache/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache")))
 
 	// Events handlers
-	c.mux.Handle("/db/api/v1/events", c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events"))
-	c.mux.Handle("/db/api/v1/events/subscribe", c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events"))
+	c.mux.Handle("/db/api/v1/events", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events")))
+	c.mux.Handle("/db/api/v1/events/subscribe", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events")))
 
 	// System handlers
-	c.mux.Handle("/db/api/v1/join", c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system"))
-	c.mux.Handle("/db/api/v1/ping", c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system"))
+	c.mux.Handle("/db/api/v1/join", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system")))
+	c.mux.Handle("/db/api/v1/ping", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system")))
 
 	// System handle anyone can call with an api key to get their current usage and limits
-	c.mux.Handle("/db/api/v1/limits", c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system"))
+	c.mux.Handle("/db/api/v1/limits", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system")))
 
 	// Only ROOT can set limits
-	c.mux.Handle("/db/api/v1/admin/limits/set", c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system"))
+	c.mux.Handle("/db/api/v1/admin/limits/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system")))
 
 	// Admin API Key Management handlers (system category for rate limiting)
-	c.mux.Handle("/db/api/v1/admin/api/create", c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system"))
-	c.mux.Handle("/db/api/v1/admin/api/delete", c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system"))
+	c.mux.Handle("/db/api/v1/admin/api/create", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system")))
+	c.mux.Handle("/db/api/v1/admin/api/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system")))
 
 	// Only ROOT can get limits for specific keys
-	c.mux.Handle("/db/api/v1/admin/limits/get", c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system"))
+	c.mux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
 
 	httpListenAddr := c.nodeCfg.HttpBinding
 	c.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != ""))
