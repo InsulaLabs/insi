@@ -99,6 +99,9 @@ type Entity interface {
 	GetValueStore() KV // Get the value store for the entity
 	GetCacheStore() KV // Get the cache store for the entity
 	GetEvents() Events // Get the event pub/sub for the entity
+
+	// GetUsageInfo retrieves the current usage and limits for the entity.
+	GetUsageInfo(ctx context.Context) (*models.LimitsResponse, error)
 }
 
 // FWI is the instance that contains a client with the root key
@@ -132,6 +135,9 @@ type FWI interface {
 
 	// Delete an entity
 	DeleteEntity(ctx context.Context, name string) error
+
+	// Update the limits for an entity.
+	UpdateEntityLimits(ctx context.Context, name string, newLimits models.Limits) error
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -221,6 +227,12 @@ func (e *entityImpl) GetEvents() Events {
 	}
 }
 
+func (e *entityImpl) GetUsageInfo(ctx context.Context) (*models.LimitsResponse, error) {
+	return withRetries(ctx, e.logger, func() (*models.LimitsResponse, error) {
+		return e.insiClient.GetLimits()
+	})
+}
+
 func assembleKey(scope, key string) string {
 	if scope == "" {
 		return key
@@ -265,11 +277,19 @@ func (e *valueStoreImpl) SetNX(ctx context.Context, key string, value string) er
 }
 
 func (e *valueStoreImpl) PushScope(scope string) {
-	e.scope = fmt.Sprintf("%s.%s", e.scope, scope)
+	if e.scope == "" {
+		e.scope = scope
+	} else {
+		e.scope = e.scope + "." + scope
+	}
 }
 
 func (e *valueStoreImpl) PopScope() {
-	e.scope = strings.TrimSuffix(e.scope, fmt.Sprintf(".%s", e.scope))
+	if i := strings.LastIndex(e.scope, "."); i != -1 {
+		e.scope = e.scope[:i]
+	} else {
+		e.scope = ""
+	}
 }
 
 func (e *cacheStoreImpl) Get(ctx context.Context, key string) (string, error) {
@@ -309,11 +329,19 @@ func (e *cacheStoreImpl) SetNX(ctx context.Context, key string, value string) er
 }
 
 func (e *cacheStoreImpl) PushScope(scope string) {
-	e.scope = fmt.Sprintf("%s.%s", e.scope, scope)
+	if e.scope == "" {
+		e.scope = scope
+	} else {
+		e.scope = e.scope + "." + scope
+	}
 }
 
 func (e *cacheStoreImpl) PopScope() {
-	e.scope = strings.TrimSuffix(e.scope, fmt.Sprintf(".%s", e.scope))
+	if i := strings.LastIndex(e.scope, "."); i != -1 {
+		e.scope = e.scope[:i]
+	} else {
+		e.scope = ""
+	}
 }
 
 func (e *eventsImpl) Subscribe(
@@ -331,11 +359,19 @@ func (e *eventsImpl) Publish(ctx context.Context, topic string, data any) error 
 }
 
 func (e *eventsImpl) PushScope(scope string) {
-	e.scope = fmt.Sprintf("%s.%s", e.scope, scope)
+	if e.scope == "" {
+		e.scope = scope
+	} else {
+		e.scope = e.scope + "." + scope
+	}
 }
 
 func (e *eventsImpl) PopScope() {
-	e.scope = strings.TrimSuffix(e.scope, fmt.Sprintf(".%s", e.scope))
+	if i := strings.LastIndex(e.scope, "."); i != -1 {
+		e.scope = e.scope[:i]
+	} else {
+		e.scope = ""
+	}
 }
 
 func NewFWI(insiCfg *client.Config, rootInsiClient *client.Client, logger *slog.Logger) (FWI, error) {
@@ -599,6 +635,64 @@ func (f *fwiImpl) DeleteEntity(ctx context.Context, name string) error {
 	delete(f.entities, name)
 	f.logger.Info("Successfully deleted entity", "name", name, "uuid", entityUUID)
 
+	return nil
+}
+
+func (f *fwiImpl) UpdateEntityLimits(
+	ctx context.Context,
+	name string,
+	newLimits models.Limits,
+) error {
+	entity, err := f.GetEntity(ctx, name)
+	if err != nil {
+		return err // Will be errEntityNotFound if it doesn't exist.
+	}
+
+	apiKey := entity.GetKey()
+
+	// Get current limits to merge with the new limits and validate.
+	currentLimitsResp, err := withRetries(ctx, f.logger, func() (*models.LimitsResponse, error) {
+		return f.rootInsiClient.GetLimitsForKey(apiKey)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get current limits for entity '%s': %w", name, err)
+	}
+
+	// Start with existing limits, or a fresh struct if none are set.
+	mergedLimits := models.Limits{}
+	if currentLimitsResp.MaxLimits != nil {
+		mergedLimits = *currentLimitsResp.MaxLimits
+	}
+
+	if newLimits.BytesInMemory != nil {
+		mergedLimits.BytesInMemory = newLimits.BytesInMemory
+	}
+	if newLimits.BytesOnDisk != nil {
+		mergedLimits.BytesOnDisk = newLimits.BytesOnDisk
+	}
+	if newLimits.EventsEmitted != nil {
+		mergedLimits.EventsEmitted = newLimits.EventsEmitted
+	}
+	if newLimits.Subscribers != nil {
+		mergedLimits.Subscribers = newLimits.Subscribers
+	}
+
+	// Validate the merged limits.
+	if mergedLimits.BytesInMemory != nil && mergedLimits.BytesOnDisk != nil {
+		if *mergedLimits.BytesInMemory > *mergedLimits.BytesOnDisk {
+			return fmt.Errorf("validation failed: bytes in memory (%d) cannot be greater than bytes on disk (%d)",
+				*mergedLimits.BytesInMemory, *mergedLimits.BytesOnDisk)
+		}
+	}
+
+	// Now set the updated and validated limits.
+	if err := withRetriesVoid(ctx, f.logger, func() error {
+		return f.rootInsiClient.SetLimits(apiKey, mergedLimits)
+	}); err != nil {
+		return fmt.Errorf("failed to update limits for entity '%s': %w", name, err)
+	}
+
+	f.logger.Info("Successfully updated limits for entity", "name", name)
 	return nil
 }
 

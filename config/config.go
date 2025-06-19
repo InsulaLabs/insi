@@ -49,6 +49,7 @@ type Cluster struct {
 	TLS              TLS             `yaml:"tls"`
 	ClientSkipVerify bool            `yaml:"clientSkipVerify"` // Across all nodes, if true, then their "join" clients will permit skip of TLS verification
 	TrustedProxies   []string        `yaml:"trustedProxies,omitempty"`
+	PermittedIPs     []string        `yaml:"permittedIPs,omitempty"`
 	InsidHome        string          `yaml:"insiHome"`
 	ServerMustUseTLS bool            `yaml:"serverMustUseTLS"` // Across all nodes, if true, then their "join" clients will permit skip of TLS verification
 	Cache            Cache           `yaml:"cache"`
@@ -192,6 +193,7 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 		Nodes:            make(map[string]Node),
 		ClientSkipVerify: false,
 		TrustedProxies:   []string{"127.0.0.1", "::1"},
+		PermittedIPs:     []string{},  // By default, no IPs are restricted. If list is empty, all are rejected
 		InsidHome:        "data/insi", // Relative path for easier default setup
 		ServerMustUseTLS: true,
 		TLS: TLS{
