@@ -176,13 +176,13 @@ type Endpoint struct {
 }
 
 type Config struct {
-	ConnectionType          ConnectionType // Direct will use Endpoints[0] always
-	Endpoints               []Endpoint
-	ApiKey                  string
-	SkipVerify              bool
-	Timeout                 time.Duration
-	Logger                  *slog.Logger
-	DisableLeaderStickiness bool // Set to true to prevent the client from "sticking" to a leader upon redirect. Defaults to false (stickiness enabled).
+	ConnectionType         ConnectionType // Direct will use Endpoints[0] always
+	Endpoints              []Endpoint
+	ApiKey                 string
+	SkipVerify             bool
+	Timeout                time.Duration
+	Logger                 *slog.Logger
+	EnableLeaderStickiness bool // Set to true to enable the client to "stick" to a leader upon redirect. Defaults to false (stickiness disabled).
 }
 
 type ErrorResponse struct {
@@ -192,31 +192,31 @@ type ErrorResponse struct {
 
 // Client is the API client for the insi service.
 type Client struct {
-	mu                      sync.RWMutex // To protect endpoint URLs
-	publicBaseURL           *url.URL
-	privateBaseURL          *url.URL
-	httpClient              *http.Client
-	objectClient            *http.Client
-	apiKey                  string
-	logger                  *slog.Logger
-	redirectCoutner         atomic.Uint64
-	endpoints               []Endpoint // Store all potential endpoints
-	disableLeaderStickiness bool
+	mu                     sync.RWMutex // To protect endpoint URLs
+	publicBaseURL          *url.URL
+	privateBaseURL         *url.URL
+	httpClient             *http.Client
+	objectClient           *http.Client
+	apiKey                 string
+	logger                 *slog.Logger
+	redirectCoutner        atomic.Uint64
+	endpoints              []Endpoint // Store all potential endpoints
+	enableLeaderStickiness bool
 }
 
 func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return &Client{
-		publicBaseURL:           c.publicBaseURL,
-		privateBaseURL:          c.privateBaseURL,
-		httpClient:              c.httpClient,
-		objectClient:            c.objectClient,
-		apiKey:                  apiKey,
-		logger:                  c.logger.WithGroup(name),
-		redirectCoutner:         atomic.Uint64{},
-		endpoints:               c.endpoints, // Propagate endpoints
-		disableLeaderStickiness: c.disableLeaderStickiness,
+		publicBaseURL:          c.publicBaseURL,
+		privateBaseURL:         c.privateBaseURL,
+		httpClient:             c.httpClient,
+		objectClient:           c.objectClient,
+		apiKey:                 apiKey,
+		logger:                 c.logger.WithGroup(name),
+		redirectCoutner:        atomic.Uint64{},
+		endpoints:              c.endpoints, // Propagate endpoints
+		enableLeaderStickiness: c.enableLeaderStickiness,
 	}
 }
 
@@ -325,15 +325,15 @@ func NewClient(cfg *Config) (*Client, error) {
 	)
 
 	return &Client{
-		publicBaseURL:           publicBaseURL,
-		privateBaseURL:          privateBaseURL,
-		httpClient:              httpClient,
-		objectClient:            objectClient,
-		apiKey:                  cfg.ApiKey,
-		logger:                  clientLogger,
-		redirectCoutner:         atomic.Uint64{},
-		endpoints:               cfg.Endpoints,
-		disableLeaderStickiness: cfg.DisableLeaderStickiness,
+		publicBaseURL:          publicBaseURL,
+		privateBaseURL:         privateBaseURL,
+		httpClient:             httpClient,
+		objectClient:           objectClient,
+		apiKey:                 cfg.ApiKey,
+		logger:                 clientLogger,
+		redirectCoutner:        atomic.Uint64{},
+		endpoints:              cfg.Endpoints,
+		enableLeaderStickiness: cfg.EnableLeaderStickiness,
 	}, nil
 }
 
@@ -477,7 +477,7 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
 				c.redirectCoutner.Add(1)
 				// This is a leader redirect. Update the client to stick to the new leader for future requests.
-				if !c.disableLeaderStickiness {
+				if c.enableLeaderStickiness {
 					if err := c.setLeader(redirectURL); err != nil {
 						// Log the error but continue; the redirect will be handled for this single request anyway.
 						c.logger.Warn("Failed to set sticky leader from redirect", "error", err)
@@ -1277,7 +1277,7 @@ func (c *Client) UploadBlob(ctx context.Context, key string, data io.Reader, fil
 			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
 				c.redirectCoutner.Add(1)
 				// This is a leader redirect. Update the client to stick to the new leader for future requests.
-				if !c.disableLeaderStickiness {
+				if c.enableLeaderStickiness {
 					if err := c.setLeader(redirectURL); err != nil {
 						// Log the error but continue; the redirect will be handled for this single request anyway.
 						c.logger.Warn("Failed to set sticky leader from blob redirect", "error", err)
@@ -1372,7 +1372,7 @@ func (c *Client) GetBlob(ctx context.Context, key string) (io.ReadCloser, error)
 			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
 				c.redirectCoutner.Add(1)
 				// This is a leader redirect. Update the client to stick to the new leader for future requests.
-				if !c.disableLeaderStickiness {
+				if c.enableLeaderStickiness {
 					if err := c.setLeader(redirectURL); err != nil {
 						// Log the error but continue; the redirect will be handled for this single request anyway.
 						c.logger.Warn("Failed to set sticky leader from blob redirect", "error", err)
