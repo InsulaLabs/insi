@@ -390,6 +390,23 @@ func (c *Core) isPermittedIP(r *http.Request) bool {
 	return false
 }
 
+func (c *Core) isPermittedIP(r *http.Request) bool {
+	// If no IPs are configured, deny all traffic for security.
+	if len(c.cfg.PermittedIPs) == 0 {
+		return false
+	}
+
+	remoteIP := c.getRemoteAddress(r)
+
+	for _, ip := range c.cfg.PermittedIPs {
+		if ip == remoteIP {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Run forever until the context is cancelled
 func (c *Core) Run() {
 
@@ -447,6 +464,7 @@ func (c *Core) Run() {
 		// Admin API Key Management handlers (system category for rate limiting)
 		c.privMux.Handle("/db/api/v1/admin/api/create", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system")))
 		c.privMux.Handle("/db/api/v1/admin/api/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system")))
+
 
 		// Only ROOT can get limits for specific keys
 		c.privMux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))

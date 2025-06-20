@@ -112,6 +112,7 @@ type Entity interface {
 	GetEvents() Events // Get the event pub/sub for the entity
 	GetBlobs() Blobs   // Get the blob store for the entity
 
+
 	// GetUsageInfo retrieves the current usage and limits for the entity.
 	GetUsageInfo(ctx context.Context) (*models.LimitsResponse, error)
 }
