@@ -67,6 +67,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -206,6 +207,10 @@ func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 		logger:          c.logger.WithGroup(name),
 		redirectCoutner: atomic.Uint64{},
 	}
+}
+
+func (c *Client) GetHttpClient() *http.Client {
+	return c.httpClient
 }
 
 // NewClient creates a new insi API client.
@@ -1150,4 +1155,231 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 			}
 		}
 	}
+}
+
+// --- Blob Operations ---
+
+// UploadBlob uploads a blob from an io.Reader. The caller is responsible for the reader.
+// The filename is used in the multipart form, can be empty.
+func (c *Client) UploadBlob(ctx context.Context, key string, data io.Reader, filename string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+
+	// Prepare multipart body
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	if err := writer.WriteField("key", key); err != nil {
+		return fmt.Errorf("failed to write key to multipart form: %w", err)
+	}
+
+	if filename == "" {
+		filename = "blob" // a default filename
+	}
+	part, err := writer.CreateFormFile("blob", filename)
+	if err != nil {
+		return fmt.Errorf("failed to create form file: %w", err)
+	}
+
+	if _, err := io.Copy(part, data); err != nil {
+		return fmt.Errorf("failed to copy blob data to form: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	// Prepare request
+	baseURL := c.publicBaseURL
+	pathURL := &url.URL{Path: "db/api/v1/blob/set"}
+	currentReqURL := baseURL.ResolveReference(pathURL)
+	contentType := writer.FormDataContentType()
+
+	var lastResp *http.Response
+
+	for redirects := 0; redirects < MaximumRedirects; redirects++ {
+		// We need a new reader for the body on each request attempt
+		bodyReader := bytes.NewReader(body.Bytes())
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, currentReqURL.String(), bodyReader)
+		if err != nil {
+			return fmt.Errorf("failed to create upload request: %w", err)
+		}
+		req.Header.Set("Authorization", c.apiKey)
+		req.Header.Set("Content-Type", contentType)
+
+		c.logger.Debug("Sending blob upload request", "url", currentReqURL.String())
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if lastResp != nil && lastResp.Body != nil {
+				lastResp.Body.Close()
+			}
+			return fmt.Errorf("http request for blob upload failed: %w", err)
+		}
+		if lastResp != nil && lastResp.Body != nil {
+			lastResp.Body.Close()
+		}
+		lastResp = resp
+
+		// Handle redirects
+		switch resp.StatusCode {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			loc := resp.Header.Get("Location")
+			if loc == "" {
+				resp.Body.Close()
+				return fmt.Errorf("redirect response missing Location header from %s", currentReqURL.String())
+			}
+			redirectURL, err := currentReqURL.Parse(loc)
+			if err != nil {
+				resp.Body.Close()
+				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
+			}
+			c.logger.Debug("Blob upload request redirected", "to", redirectURL.String())
+			currentReqURL = redirectURL
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+				c.redirectCoutner.Add(1)
+			}
+			continue
+		}
+
+		// Process final response
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil // Success
+		}
+
+		// Handle specific errors like in doRequest
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusBadRequest {
+			if currentDiskUsageStr := resp.Header.Get("X-Current-Disk-Usage"); currentDiskUsageStr != "" {
+				limitStr := resp.Header.Get("X-Disk-Usage-Limit")
+				current, _ := strconv.ParseInt(currentDiskUsageStr, 10, 64)
+				limit, _ := strconv.ParseInt(limitStr, 10, 64)
+				return &ErrDiskLimitExceeded{
+					CurrentUsage: current,
+					Limit:        limit,
+					Message:      strings.TrimSpace(string(bodyBytes)),
+				}
+			}
+		}
+
+		return fmt.Errorf("blob upload failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if lastResp != nil && lastResp.Body != nil {
+		lastResp.Body.Close()
+	}
+	return fmt.Errorf("stopped after %d redirects for blob upload, last URL: %s", MaximumRedirects, currentReqURL.String())
+}
+
+// GetBlob retrieves a blob as an io.ReadCloser. The caller MUST close the reader.
+func (c *Client) GetBlob(ctx context.Context, key string) (io.ReadCloser, error) {
+	if key == "" {
+		return nil, fmt.Errorf("key cannot be empty")
+	}
+
+	baseURL := c.publicBaseURL
+	pathURL := &url.URL{Path: "db/api/v1/blob/get"}
+	currentReqURL := baseURL.ResolveReference(pathURL)
+	q := currentReqURL.Query()
+	q.Set("key", key)
+	currentReqURL.RawQuery = q.Encode()
+
+	var lastResp *http.Response
+
+	for redirects := 0; redirects < MaximumRedirects; redirects++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, currentReqURL.String(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create get blob request: %w", err)
+		}
+		req.Header.Set("Authorization", c.apiKey)
+
+		c.logger.Debug("Sending get blob request", "url", currentReqURL.String())
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if lastResp != nil && lastResp.Body != nil {
+				lastResp.Body.Close()
+			}
+			return nil, fmt.Errorf("http request for get blob failed: %w", err)
+		}
+		if lastResp != nil && lastResp.Body != nil {
+			lastResp.Body.Close()
+		}
+		lastResp = resp
+
+		switch resp.StatusCode {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			loc := resp.Header.Get("Location")
+			if loc == "" {
+				resp.Body.Close()
+				return nil, fmt.Errorf("redirect response missing Location header from %s", currentReqURL.String())
+			}
+			redirectURL, err := currentReqURL.Parse(loc)
+			if err != nil {
+				resp.Body.Close()
+				return nil, fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
+			}
+			c.logger.Debug("Get blob redirected", "to", redirectURL.String())
+			currentReqURL = redirectURL
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+				c.redirectCoutner.Add(1)
+			}
+			continue
+		}
+
+		// Process final response
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return resp.Body, nil
+		}
+
+		// It's not a success status, so we need to handle it as an error.
+		defer resp.Body.Close()
+		bodyBytes, _ := io.ReadAll(resp.Body)
+
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, ErrKeyNotFound
+		}
+
+		return nil, fmt.Errorf("get blob failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if lastResp != nil && lastResp.Body != nil {
+		lastResp.Body.Close()
+	}
+	return nil, fmt.Errorf("stopped after %d redirects for get blob, last URL: %s", MaximumRedirects, currentReqURL.String())
+}
+
+// DeleteBlob deletes a blob by key.
+func (c *Client) DeleteBlob(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	payload := map[string]string{"key": key}
+	// Server returns 202 Accepted on success. doRequest considers any 2xx as success.
+	return c.doRequest(http.MethodPost, "db/api/v1/blob/delete", nil, payload, nil)
+}
+
+// IterateBlobKeysByPrefix retrieves a list of blob keys matching a given prefix.
+func (c *Client) IterateBlobKeysByPrefix(prefix string, offset, limit int) ([]string, error) {
+	params := map[string]string{
+		"prefix": prefix,
+		"offset": strconv.Itoa(offset),
+		"limit":  strconv.Itoa(limit),
+	}
+	var response struct {
+		Data []string `json:"data"`
+	}
+	err := c.doRequest(http.MethodGet, "db/api/v1/blob/iterate/prefix", params, nil, &response)
+	if err != nil {
+		if errors.Is(err, ErrKeyNotFound) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	return response.Data, nil
 }

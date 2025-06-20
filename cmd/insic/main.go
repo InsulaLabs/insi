@@ -9,9 +9,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
@@ -168,6 +170,8 @@ func main() {
 		handleSubscribe(cli, cmdArgs)
 	case "api":
 		handleApi(cli, cmdArgs)
+	case "blob":
+		handleBlob(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -207,10 +211,11 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.CyanString("[key_value]"), color.YellowString("Get limits. If key provided, gets for that key (--root required)."))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N"), color.YellowString("--root flag usually required"))
 
-	// Object Commands
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("upload"), color.CyanString("<filepath>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("download"), color.CyanString("<uuid>"), color.CyanString("<output_path>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("hash"), color.CyanString("<uuid>"))
+	// Blob Commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("blob"), color.CyanString("upload"), color.CyanString("<key>"), color.CyanString("<filepath>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("blob"), color.CyanString("download"), color.CyanString("<key>"), color.CyanString("<output_path>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("blob"), color.CyanString("delete"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("blob"), color.CyanString("iterate"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -288,6 +293,7 @@ func handleGet(c *client.Client, args []string) {
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
 			fmt.Fprintf(os.Stderr, "%s Key '%s' not found.\n", color.RedString("Error:"), color.CyanString(key))
+			os.Exit(1)
 		} else {
 			logger.Error("Get failed", "key", key, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
@@ -1012,4 +1018,154 @@ func handleApiSetLimits(c *client.Client, args []string) {
 	}
 
 	color.HiGreen("OK")
+}
+
+// --- Blob Command Handlers ---
+
+func handleBlob(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("blob: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "upload":
+		handleBlobUpload(c, subArgs)
+	case "download":
+		handleBlobDownload(c, subArgs)
+	case "delete":
+		handleBlobDelete(c, subArgs)
+	case "iterate":
+		handleBlobIterate(c, subArgs)
+	default:
+		logger.Error("blob: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleBlobUpload(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("blob upload: requires <key> <filepath>")
+		printUsage()
+		os.Exit(1)
+	}
+	key, filePath := args[0], args[1]
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		logger.Error("Failed to open file for blob upload", "path", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	ctx := context.Background()
+	err = c.UploadBlob(ctx, key, file, filepath.Base(filePath))
+	if err != nil {
+		logger.Error("Blob upload failed", "key", key, "path", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleBlobDownload(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("blob download: requires <key> <output_path>")
+		printUsage()
+		os.Exit(1)
+	}
+	key, outputPath := args[0], args[1]
+
+	ctx := context.Background()
+	reader, err := c.GetBlob(ctx, key)
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) {
+			fmt.Fprintf(os.Stderr, "%s Blob '%s' not found.\n", color.RedString("Error:"), color.CyanString(key))
+			os.Exit(1)
+		} else {
+			logger.Error("GetBlob failed", "key", key, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
+	defer reader.Close()
+
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		logger.Error("Failed to create output file for blob download", "path", outputPath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	defer outFile.Close()
+
+	_, err = io.Copy(outFile, reader)
+	if err != nil {
+		logger.Error("Failed to write blob data to file", "path", outputPath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleBlobDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("blob delete: requires <key>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	err := c.DeleteBlob(key)
+	if err != nil {
+		logger.Error("Blob delete failed", "key", key, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleBlobIterate(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("blob iterate: requires <prefix> [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	prefix := args[0]
+	offset, limit := 0, 100
+
+	var err error
+	if len(args) > 1 {
+		offset, err = strconv.Atoi(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[1], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 2 {
+		limit, err = strconv.Atoi(args[2])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[2], err)
+			os.Exit(1)
+		}
+	}
+
+	results, err := c.IterateBlobKeysByPrefix(prefix, offset, limit)
+	if err != nil {
+		logger.Error("Blob iterate failed", "prefix", prefix, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(results) == 0 {
+		color.HiYellow("No blob keys found matching prefix.")
+		return
+	}
+
+	for _, item := range results {
+		fmt.Println(item)
+	}
 }

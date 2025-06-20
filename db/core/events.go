@@ -191,32 +191,6 @@ func (c *Core) unregisterSubscriber(session *eventSession) {
 	close(session.send)
 }
 
-// Central event processing loop for the service.
-// Reads from FSM-populated eventCh and dispatches to WebSocket subscribers.
-func (c *Core) eventProcessingLoop() {
-	c.logger.Info("Starting service event processing loop for WebSocket dispatch")
-	for {
-		select {
-		case event := <-c.eventCh:
-			c.eventSubscribersLock.RLock()
-			hasSubscribers := len(c.eventSubscribers) > 0
-			c.eventSubscribersLock.RUnlock()
-
-			if !hasSubscribers {
-				c.logger.Debug("No active subscribers, skipping event dispatch", "topic", event.Topic)
-				continue
-			}
-
-			c.logger.Debug("Service event loop received event", "topic", event.Topic)
-			c.dispatchEventToSubscribersViaSessionSend(event)
-
-		case <-c.appCtx.Done():
-			c.logger.Info("Service event processing loop shutting down")
-			return
-		}
-	}
-}
-
 // dispatchEventToSubscribersViaSessionSend sends an event to all relevant subscriber sessions.
 func (c *Core) dispatchEventToSubscribersViaSessionSend(event models.Event) {
 	c.eventSubscribersLock.RLock()

@@ -1,0 +1,61 @@
+🚀 Running blob.sh...
+insid pid: 260333
+2025-06-20T11:03:46.493-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-20T11:03:46.494-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-20T11:03:47.668-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-20T11:03:47.668-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+2025-06-20T11:03:47.671-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-20T11:03:47.671-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8543
+2025-06-20T11:03:47.872-0400 [WARN]  no known peers, aborting election
+2025-06-20T11:03:49.148-0400 [WARN]  no known peers, aborting election
+2025-06-20T11:03:49.472-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-20T11:03:49.472-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-20T11:03:49.472-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-20T11:03:49.479-0400 [INFO]  election won: term=2 tally=1
+2025-06-20T11:03:49.479-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-20T11:03:56.503-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-20T11:03:56.508-0400 [INFO]  added peer, starting replication: peer=node1
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8544
+2025-06-20T11:03:56.511-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-20T11:03:56.512-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+2025-06-20T11:03:56.515-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+2025-06-20T11:03:57.676-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+2025-06-20T11:03:57.681-0400 [INFO]  added peer, starting replication: peer=node2
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8545
+2025-06-20T11:03:57.686-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+2025-06-20T11:03:57.686-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+set root tracker key internal:api_key_memory_usage: value 0
+2025-06-20T11:03:57.690-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+ℹ️ Test directory prepared at /tmp/insic-blob-tests
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mServer is online. Proceeding with blob tests.[0m
+
+[0;34m==== Test: Blob Lifecycle ====[0m
+ℹ️ Created test file '/tmp/insic-blob-tests/upload.txt' with SHA256 hash: e5f1dae104445fafb2376cff15b67671c83c67781e51df6d11b7a0baf20d3d90
+Published blob uploaded event for key: test_blob_1750431841_file1.txt
+✅ [0;32mSUCCESS: Upload blob with key 'test_blob_1750431841_file1.txt'[0m
+✅ [0;32mIterate found blob key 'test_blob_1750431841_file1.txt'[0m
+✅ [0;32mSUCCESS: Download blob with key 'test_blob_1750431841_file1.txt'[0m
+ℹ️ Downloaded file hash: e5f1dae104445fafb2376cff15b67671c83c67781e51df6d11b7a0baf20d3d90
+✅ [0;32mDownloaded file content matches original[0m
+✅ [0;32mSUCCESS: Delete blob with key 'test_blob_1750431841_file1.txt'[0m
+❌ [0;31mFAILURE: Attempt to download deleted blob 'test_blob_1750431841_file1.txt' - Expected a failure, but command succeeded (Exit code: 0)[0m
+✅ [0;32mIterate no longer finds deleted blob key 'test_blob_1750431841_file1.txt'[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 6
+❌ Failed tests:     1
+[0;31mSome tests failed. Please review the output above.[0m
+❌ Error: Test script /tmp/insi-test-cluster/blob.sh failed with exit code 1

@@ -132,7 +132,7 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 	c.logger.Debug("SetHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
+		c.redirectToLeader(w, r, r.URL.RequestURI(), rcPublic)
 		return
 	}
 	defer r.Body.Close()
@@ -223,7 +223,7 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	c.logger.Debug("DeleteHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
+		c.redirectToLeader(w, r, r.URL.RequestURI(), rcPublic)
 		return
 	}
 	defer r.Body.Close()
@@ -293,7 +293,7 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 	c.logger.Debug("SetNXHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
+		c.redirectToLeader(w, r, r.URL.RequestURI(), rcPublic)
 		return
 	}
 	defer r.Body.Close()
@@ -365,7 +365,7 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 	c.logger.Debug("CompareAndSwapHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
+		c.redirectToLeader(w, r, r.URL.RequestURI(), rcPublic)
 		return
 	}
 	defer r.Body.Close()
@@ -459,7 +459,7 @@ func (c *Core) bumpHandler(w http.ResponseWriter, r *http.Request) {
 	c.logger.Debug("BumpHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
+		c.redirectToLeader(w, r, r.URL.RequestURI(), rcPublic)
 		return
 	}
 	defer r.Body.Close()

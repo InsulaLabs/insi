@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -16,7 +17,6 @@ import (
 	"github.com/InsulaLabs/insi/badge"
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/db/blob"
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/rft"
 	"github.com/InsulaLabs/insi/db/tkv"
@@ -68,6 +68,7 @@ type Core struct {
 	appCtx    context.Context
 	cfg       *config.Cluster
 	nodeCfg   *config.Node
+	nodeName  string // The logical name of this node (e.g. "node0")
 	logger    *slog.Logger
 	tkv       tkv.TKV
 	identity  badge.Badge
@@ -94,7 +95,11 @@ type Core struct {
 	// cluster it is part of :o
 	loopbackClient *client.Client
 
-	blobService *blob.Service
+	blobService *blobService
+
+	// Internal event handling
+	internalSubscribers     map[string][]func(event models.Event)
+	internalSubscribersLock sync.RWMutex
 }
 
 type serverInstance struct {
@@ -209,18 +214,20 @@ func New(
 	go apiCache.Start()
 
 	service := &Core{
-		appCtx:           ctx,
-		cfg:              clusterCfg,
-		nodeCfg:          nodeSpecificCfg,
-		logger:           logger,
-		identity:         identity,
-		tkv:              tkv,
-		fsm:              fsm,
-		authToken:        authToken,
-		rateLimiters:     rateLimiters,
-		pubMux:           http.NewServeMux(),
-		privMux:          http.NewServeMux(),
-		eventSubscribers: make(map[string]map[*eventSession]bool),
+		appCtx:              ctx,
+		cfg:                 clusterCfg,
+		nodeCfg:             nodeSpecificCfg,
+		nodeName:            asNodeId,
+		logger:              logger,
+		identity:            identity,
+		tkv:                 tkv,
+		fsm:                 fsm,
+		authToken:           authToken,
+		rateLimiters:        rateLimiters,
+		pubMux:              http.NewServeMux(),
+		privMux:             http.NewServeMux(),
+		eventSubscribers:    make(map[string]map[*eventSession]bool),
+		internalSubscribers: make(map[string][]func(models.Event)),
 		wsUpgrader: websocket.Upgrader{
 			ReadBufferSize:  clusterCfg.Sessions.WebSocketReadBufferSize,
 			WriteBufferSize: clusterCfg.Sessions.WebSocketWriteBufferSize,
@@ -263,7 +270,7 @@ func New(
 		return nil, err
 	}
 
-	blobService, err := blob.New(logger, service.loopbackClient, identity, endpoints)
+	blobService, err := newBlobService(logger, service, service.loopbackClient, identity, endpoints)
 	if err != nil {
 		return nil, err
 	}
@@ -397,6 +404,11 @@ func (c *Core) Run() {
 		c.pubMux.Handle("/db/api/v1/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values")))
 		c.pubMux.Handle("/db/api/v1/bump", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.bumpHandler), "values")))
 
+		c.pubMux.Handle("/db/api/v1/blob/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.uploadBlobHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getBlobHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteBlobHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateBlobKeysByPrefixHandler), "values")))
+
 		// Cache handlers
 		c.pubMux.Handle("/db/api/v1/cache/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache")))
 		c.pubMux.Handle("/db/api/v1/cache/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache")))
@@ -425,6 +437,9 @@ func (c *Core) Run() {
 
 		// System handlers
 		c.privMux.Handle("/db/api/v1/join", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system")))
+
+		// Internal handlers
+		c.privMux.Handle("/db/internal/v1/blob/download", c.ipFilterMiddleware(http.HandlerFunc(c.internalDownloadBlobHandler)))
 
 		// Only ROOT can set limits
 		c.privMux.Handle("/db/api/v1/admin/limits/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system")))
@@ -483,36 +498,18 @@ func (c *Core) Run() {
 			after the root key trackers exist.
 		*/
 		go c.tombstoneRunner()
-
-		/*
-			Start the blob service after the root key trackers exist
-			we need to wait for the cluster to start up so all routes are mounted
-			across the nodes.
-
-			We need the service so we have it in a "try starting until it works" loop
-			so we can be sure it is running and ready to use.
-		*/
-		go func() {
-			for {
-				select {
-				case <-c.appCtx.Done():
-					return
-				case <-time.After(CommonStartupTaskDelayDuration):
-					if err := c.blobService.Start(c.appCtx); err != nil {
-						c.logger.Error("Error starting blob service", "error", err)
-						color.HiRed("Error starting blob service: %s", err)
-						color.HiYellow("Retrying in 10 seconds...")
-						continue
-					}
-					return
-				}
-			}
-		}()
 	}()
 
 	/*
 		Launch the servers
 	*/
+
+	// The blob service MUST be started before the http servers so that
+	// all nodes are ready to handle replication events.
+	if err := c.blobService.start(c.appCtx); err != nil {
+		c.logger.Error("Failed to start blob service, shutting down.", "error", err)
+		return
+	}
 
 	c.startedAt = time.Now()
 	wg := sync.WaitGroup{}
@@ -551,7 +548,7 @@ func (c *Core) Run() {
 	stopWg.Add(1)
 	go func() {
 		defer stopWg.Done()
-		if err := c.blobService.Stop(); err != nil {
+		if err := c.blobService.stop(); err != nil {
 			c.logger.Error("Error stopping blob service", "error", err)
 		}
 	}()
@@ -756,7 +753,6 @@ func (c *Core) tombstoneRunner() {
 			c.execTombstoneDeletion()
 		}
 	}
-
 }
 
 func (c *Core) execTombstoneDeletion() {
@@ -841,5 +837,68 @@ func (c *Core) execTombstoneDeletion() {
 		} else {
 			c.logger.Info("Successfully processed and deleted tombstone", "key_uuid", keyUUID)
 		}
+	}
+}
+
+func (c *Core) SubscribeInternally(topic string, handler func(event models.Event)) {
+	c.internalSubscribersLock.Lock()
+	defer c.internalSubscribersLock.Unlock()
+
+	c.internalSubscribers[topic] = append(c.internalSubscribers[topic], handler)
+	c.logger.Info("New internal subscriber registered", "topic", topic)
+}
+
+func (c *Core) eventProcessingLoop() {
+	for {
+		select {
+		case <-c.appCtx.Done():
+			c.logger.Info("Event processing loop stopping.")
+			return
+		case event := <-c.eventCh:
+			c.logger.Debug("Service event loop received event", "topic", event.Topic)
+
+			// --- Handle Internal Subscribers First ---
+			c.internalSubscribersLock.RLock()
+			if handlers, ok := c.internalSubscribers[event.Topic]; ok {
+				c.logger.Debug("Found internal subscribers for topic", "topic", event.Topic, "count", len(handlers))
+				for _, handler := range handlers {
+					// Launch in a goroutine to avoid blocking the event loop
+					go handler(event)
+				}
+			}
+			c.internalSubscribersLock.RUnlock()
+
+			// --- Then Handle WebSocket Subscribers ---
+			c.dispatchToWebsocketSubscribers(event)
+		}
+	}
+}
+
+func (c *Core) dispatchToWebsocketSubscribers(event models.Event) {
+	c.eventSubscribersLock.RLock()
+	defer c.eventSubscribersLock.RUnlock()
+
+	if subscribers, ok := c.eventSubscribers[event.Topic]; ok {
+		c.logger.Debug("Found WebSocket subscribers for topic", "topic", event.Topic, "count", len(subscribers))
+
+		// Marshal the event once for all subscribers of this topic.
+		message, err := json.Marshal(event)
+		if err != nil {
+			c.logger.Error("Failed to marshal event for WebSocket dispatch", "topic", event.Topic, "error", err)
+			return
+		}
+
+		for session := range subscribers {
+			// Select to avoid blocking if the send channel is full.
+			select {
+			case session.send <- message:
+				// Event sent successfully.
+			default:
+				// The client's channel is full. This indicates a slow client.
+				c.logger.Warn("Could not send event to client, channel is full", "topic", event.Topic, "remoteAddr", session.conn.RemoteAddr().String())
+			}
+		}
+	} else {
+		c.logger.Debug("No WebSocket subscribers for topic in dispatch", "topic", event.Topic)
 	}
 }
