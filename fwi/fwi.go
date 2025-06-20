@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -89,6 +90,16 @@ type Events interface {
 	PopScope()
 }
 
+type Blobs interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key string, value string) error
+	Delete(ctx context.Context, key string) error
+	IterateKeys(ctx context.Context, prefix string, offset, limit int) ([]string, error)
+
+	PushScope(scope string)
+	PopScope()
+}
+
 type Entity interface {
 	GetName() string
 	GetKey() string
@@ -99,6 +110,7 @@ type Entity interface {
 	GetValueStore() KV // Get the value store for the entity
 	GetCacheStore() KV // Get the cache store for the entity
 	GetEvents() Events // Get the event pub/sub for the entity
+	GetBlobs() Blobs   // Get the blob store for the entity
 
 	// GetUsageInfo retrieves the current usage and limits for the entity.
 	GetUsageInfo(ctx context.Context) (*models.LimitsResponse, error)
@@ -167,6 +179,12 @@ type eventsImpl struct {
 	logger     *slog.Logger
 }
 
+type blobsImpl struct {
+	insiClient *client.Client
+	scope      string
+	logger     *slog.Logger
+}
+
 type fwiImpl struct {
 	insiCfg        *client.Config
 	rootInsiClient *client.Client
@@ -187,6 +205,7 @@ var _ Entity = &entityImpl{}
 var _ KV = &valueStoreImpl{}
 var _ KV = &cacheStoreImpl{}
 var _ Events = &eventsImpl{}
+var _ Blobs = &blobsImpl{}
 
 func (e *entityImpl) GetName() string {
 	return e.name
@@ -224,6 +243,13 @@ func (e *entityImpl) GetEvents() Events {
 	return &eventsImpl{
 		insiClient: e.insiClient,
 		logger:     e.logger.WithGroup("events"),
+	}
+}
+
+func (e *entityImpl) GetBlobs() Blobs {
+	return &blobsImpl{
+		insiClient: e.insiClient,
+		logger:     e.logger.WithGroup("blobs"),
 	}
 }
 
@@ -367,6 +393,56 @@ func (e *eventsImpl) PushScope(scope string) {
 }
 
 func (e *eventsImpl) PopScope() {
+	if i := strings.LastIndex(e.scope, "."); i != -1 {
+		e.scope = e.scope[:i]
+	} else {
+		e.scope = ""
+	}
+}
+
+func (e *blobsImpl) Get(ctx context.Context, key string) (string, error) {
+	return withRetries(ctx, e.logger, func() (string, error) {
+		iorc, err := e.insiClient.GetBlob(ctx, assembleKey(e.scope, key))
+		if err != nil {
+			return "", err
+		}
+		defer iorc.Close()
+
+		content, err := io.ReadAll(iorc)
+		if err != nil {
+			return "", err
+		}
+		return string(content), nil
+	})
+}
+
+func (e *blobsImpl) Set(ctx context.Context, key string, value string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.UploadBlob(ctx, assembleKey(e.scope, key), strings.NewReader(value), key)
+	})
+}
+
+func (e *blobsImpl) Delete(ctx context.Context, key string) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.DeleteBlob(assembleKey(e.scope, key))
+	})
+}
+
+func (e *blobsImpl) IterateKeys(ctx context.Context, prefix string, offset, limit int) ([]string, error) {
+	return withRetries(ctx, e.logger, func() ([]string, error) {
+		return e.insiClient.IterateBlobKeysByPrefix(assembleKey(e.scope, prefix), offset, limit)
+	})
+}
+
+func (e *blobsImpl) PushScope(scope string) {
+	if e.scope == "" {
+		e.scope = scope
+	} else {
+		e.scope = e.scope + "." + scope
+	}
+}
+
+func (e *blobsImpl) PopScope() {
 	if i := strings.LastIndex(e.scope, "."); i != -1 {
 		e.scope = e.scope[:i]
 	} else {

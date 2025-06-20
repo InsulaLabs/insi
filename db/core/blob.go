@@ -18,7 +18,9 @@ import (
 	"github.com/InsulaLabs/insi/badge"
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/db/models"
-	"github.com/fatih/color"
+	"github.com/InsulaLabs/insi/db/tkv"
+	"github.com/dgraph-io/badger/v3"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -126,11 +128,11 @@ func (x *blobService) stop() error {
 }
 
 func (x *blobService) startEventSystem(ctx context.Context) {
-	x.logger.Info("Starting blob event system")
+	x.logger.Debug("Starting blob event system")
 
 	// This is for replication
 	x.core.SubscribeInternally(TopicBlobUploaded, func(event models.Event) {
-		x.logger.Info("Received blob uploaded event")
+		x.logger.Debug("Received blob uploaded event")
 
 		eventData, ok := event.Data.(string)
 		if !ok {
@@ -146,29 +148,29 @@ func (x *blobService) startEventSystem(ctx context.Context) {
 
 		// If this node is the one that uploaded the blob, do nothing.
 		if blobMeta.NodeIdentityUUID == x.identity.GetID() {
-			x.logger.Info("Skipping blob download for self", "blob_key", blobMeta.Key)
+			x.logger.Debug("Skipping blob download for self", "blob_key", blobMeta.Key)
 			return
 		}
 
 		// Check if we already have this blob
 		blobDiskPath := x.core.blobPath(blobMeta.DataScopeUUID, blobMeta.Key)
 		if _, err := os.Stat(blobDiskPath); err == nil {
-			x.logger.Info("Blob already exists on this node, skipping download", "blob_key", blobMeta.Key)
+			x.logger.Debug("Blob already exists on this node, skipping download", "blob_key", blobMeta.Key)
 			// TODO: We should probably verify the hash here and re-download if it's different.
 			return
 		}
 
-		x.logger.Info("Downloading blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID)
+		x.logger.Debug("Downloading blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID)
 		if err := x.downloadBlobFromPeer(ctx, blobMeta); err != nil {
 			x.logger.Error("Could not download blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID, "error", err)
 		} else {
-			x.logger.Info("Successfully downloaded blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID)
+			x.logger.Debug("Successfully downloaded blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID)
 		}
 	})
 
 	// This is for deletion
 	x.core.SubscribeInternally(TopicBlobDeleted, func(event models.Event) {
-		x.logger.Info("Received blob deleted event")
+		x.logger.Debug("Received blob deleted event")
 
 		eventData, ok := event.Data.(string)
 		if !ok {
@@ -187,7 +189,7 @@ func (x *blobService) startEventSystem(ctx context.Context) {
 		if err := os.Remove(blobPath); err != nil && !os.IsNotExist(err) {
 			x.logger.Error("Could not delete blob file from disk via event", "path", blobPath, "error", err)
 		} else {
-			x.logger.Info("Successfully deleted blob file from disk via event", "path", blobPath)
+			x.logger.Debug("Successfully deleted blob file from disk via event", "path", blobPath)
 		}
 	})
 }
@@ -298,7 +300,7 @@ func (x *blobService) execTombstoneDeletion() {
 		return
 	}
 
-	x.logger.Info("Found blob tombstones to process", "count", len(tombstoneKeys))
+	x.logger.Debug("Found blob tombstones to process", "count", len(tombstoneKeys))
 
 	for _, tombstoneKeyBytes := range tombstoneKeys {
 		tombstoneKey := string(tombstoneKeyBytes)
@@ -339,7 +341,7 @@ func (x *blobService) execTombstoneDeletion() {
 			x.logger.Error("Could not publish blob deleted event", "key", blobMeta.Key, "error", err)
 			continue // Don't proceed if we can't tell other nodes
 		}
-		x.logger.Info("Published blob deleted event", "key", blobMeta.Key)
+		x.logger.Debug("Published blob deleted event", "key", blobMeta.Key)
 
 		// The local file deletion is now handled by the event system for all nodes, including the leader.
 
@@ -354,8 +356,9 @@ func (x *blobService) execTombstoneDeletion() {
 			x.logger.Error("Could not delete blob tombstone", "key", tombstoneKey, "error", err)
 		}
 
-		x.logger.Info("Successfully processed blob tombstone", "key", blobMeta.Key)
+		x.logger.Debug("Successfully processed blob tombstone", "key", blobMeta.Key)
 	}
+	x.logger.Info("Successfully processed all blob tombstones")
 }
 
 // ------------------------------- core routes -------------------------------
@@ -382,10 +385,6 @@ func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 	key := r.FormValue("key")
 	if key == "" {
 		http.Error(w, "Missing key parameter", http.StatusBadRequest)
-		return
-	}
-	if strings.Contains(key, "/") || strings.Contains(key, "..") {
-		http.Error(w, "Invalid key", http.StatusBadRequest)
 		return
 	}
 
@@ -492,8 +491,6 @@ func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 		err = c.fsm.Publish(TopicBlobUploaded, string(eventPayload))
 		if err != nil {
 			c.logger.Error("Could not publish blob uploaded event", "error", err)
-		} else {
-			color.HiBlue("Published blob uploaded event for key: %s", key)
 		}
 	}
 
@@ -525,6 +522,14 @@ func (c *Core) internalDownloadBlobHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Also check if metadata exists, otherwise ServeFile will 404 and we won't know why.
+	_, err := c.fsm.Get(metadataKey)
+	if err != nil {
+		c.logger.Warn("Internal blob download failed: metadata not found", "key", key, "metadata_key", metadataKey, "error", err)
+		http.NotFound(w, r)
+		return
+	}
+
 	blobPath := c.blobPath(scope, key)
 	http.ServeFile(w, r, blobPath)
 }
@@ -548,12 +553,11 @@ func (c *Core) getBlobHandler(w http.ResponseWriter, r *http.Request) {
 	tombstoneKey := KeyPrimitiveBlobTombstone + metadataKey
 	tombstoneVal, err := c.fsm.Get(tombstoneKey)
 	if err == nil {
-		c.logger.Info("Blob has tombstone, denying access", "key", key, "tombstone_key", tombstoneKey, "tombstone_val", tombstoneVal)
+		c.logger.Debug("Blob has tombstone, denying access", "key", key, "tombstone_key", tombstoneKey, "tombstone_val", tombstoneVal)
 		// Tombstone exists, treat as not found
 		http.NotFound(w, r)
 		return
 	}
-	c.logger.Info("Blob has no tombstone, proceeding", "key", key, "tombstone_key", tombstoneKey, "get_err", err)
 
 	_, err = c.fsm.Get(metadataKey)
 	if err != nil {
@@ -563,7 +567,7 @@ func (c *Core) getBlobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	blobPath := c.blobPath(td.DataScopeUUID, key)
-	c.logger.Info("Serving blob from path", "key", key, "path", blobPath)
+	c.logger.Debug("Serving blob from path", "key", key, "path", blobPath)
 	http.ServeFile(w, r, blobPath)
 }
 
@@ -663,6 +667,11 @@ func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Req
 	searchPrefix := fmt.Sprintf("%s:blob:%s", td.DataScopeUUID, prefix)
 	keys, err := c.fsm.Iterate(searchPrefix, offset, limit)
 	if err != nil {
+		var nfErr *tkv.ErrKeyNotFound
+		if errors.As(err, &nfErr) || errors.Is(err, badger.ErrKeyNotFound) {
+			http.NotFound(w, r)
+			return
+		}
 		c.logger.Error("Could not iterate blob keys", "prefix", searchPrefix, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -673,9 +682,20 @@ func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Req
 	stripPrefix := fmt.Sprintf("%s:blob:", td.DataScopeUUID)
 	for _, metadataKey := range keys {
 		tombstoneKey := KeyPrimitiveBlobTombstone + metadataKey
-		if _, err := c.fsm.Get(tombstoneKey); err != nil {
-			// Tombstone does not exist, so the key is valid
-			finalKeys = append(finalKeys, strings.TrimPrefix(metadataKey, stripPrefix))
+		_, err := c.fsm.Get(tombstoneKey)
+		if err == nil {
+			// Tombstone exists, skip.
+			continue
+		}
+
+		var nfErr *tkv.ErrKeyNotFound
+		if errors.As(err, &nfErr) || errors.Is(err, badger.ErrKeyNotFound) {
+			// No tombstone, key is valid.
+			keyWithoutScope := strings.TrimPrefix(metadataKey, stripPrefix)
+			finalKeys = append(finalKeys, keyWithoutScope)
+		} else {
+			// Unexpected error, log it and skip the key for safety.
+			c.logger.Error("Error checking for blob tombstone", "key", metadataKey, "error", err)
 		}
 	}
 

@@ -270,6 +270,123 @@ test_blob_lifecycle() {
     fi
 }
 
+test_blob_iteration() {
+    print_header "Test: Blob Iteration"
+    local prefix="iteration_test_$(date +%s)"
+    local key1="${prefix}/file1.txt"
+    local key2="${prefix}/file2.txt"
+    local key3="${prefix}/subdir/file3.txt"
+    local key4="other_prefix/file4.txt"
+
+    local upload_file="${TEST_DIR}/upload_iter.txt"
+    echo "Iteration test content" > "${upload_file}"
+
+    # 1. Upload several blobs with a common prefix
+    echo -e "${INFO_EMOJI} Uploading test blobs..."
+    local upload_output
+    upload_output=$(run_insic "blob" "upload" "$key1" "${upload_file}")
+    expect_success "Upload blob 1 ('$key1')" "$?" "$upload_output"
+    upload_output=$(run_insic "blob" "upload" "$key2" "${upload_file}")
+    expect_success "Upload blob 2 ('$key2')" "$?" "$upload_output"
+    upload_output=$(run_insic "blob" "upload" "$key3" "${upload_file}")
+    expect_success "Upload blob 3 ('$key3')" "$?" "$upload_output"
+    
+    # 2. Upload a blob with a different prefix
+    upload_output=$(run_insic "blob" "upload" "$key4" "${upload_file}")
+    expect_success "Upload blob 4 ('$key4')" "$?" "$upload_output"
+
+    # 3. Iterate with the common prefix and verify results
+    echo -e "\n${INFO_EMOJI} Iterating with prefix '${prefix}'..."
+    local iterate_output
+    iterate_output=$(run_insic "blob" "iterate" "${prefix}")
+    local iterate_exit_code=$?
+    
+    if [ "$iterate_exit_code" -eq 0 ]; then
+        # Check for expected keys
+        if echo "$iterate_output" | grep -q "^${key1}$" && \
+           echo "$iterate_output" | grep -q "^${key2}$" && \
+           echo "$iterate_output" | grep -q "^${key3}$"; then
+            echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Iterate found all 3 expected blobs.${NC}"
+            SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+        else
+            echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Iterate did not find all expected blobs with prefix '${prefix}'.${NC}"
+            echo -e "   Output:\n${iterate_output}"
+            FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+        fi
+        
+        # Check for unexpected key
+        if ! echo "$iterate_output" | grep -q "^${key4}$"; then
+            echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Iterate did not find unexpected blob '${key4}'.${NC}"
+            SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+        else
+            echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Iterate found unexpected blob '${key4}'.${NC}"
+            echo -e "   Output:\n${iterate_output}"
+            FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+        fi
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Iterate command failed with exit code ${iterate_exit_code}.${NC}"
+        echo -e "   Output:\n${iterate_output}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+
+    # 4. Test iteration with limit
+    echo -e "\n${INFO_EMOJI} Testing iteration with limit..."
+    local iterate_limit_output
+    iterate_limit_output=$(run_insic "blob" "iterate" "${prefix}" "0" "2")
+    local iterate_limit_exit_code=$?
+    # Filter for only the keys themselves, which don't have spaces, unlike log lines.
+    local line_count
+    line_count=$(echo "$iterate_limit_output" | grep -v ' ' | grep -c .)
+    if [ "$iterate_limit_exit_code" -eq 0 ] && [ "$line_count" -eq 2 ]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Iterate with limit=2 returned 2 keys.${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Iterate with limit=2 did not return 2 keys (got ${line_count}).${NC}"
+        echo -e "   Output:\n${iterate_limit_output}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+    
+    # 5. Test iteration with offset
+    echo -e "\n${INFO_EMOJI} Testing iteration with offset..."
+    # We expect 3 total. With offset 2 and limit 2, we should get 1.
+    local iterate_offset_output
+    iterate_offset_output=$(run_insic "blob" "iterate" "${prefix}" "2" "2")
+    local iterate_offset_exit_code=$?
+    local offset_line_count
+    offset_line_count=$(echo "$iterate_offset_output" | grep -v ' ' | grep -c .)
+    if [ "$iterate_offset_exit_code" -eq 0 ] && [ "$offset_line_count" -eq 1 ]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Iterate with offset=2, limit=2 returned 1 key.${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Iterate with offset=2, limit=2 did not return 1 key (got ${offset_line_count}).${NC}"
+        echo -e "   Output:\n${iterate_offset_output}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+
+    # 6. Test iterating for a prefix that should return no results
+    echo -e "\n${INFO_EMOJI} Testing iteration with a non-existent prefix..."
+    local no_results_output
+    no_results_output=$(run_insic "blob" "iterate" "nonexistentprefix_12345")
+    local no_results_exit_code=$?
+    # The command should succeed but output should contain a "not found" message.
+    if [ "$no_results_exit_code" -eq 0 ] && echo "$no_results_output" | grep -q "No blob keys found"; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Iterate with non-existent prefix correctly reported no keys.${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Iterate with non-existent prefix failed or returned unexpected output.${NC}"
+        echo -e "   Exit Code: ${no_results_exit_code}"
+        echo -e "   Output:\n${no_results_output}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+
+    # 7. Cleanup
+    echo -e "\n${INFO_EMOJI} Cleaning up uploaded blobs..."
+    run_insic "blob" "delete" "$key1" > /dev/null
+    run_insic "blob" "delete" "$key2" > /dev/null
+    run_insic "blob" "delete" "$key3" > /dev/null
+    run_insic "blob" "delete" "$key4" > /dev/null
+    echo -e "${INFO_EMOJI} Cleanup complete."
+}
 
 # --- Main Execution ---
 main() {
@@ -311,6 +428,7 @@ main() {
     fi
 
     test_blob_lifecycle
+    test_blob_iteration
 
     print_header "Test Summary"
     echo -e "${SUCCESS_EMOJI} Successful tests: ${SUCCESSFUL_TESTS_COUNT}"

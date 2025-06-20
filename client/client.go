@@ -582,7 +582,8 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 			isDataGetOperation := method == http.MethodGet &&
 				(strings.HasPrefix(path, "db/api/v1/get") ||
 					strings.HasPrefix(path, "db/api/v1/cache/get") ||
-					strings.HasPrefix(path, "db/api/v1/iterate"))
+					strings.HasPrefix(path, "db/api/v1/iterate") ||
+					strings.HasPrefix(path, "db/api/v1/blob/iterate"))
 
 			if isDataGetOperation {
 				return ErrKeyNotFound
@@ -1360,8 +1361,14 @@ func (c *Client) DeleteBlob(key string) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 	payload := map[string]string{"key": key}
-	// Server returns 202 Accepted on success. doRequest considers any 2xx as success.
-	return c.doRequest(http.MethodPost, "db/api/v1/blob/delete", nil, payload, nil)
+	err := c.doRequest(http.MethodPost, "db/api/v1/blob/delete", nil, payload, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return ErrKeyNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 // IterateBlobKeysByPrefix retrieves a list of blob keys matching a given prefix.
