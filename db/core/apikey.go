@@ -106,7 +106,7 @@ func (c *Core) apiKeyCreateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
 		return
 	}
 
@@ -152,7 +152,7 @@ func (c *Core) apiKeyDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
 		return
 	}
 

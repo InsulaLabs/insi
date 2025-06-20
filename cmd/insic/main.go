@@ -96,7 +96,7 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 		ConnectionType: client.ConnectionTypeDirect,
 		Endpoints: []client.Endpoint{
 			{
-				HostPort:     nodeDetails.HttpBinding,
+				HostPort:     nodeDetails.PublicBinding,
 				ClientDomain: nodeDetails.ClientDomain,
 			},
 		},
@@ -105,7 +105,7 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 		Logger:     clientLogger,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.HttpBinding, err)
+		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.PublicBinding, err)
 	}
 	return c, nil
 }
@@ -659,11 +659,11 @@ func handleJoin(args []string) {
 	logger.Info(
 		"Attempting to join follower",
 		"follower_id", color.CyanString(followerNodeID),
-		"follower_raft_addr", followerDetails.RaftBinding,
+		"follower_raft_addr", followerDetails.PrivateBinding,
 		"via_leader", color.CyanString(leaderNodeID),
 	)
 
-	err = leaderClient.Join(followerNodeID, followerDetails.RaftBinding)
+	err = leaderClient.Join(followerNodeID, followerDetails.PrivateBinding)
 	if err != nil {
 		logger.Error("Join failed", "leader_node", leaderNodeID, "follower_node", followerNodeID, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
@@ -837,7 +837,7 @@ func handleApiVerify(args []string) {
 		ConnectionType: client.ConnectionTypeDirect,
 		Endpoints: []client.Endpoint{
 			{
-				HostPort:     nodeDetails.HttpBinding,
+				HostPort:     nodeDetails.PublicBinding,
 				ClientDomain: nodeDetails.ClientDomain,
 			},
 		},

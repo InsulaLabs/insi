@@ -15,10 +15,10 @@ const (
 )
 
 type Node struct {
-	RaftBinding  string `yaml:"raftBinding"`
-	HttpBinding  string `yaml:"httpBinding"`
-	NodeSecret   string `yaml:"nodeSecret"`
-	ClientDomain string `yaml:"clientDomain,omitempty"`
+	PrivateBinding string `yaml:"privateBinding"`
+	PublicBinding  string `yaml:"publicBinding"`
+	NodeSecret     string `yaml:"nodeSecret"`
+	ClientDomain   string `yaml:"clientDomain,omitempty"`
 }
 
 type Cache struct {
@@ -121,8 +121,8 @@ func LoadConfig(configFile string) (*Cluster, error) {
 
 	seenNodeSecrets := make(map[string]bool)
 	for _, node := range cfg.Nodes {
-		if node.RaftBinding == "" || node.HttpBinding == "" {
-			return nil, errors.New("raftBinding and httpBinding are required for each node")
+		if node.PrivateBinding == "" || node.PublicBinding == "" {
+			return nil, errors.New("privateBinding and publicBinding are required for each node")
 		}
 		if seenNodeSecrets[node.NodeSecret] {
 			return nil, ErrDuplicateNodeSecret
@@ -221,23 +221,23 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 	}
 
 	cfg.Nodes["node0"] = Node{
-		RaftBinding:  "127.0.0.1:7000",
-		HttpBinding:  "127.0.0.1:7001",
-		NodeSecret:   "node0_secret_please_change_!!!",
-		ClientDomain: "localhost",
+		PrivateBinding: "127.0.0.1:7000",
+		PublicBinding:  "127.0.0.1:7001",
+		NodeSecret:     "node0_secret_please_change_!!!",
+		ClientDomain:   "localhost",
 	}
 	// Add more nodes if desired for a default multi-node setup example
 	cfg.Nodes["node1"] = Node{
-		RaftBinding:  "127.0.0.1:7002",
-		HttpBinding:  "127.0.0.1:7003",
-		NodeSecret:   "node1_secret_please_change_!!!",
-		ClientDomain: "localhost",
+		PrivateBinding: "127.0.0.1:7002",
+		PublicBinding:  "127.0.0.1:7003",
+		NodeSecret:     "node1_secret_please_change_!!!",
+		ClientDomain:   "localhost",
 	}
 	cfg.Nodes["node2"] = Node{
-		RaftBinding:  "127.0.0.1:7004",
-		HttpBinding:  "127.0.0.1:7005",
-		NodeSecret:   "node2_secret_please_change_!!!",
-		ClientDomain: "localhost",
+		PrivateBinding: "127.0.0.1:7004",
+		PublicBinding:  "127.0.0.1:7005",
+		NodeSecret:     "node2_secret_please_change_!!!",
+		ClientDomain:   "localhost",
 	}
 
 	// The configFile argument is not used by this function to generate the content,

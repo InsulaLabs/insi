@@ -17,8 +17,15 @@ import (
 	"github.com/google/uuid"
 )
 
+type routeClassification int
+
+const (
+	rcPublic routeClassification = iota
+	rcPrivate
+)
+
 // used by all endpoints to redirect WRITE related operations to the leader
-func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string) {
+func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string, routeClassification routeClassification) {
 
 	leaderConnectAddress, err := c.fsm.LeaderHTTPAddress()
 	if err != nil {
@@ -34,6 +41,8 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 		)
 		return
 	}
+
+	// Need to locate leader host port and determine if routeClassification means we should add the private port
 
 	redirectURL := "https://" + leaderConnectAddress + originalPath
 	if r.URL.RawQuery != "" {
@@ -80,7 +89,7 @@ func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {
 
 func (c *Core) joinHandler(w http.ResponseWriter, r *http.Request) {
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
 		return
 	}
 
@@ -556,7 +565,7 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
 		return
 	}
 

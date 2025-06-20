@@ -367,7 +367,7 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
 		return
 	}
 

@@ -178,7 +178,7 @@ func New(settings Settings) (FSMInstance, error) {
 		eventRecvr: settings.EventReceiver,
 	}
 
-	currentRaftAdvertiseAddr := settings.NodeCfg.RaftBinding
+	currentRaftAdvertiseAddr := settings.NodeCfg.PrivateBinding
 	isDefaultLeader := settings.NodeId == settings.Config.DefaultLeader
 
 	raftInstance, err := setupRaft(&SetupConfig{
@@ -803,7 +803,7 @@ func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {
 	var leaderNodeConfig config.Node
 	found := false
 	for nodeID, nodeCfg := range fsm.cfg.Nodes { // Iterate to find the node with this RaftBinding
-		if nodeCfg.RaftBinding == string(leaderRaftAddr) {
+		if nodeCfg.PrivateBinding == string(leaderRaftAddr) {
 			leaderNodeID = nodeID // Capture for logging
 			leaderNodeConfig = nodeCfg
 			found = true
@@ -817,14 +817,14 @@ func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {
 
 	// HttpBinding itself is host:port.
 	// ClientDomain is just a host.
-	hostPartFromBinding, portPart, err := net.SplitHostPort(leaderNodeConfig.HttpBinding)
+	hostPartFromBinding, portPart, err := net.SplitHostPort(leaderNodeConfig.PublicBinding)
 	if err != nil {
-		fsm.logger.Error("Failed to parse leader HttpBinding in LeaderHTTPAddress",
+		fsm.logger.Error("Failed to parse leader PublicBinding in LeaderHTTPAddress",
 			"leader_node_id", leaderNodeID,
-			"http_binding", leaderNodeConfig.HttpBinding,
+			"public_binding", leaderNodeConfig.PublicBinding,
 			"error", err)
-		// Fallback to returning the raw HttpBinding; the caller (redirectToLeader) will attempt to parse it again or use as is.
-		return leaderNodeConfig.HttpBinding, nil
+		// Fallback to returning the raw PublicBinding; the caller (redirectToLeader) will attempt to parse it again or use as is.
+		return leaderNodeConfig.PublicBinding, nil
 	}
 
 	addressToReturn := ""

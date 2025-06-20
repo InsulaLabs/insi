@@ -96,7 +96,7 @@ func getClient(configPath, targetNode string, useRootKey bool) (*client.Client, 
 	c, err := client.NewClient(&client.Config{
 		ConnectionType: client.ConnectionTypeDirect,
 		Endpoints: []client.Endpoint{
-			{HostPort: nodeDetails.HttpBinding, ClientDomain: nodeDetails.ClientDomain},
+			{HostPort: nodeDetails.PublicBinding, ClientDomain: nodeDetails.ClientDomain},
 		},
 		ApiKey:     apiKey,
 		SkipVerify: clusterCfg.ClientSkipVerify,

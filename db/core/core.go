@@ -67,7 +67,8 @@ type Core struct {
 	identity  badge.Badge
 	fsm       rft.FSMInstance
 	authToken string
-	mux       *http.ServeMux
+	pubMux    *http.ServeMux
+	privMux   *http.ServeMux
 
 	startedAt time.Time
 
@@ -82,6 +83,12 @@ type Core struct {
 	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
 
 	apiCache *ttlcache.Cache[string, models.TokenData]
+}
+
+type serverInstance struct {
+	binding string
+	mux     *http.ServeMux
+	server  *http.Server
 }
 
 func (c *Core) GetRootClientKey() string {
@@ -104,7 +111,7 @@ func (s *Core) AddHandler(path string, handler http.Handler) error {
 	if !s.startedAt.IsZero() {
 		return fmt.Errorf("service already started, cannot add handler after startup")
 	}
-	s.mux.Handle(path, handler)
+	s.pubMux.Handle(path, handler)
 	return nil
 }
 
@@ -199,7 +206,8 @@ func New(
 		fsm:              fsm,
 		authToken:        authToken,
 		rateLimiters:     rateLimiters,
-		mux:              http.NewServeMux(),
+		pubMux:           http.NewServeMux(),
+		privMux:          http.NewServeMux(),
 		eventSubscribers: make(map[string]map[*eventSession]bool),
 		wsUpgrader: websocket.Upgrader{
 			ReadBufferSize:  clusterCfg.Sessions.WebSocketReadBufferSize,
@@ -236,9 +244,9 @@ func (c *Core) getRemoteAddress(r *http.Request) string {
 	}
 
 	for _, node := range c.cfg.Nodes {
-		nodeHost, _, err := net.SplitHostPort(node.HttpBinding)
+		nodeHost, _, err := net.SplitHostPort(node.PublicBinding)
 		if err != nil {
-			c.logger.Warn("Could not parse node httpBinding", "binding", node.HttpBinding, "error", err)
+			c.logger.Warn("Could not parse node publicBinding", "binding", node.PublicBinding, "error", err)
 			continue
 		}
 		trusted[nodeHost] = struct{}{}
@@ -317,17 +325,6 @@ func (c *Core) ipFilterMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (c *Core) WithRoute(path string, handler http.Handler, limit int, burst int) {
-	limiter := rate.NewLimiter(rate.Limit(limit), burst)
-	c.mux.Handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow() {
-			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	}))
-}
-
 func (c *Core) isPermittedIP(r *http.Request) bool {
 	// If no IPs are configured, deny all traffic for security.
 	if len(c.cfg.PermittedIPs) == 0 {
@@ -348,61 +345,88 @@ func (c *Core) isPermittedIP(r *http.Request) bool {
 // Run forever until the context is cancelled
 func (c *Core) Run() {
 
-	// Values handlers
-	c.mux.Handle("/db/api/v1/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setHandler), "values")))
-	c.mux.Handle("/db/api/v1/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values")))
-	c.mux.Handle("/db/api/v1/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values")))
-	c.mux.Handle("/db/api/v1/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values")))
-	c.mux.Handle("/db/api/v1/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setNXHandler), "values")))
-	c.mux.Handle("/db/api/v1/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values")))
-	c.mux.Handle("/db/api/v1/bump", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.bumpHandler), "values")))
+	makePublicMux := func(binding string) *serverInstance {
 
-	// Cache handlers
-	c.mux.Handle("/db/api/v1/cache/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache")))
+		// Values handlers
+		c.pubMux.Handle("/db/api/v1/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setNXHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/bump", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.bumpHandler), "values")))
 
-	// Events handlers
-	c.mux.Handle("/db/api/v1/events", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events")))
-	c.mux.Handle("/db/api/v1/events/subscribe", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events")))
+		// Cache handlers
+		c.pubMux.Handle("/db/api/v1/cache/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache")))
 
-	// System handlers
-	c.mux.Handle("/db/api/v1/join", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system")))
-	c.mux.Handle("/db/api/v1/ping", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system")))
+		// Events handlers
+		c.pubMux.Handle("/db/api/v1/events", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events")))
+		c.pubMux.Handle("/db/api/v1/events/subscribe", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events")))
 
-	// System handle anyone can call with an api key to get their current usage and limits
-	c.mux.Handle("/db/api/v1/limits", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system")))
+		c.pubMux.Handle("/db/api/v1/ping", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system")))
 
-	// Only ROOT can set limits
-	c.mux.Handle("/db/api/v1/admin/limits/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system")))
+		// System handle anyone can call with an api key to get their current usage and limits
+		c.pubMux.Handle("/db/api/v1/limits", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system")))
 
-	// Admin API Key Management handlers (system category for rate limiting)
-	c.mux.Handle("/db/api/v1/admin/api/create", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system")))
-	c.mux.Handle("/db/api/v1/admin/api/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system")))
-
-	// Only ROOT can get limits for specific keys
-	c.mux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
-
-	httpListenAddr := c.nodeCfg.HttpBinding
-	c.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != ""))
-
-	srv := &http.Server{
-		Addr:    httpListenAddr,
-		Handler: c.mux,
+		return &serverInstance{
+			binding: binding,
+			mux:     c.pubMux,
+			server:  nil,
+		}
 	}
 
-	go func() {
-		<-c.appCtx.Done()
-		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancelShutdown()
+	makePrivateMux := func(binding string) *serverInstance {
 
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			c.logger.Error("Server shutdown error", "error", err)
+		// System handlers
+		c.privMux.Handle("/db/api/v1/join", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system")))
+
+		// Only ROOT can set limits
+		c.privMux.Handle("/db/api/v1/admin/limits/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system")))
+
+		// Admin API Key Management handlers (system category for rate limiting)
+		c.privMux.Handle("/db/api/v1/admin/api/create", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/api/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system")))
+
+		// Only ROOT can get limits for specific keys
+		c.privMux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
+
+		return &serverInstance{
+			binding: binding,
+			mux:     c.privMux,
+			server:  nil,
 		}
-	}()
+	}
+
+	httpListenAddr := c.nodeCfg.PublicBinding
+	c.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != ""))
+
+	makeHttpServer := func(srv *serverInstance) *serverInstance {
+
+		srv.server = &http.Server{
+			Addr:    srv.binding,
+			Handler: srv.mux,
+		}
+
+		go func() {
+			<-c.appCtx.Done()
+			shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelShutdown()
+
+			if err := srv.server.Shutdown(shutdownCtx); err != nil {
+				c.logger.Error("Server shutdown error", "error", err)
+			}
+		}()
+
+		return srv
+	}
+
+	pub := makeHttpServer(makePublicMux(c.nodeCfg.PublicBinding))
+	priv := makeHttpServer(makePrivateMux(c.nodeCfg.PrivateBinding))
 
 	/*
 		Ensure root tracking exists and start the tombstone runner
@@ -421,19 +445,35 @@ func (c *Core) Run() {
 	}()
 
 	c.startedAt = time.Now()
+	wg := sync.WaitGroup{}
 
-	if c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != "" {
-		c.logger.Info("Starting HTTPS server", "cert", c.cfg.TLS.Cert, "key", c.cfg.TLS.Key)
-		srv.TLSConfig = &tls.Config{}
-		if err := srv.ListenAndServeTLS(c.cfg.TLS.Cert, c.cfg.TLS.Key); err != http.ErrServerClosed {
-			c.logger.Error("HTTPS server error", "error", err)
-		}
-	} else {
-		c.logger.Info("TLS cert or key not specified in config. Starting HTTP server (insecure).")
-		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			c.logger.Error("HTTP server error", "error", err)
-		}
+	launch := func(srv *serverInstance) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			if c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != "" {
+				c.logger.Info("Starting HTTPS server", "cert", c.cfg.TLS.Cert, "key", c.cfg.TLS.Key)
+				srv.server.TLSConfig = &tls.Config{}
+				if err := srv.server.ListenAndServeTLS(c.cfg.TLS.Cert, c.cfg.TLS.Key); err != http.ErrServerClosed {
+					c.logger.Error("HTTPS server error", "error", err)
+				}
+			} else {
+				c.logger.Info("TLS cert or key not specified in config. Starting HTTP server (insecure).")
+				if err := srv.server.ListenAndServe(); err != http.ErrServerClosed {
+					c.logger.Error("HTTP server error", "error", err)
+				}
+			}
+		}()
 	}
+
+	/*
+		Signal will kill the servers which will free these contexts
+		which will allow the main context to exit
+	*/
+	launch(pub)
+	launch(priv)
+	wg.Wait()
 
 	stopWg := sync.WaitGroup{}
 
