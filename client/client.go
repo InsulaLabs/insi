@@ -73,6 +73,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -95,7 +96,7 @@ var (
 	MaximumRedirects      = 5 // Scale up if cluster > 5 nodes
 	WebSocketTimeout      = 10 * time.Second
 	WebSocketPingInterval = 30 * time.Second
-	ObjectClientTimeout   = 10 * time.Minute
+	ObjectClientTimeout   = 30 * time.Minute
 )
 
 var (
@@ -175,12 +176,13 @@ type Endpoint struct {
 }
 
 type Config struct {
-	ConnectionType ConnectionType // Direct will use Endpoints[0] always
-	Endpoints      []Endpoint
-	ApiKey         string
-	SkipVerify     bool
-	Timeout        time.Duration
-	Logger         *slog.Logger
+	ConnectionType         ConnectionType // Direct will use Endpoints[0] always
+	Endpoints              []Endpoint
+	ApiKey                 string
+	SkipVerify             bool
+	Timeout                time.Duration
+	Logger                 *slog.Logger
+	EnableLeaderStickiness bool // Set to true to enable the client to "stick" to a leader upon redirect. Defaults to false (stickiness disabled).
 }
 
 type ErrorResponse struct {
@@ -190,27 +192,40 @@ type ErrorResponse struct {
 
 // Client is the API client for the insi service.
 type Client struct {
-	publicBaseURL   *url.URL
-	privateBaseURL  *url.URL
-	httpClient      *http.Client
-	apiKey          string
-	logger          *slog.Logger
-	redirectCoutner atomic.Uint64
+	mu                     sync.RWMutex // To protect endpoint URLs
+	publicBaseURL          *url.URL
+	privateBaseURL         *url.URL
+	httpClient             *http.Client
+	objectClient           *http.Client
+	apiKey                 string
+	logger                 *slog.Logger
+	redirectCoutner        atomic.Uint64
+	endpoints              []Endpoint // Store all potential endpoints
+	enableLeaderStickiness bool
 }
 
 func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return &Client{
-		publicBaseURL:   c.publicBaseURL,
-		privateBaseURL:  c.privateBaseURL,
-		httpClient:      c.httpClient,
-		apiKey:          apiKey,
-		logger:          c.logger.WithGroup(name),
-		redirectCoutner: atomic.Uint64{},
+		publicBaseURL:          c.publicBaseURL,
+		privateBaseURL:         c.privateBaseURL,
+		httpClient:             c.httpClient,
+		objectClient:           c.objectClient,
+		apiKey:                 apiKey,
+		logger:                 c.logger.WithGroup(name),
+		redirectCoutner:        atomic.Uint64{},
+		endpoints:              c.endpoints, // Propagate endpoints
+		enableLeaderStickiness: c.enableLeaderStickiness,
 	}
 }
 
 func (c *Client) GetHttpClient() *http.Client {
 	return c.httpClient
+}
+
+func (c *Client) GetObjectHttpClient() *http.Client {
+	return c.objectClient
 }
 
 // NewClient creates a new insi API client.
@@ -294,6 +309,14 @@ func NewClient(cfg *Config) (*Client, error) {
 		},
 	}
 
+	objectClient := &http.Client{
+		Transport: transport,
+		Timeout:   ObjectClientTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
 	clientLogger.Debug(
 		"Insi client initialized",
 		"public_base_url", publicBaseURL.String(),
@@ -302,12 +325,15 @@ func NewClient(cfg *Config) (*Client, error) {
 	)
 
 	return &Client{
-		publicBaseURL:   publicBaseURL,
-		privateBaseURL:  privateBaseURL,
-		httpClient:      httpClient,
-		apiKey:          cfg.ApiKey,
-		logger:          clientLogger,
-		redirectCoutner: atomic.Uint64{},
+		publicBaseURL:          publicBaseURL,
+		privateBaseURL:         privateBaseURL,
+		httpClient:             httpClient,
+		objectClient:           objectClient,
+		apiKey:                 cfg.ApiKey,
+		logger:                 clientLogger,
+		redirectCoutner:        atomic.Uint64{},
+		endpoints:              cfg.Endpoints,
+		enableLeaderStickiness: cfg.EnableLeaderStickiness,
 	}, nil
 }
 
@@ -336,12 +362,14 @@ func isPrivatePath(path string) bool {
 func (c *Client) doRequest(method, path string, queryParams map[string]string, body interface{}, target interface{}) error {
 	originalMethod := method // Save original method to preserve it across redirects
 
+	c.mu.RLock()
 	var baseURL *url.URL
 	if isPrivatePath(path) {
 		baseURL = c.privateBaseURL
 	} else {
 		baseURL = c.publicBaseURL
 	}
+	c.mu.RUnlock()
 
 	// Construct the initial URL
 	initialPathURL := &url.URL{Path: path}
@@ -448,6 +476,13 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
 				c.redirectCoutner.Add(1)
+				// This is a leader redirect. Update the client to stick to the new leader for future requests.
+				if c.enableLeaderStickiness {
+					if err := c.setLeader(redirectURL); err != nil {
+						// Log the error but continue; the redirect will be handled for this single request anyway.
+						c.logger.Warn("Failed to set sticky leader from redirect", "error", err)
+					}
+				}
 			}
 
 			currentReqURL = redirectURL // Update URL for the next iteration
@@ -1211,7 +1246,7 @@ func (c *Client) UploadBlob(ctx context.Context, key string, data io.Reader, fil
 
 		c.logger.Debug("Sending blob upload request", "url", currentReqURL.String())
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.objectClient.Do(req)
 		if err != nil {
 			if lastResp != nil && lastResp.Body != nil {
 				lastResp.Body.Close()
@@ -1241,6 +1276,13 @@ func (c *Client) UploadBlob(ctx context.Context, key string, data io.Reader, fil
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
 				c.redirectCoutner.Add(1)
+				// This is a leader redirect. Update the client to stick to the new leader for future requests.
+				if c.enableLeaderStickiness {
+					if err := c.setLeader(redirectURL); err != nil {
+						// Log the error but continue; the redirect will be handled for this single request anyway.
+						c.logger.Warn("Failed to set sticky leader from blob redirect", "error", err)
+					}
+				}
 			}
 			continue
 		}
@@ -1300,7 +1342,7 @@ func (c *Client) GetBlob(ctx context.Context, key string) (io.ReadCloser, error)
 
 		c.logger.Debug("Sending get blob request", "url", currentReqURL.String())
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.objectClient.Do(req)
 		if err != nil {
 			if lastResp != nil && lastResp.Body != nil {
 				lastResp.Body.Close()
@@ -1329,6 +1371,13 @@ func (c *Client) GetBlob(ctx context.Context, key string) (io.ReadCloser, error)
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
 				c.redirectCoutner.Add(1)
+				// This is a leader redirect. Update the client to stick to the new leader for future requests.
+				if c.enableLeaderStickiness {
+					if err := c.setLeader(redirectURL); err != nil {
+						// Log the error but continue; the redirect will be handled for this single request anyway.
+						c.logger.Warn("Failed to set sticky leader from blob redirect", "error", err)
+					}
+				}
 			}
 			continue
 		}
@@ -1389,4 +1438,53 @@ func (c *Client) IterateBlobKeysByPrefix(prefix string, offset, limit int) ([]st
 		return nil, err
 	}
 	return response.Data, nil
+}
+
+// setLeader updates the client's public and private base URLs to point to the new leader.
+// It finds the correct endpoint configuration by matching the host of the leader's URL.
+func (c *Client) setLeader(leaderURL *url.URL) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check if we are already pointing to the correct leader to avoid unnecessary work.
+	if c.publicBaseURL.Host == leaderURL.Host || c.privateBaseURL.Host == leaderURL.Host {
+		return nil
+	}
+
+	// Helper function to create a base URL from binding information.
+	createBaseURL := func(binding, clientDomain string) (*url.URL, error) {
+		host, port, err := net.SplitHostPort(binding)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse binding '%s': %w", binding, err)
+		}
+		connectHost := host
+		if clientDomain != "" {
+			connectHost = clientDomain
+		}
+		finalConnectAddress := net.JoinHostPort(connectHost, port)
+		baseURLStr := fmt.Sprintf("https://%s", finalConnectAddress)
+		return url.Parse(baseURLStr)
+	}
+
+	for _, endpoint := range c.endpoints {
+		// Generate the potential public and private URLs for the current endpoint config.
+		potentialPublicURL, err := createBaseURL(endpoint.PublicBinding, endpoint.ClientDomain)
+		if err != nil {
+			continue // Skip malformed endpoints
+		}
+		potentialPrivateURL, err := createBaseURL(endpoint.PrivateBinding, endpoint.ClientDomain)
+		if err != nil {
+			continue
+		}
+
+		// If the host from the redirect matches either the public or private host of this endpoint, we've found our leader.
+		if potentialPublicURL.Host == leaderURL.Host || potentialPrivateURL.Host == leaderURL.Host {
+			c.logger.Info("Redirect detected. Sticking to new leader.", "leader_host", leaderURL.Host)
+			c.publicBaseURL = potentialPublicURL
+			c.privateBaseURL = potentialPrivateURL
+			return nil
+		}
+	}
+
+	return fmt.Errorf("could not find matching endpoint for leader host: %s", leaderURL.Host)
 }
