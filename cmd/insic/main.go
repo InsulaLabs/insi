@@ -96,8 +96,9 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 		ConnectionType: client.ConnectionTypeDirect,
 		Endpoints: []client.Endpoint{
 			{
-				HostPort:     nodeDetails.PublicBinding,
-				ClientDomain: nodeDetails.ClientDomain,
+				PublicBinding:  nodeDetails.PublicBinding,
+				PrivateBinding: nodeDetails.PrivateBinding,
+				ClientDomain:   nodeDetails.ClientDomain,
 			},
 		},
 		ApiKey:     apiKey,
@@ -659,7 +660,7 @@ func handleJoin(args []string) {
 	logger.Info(
 		"Attempting to join follower",
 		"follower_id", color.CyanString(followerNodeID),
-		"follower_raft_addr", followerDetails.PrivateBinding,
+		"follower_raft_addr", followerDetails.RaftBinding,
 		"via_leader", color.CyanString(leaderNodeID),
 	)
 
@@ -837,8 +838,9 @@ func handleApiVerify(args []string) {
 		ConnectionType: client.ConnectionTypeDirect,
 		Endpoints: []client.Endpoint{
 			{
-				HostPort:     nodeDetails.PublicBinding,
-				ClientDomain: nodeDetails.ClientDomain,
+				PublicBinding:  nodeDetails.PublicBinding,
+				PrivateBinding: nodeDetails.PrivateBinding,
+				ClientDomain:   nodeDetails.ClientDomain,
 			},
 		},
 		ApiKey:     apiKeyToVerify,

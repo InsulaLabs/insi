@@ -15,6 +15,7 @@ const (
 )
 
 type Node struct {
+	RaftBinding    string `yaml:"raftBinding"`
 	PrivateBinding string `yaml:"privateBinding"`
 	PublicBinding  string `yaml:"publicBinding"`
 	NodeSecret     string `yaml:"nodeSecret"`
@@ -121,8 +122,8 @@ func LoadConfig(configFile string) (*Cluster, error) {
 
 	seenNodeSecrets := make(map[string]bool)
 	for _, node := range cfg.Nodes {
-		if node.PrivateBinding == "" || node.PublicBinding == "" {
-			return nil, errors.New("privateBinding and publicBinding are required for each node")
+		if node.RaftBinding == "" || node.PrivateBinding == "" || node.PublicBinding == "" {
+			return nil, errors.New("raftBinding, privateBinding and publicBinding are required for each node")
 		}
 		if seenNodeSecrets[node.NodeSecret] {
 			return nil, ErrDuplicateNodeSecret
@@ -221,20 +222,23 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 	}
 
 	cfg.Nodes["node0"] = Node{
-		PrivateBinding: "127.0.0.1:7000",
+		RaftBinding:    "127.0.0.1:7000",
+		PrivateBinding: "127.0.0.1:8080",
 		PublicBinding:  "127.0.0.1:7001",
 		NodeSecret:     "node0_secret_please_change_!!!",
 		ClientDomain:   "localhost",
 	}
 	// Add more nodes if desired for a default multi-node setup example
 	cfg.Nodes["node1"] = Node{
-		PrivateBinding: "127.0.0.1:7002",
+		RaftBinding:    "127.0.0.1:7002",
+		PrivateBinding: "127.0.0.1:8081",
 		PublicBinding:  "127.0.0.1:7003",
 		NodeSecret:     "node1_secret_please_change_!!!",
 		ClientDomain:   "localhost",
 	}
 	cfg.Nodes["node2"] = Node{
-		PrivateBinding: "127.0.0.1:7004",
+		RaftBinding:    "127.0.0.1:7004",
+		PrivateBinding: "127.0.0.1:8082",
 		PublicBinding:  "127.0.0.1:7005",
 		NodeSecret:     "node2_secret_please_change_!!!",
 		ClientDomain:   "localhost",

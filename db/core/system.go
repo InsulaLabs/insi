@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ const (
 // used by all endpoints to redirect WRITE related operations to the leader
 func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string, routeClassification routeClassification) {
 
-	leaderConnectAddress, err := c.fsm.LeaderHTTPAddress()
+	leaderInfo, err := c.fsm.LeaderHTTPAddress()
 	if err != nil {
 		c.logger.Error(
 			"Failed to get leader's connect address for redirection",
@@ -42,7 +43,25 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 		return
 	}
 
-	// Need to locate leader host port and determine if routeClassification means we should add the private port
+	var leaderConnectAddress string
+
+	switch routeClassification {
+	case rcPublic:
+		leaderConnectAddress = leaderInfo.PublicBinding
+
+	case rcPrivate:
+		leaderConnectAddress = leaderInfo.PrivateBinding
+	}
+
+	// parse the public and private bindings
+	_, port, err := net.SplitHostPort(leaderConnectAddress)
+
+	// determine the address to return based on the client domain
+	// essentially, if a "domain" is provided, we use it to construct the
+	// address as "domain:port" rather than "ip:port"
+	if err == nil && leaderInfo.ClientDomain != "" {
+		leaderConnectAddress = net.JoinHostPort(leaderInfo.ClientDomain, port)
+	}
 
 	redirectURL := "https://" + leaderConnectAddress + originalPath
 	if r.URL.RawQuery != "" {

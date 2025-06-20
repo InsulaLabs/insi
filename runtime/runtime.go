@@ -180,9 +180,10 @@ func (r *Runtime) GetClientForToken(token string) (*client.Client, error) {
 		eps := make([]client.Endpoint, 0, len(r.clusterCfg.Nodes))
 		for nodeId, node := range r.clusterCfg.Nodes {
 			ep := client.Endpoint{
-				HostPort:     node.PublicBinding,
-				ClientDomain: node.ClientDomain,
-				Logger:       r.logger.With("service", "insiClient").With("node", nodeId),
+				PublicBinding:  node.PublicBinding,
+				PrivateBinding: node.PrivateBinding,
+				ClientDomain:   node.ClientDomain,
+				Logger:         r.logger.With("service", "insiClient").With("node", nodeId),
 			}
 			eps = append(eps, ep)
 		}

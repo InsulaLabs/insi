@@ -304,14 +304,16 @@ func generateClusterConfig(size int, homeDir string) (*config.Cluster, error) {
 
 	for i := 0; i < size; i++ {
 		nodeID := fmt.Sprintf("node%d", i)
-		httpPort := 8080 + i
+		publicPort := 8280 + i
+		privatePort := 9090 + i // Different port for private API
 		raftPort := 7070 + i
 
 		nodes[nodeID] = config.Node{
-			HttpBinding:  fmt.Sprintf("127.0.0.1:%d", httpPort),
-			RaftBinding:  fmt.Sprintf("127.0.0.1:%d", raftPort),
-			NodeSecret:   fmt.Sprintf("secret-for-%s", nodeID),
-			ClientDomain: "localhost",
+			PublicBinding:  fmt.Sprintf("127.0.0.1:%d", publicPort),
+			PrivateBinding: fmt.Sprintf("127.0.0.1:%d", privatePort),
+			RaftBinding:    fmt.Sprintf("127.0.0.1:%d", raftPort),
+			NodeSecret:     fmt.Sprintf("secret-for-%s", nodeID),
+			ClientDomain:   "localhost",
 		}
 		raftPeers[i] = nodes[nodeID].RaftBinding
 	}
@@ -346,6 +348,8 @@ func generateClusterConfig(size int, homeDir string) (*config.Cluster, error) {
 			WebSocketWriteBufferSize: 4096,
 			MaxConnections:           1000,
 		},
+		TrustedProxies: []string{"127.0.0.1", "::1"},
+		PermittedIPs:   []string{"127.0.0.1", "::1"},
 	}, nil
 }
 
@@ -353,8 +357,9 @@ func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 	endpoints := make([]client.Endpoint, 0, len(cfg.Nodes))
 	for _, node := range cfg.Nodes {
 		endpoints = append(endpoints, client.Endpoint{
-			HostPort:     node.HttpBinding,
-			ClientDomain: node.ClientDomain,
+			PublicBinding:  node.PublicBinding,
+			PrivateBinding: node.PrivateBinding,
+			ClientDomain:   node.ClientDomain,
 		})
 	}
 

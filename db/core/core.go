@@ -448,6 +448,7 @@ func (c *Core) Run() {
 	wg := sync.WaitGroup{}
 
 	launch := func(srv *serverInstance) {
+		color.HiGreen("Launching server %s", srv.binding)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
