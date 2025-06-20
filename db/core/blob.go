@@ -360,37 +360,6 @@ func (x *blobService) execTombstoneDeletion() {
 
 // ------------------------------- core routes -------------------------------
 
-func (c *Core) internalDownloadBlobHandler(w http.ResponseWriter, r *http.Request) {
-
-	_, ok := c.ValidateToken(r, RootOnly())
-	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// This is an internal handler, we assume the caller is trusted (another node).
-	// We can add more security here later, like checking against a list of peer IPs.
-	key := r.URL.Query().Get("key")
-	scope := r.URL.Query().Get("scope")
-	if key == "" || scope == "" {
-		http.Error(w, "Missing key or scope parameter", http.StatusBadRequest)
-		return
-	}
-
-	metadataKey := blobMetadataKey(scope, key)
-
-	// Check for tombstone first
-	tombstoneKey := KeyPrimitiveBlobTombstone + metadataKey
-	if _, err := c.fsm.Get(tombstoneKey); err == nil {
-		// Tombstone exists, treat as not found
-		http.NotFound(w, r)
-		return
-	}
-
-	blobPath := c.blobPath(scope, key)
-	http.ServeFile(w, r, blobPath)
-}
-
 func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
@@ -529,6 +498,35 @@ func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (c *Core) internalDownloadBlobHandler(w http.ResponseWriter, r *http.Request) {
+
+	_, ok := c.ValidateToken(r, RootOnly())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	key := r.URL.Query().Get("key")
+	scope := r.URL.Query().Get("scope")
+	if key == "" || scope == "" {
+		http.Error(w, "Missing key or scope parameter", http.StatusBadRequest)
+		return
+	}
+
+	metadataKey := blobMetadataKey(scope, key)
+
+	// Check for tombstone first
+	tombstoneKey := KeyPrimitiveBlobTombstone + metadataKey
+	if _, err := c.fsm.Get(tombstoneKey); err == nil {
+		// Tombstone exists, treat as not found
+		http.NotFound(w, r)
+		return
+	}
+
+	blobPath := c.blobPath(scope, key)
+	http.ServeFile(w, r, blobPath)
 }
 
 func (c *Core) getBlobHandler(w http.ResponseWriter, r *http.Request) {

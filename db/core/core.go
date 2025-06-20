@@ -848,6 +848,12 @@ func (c *Core) SubscribeInternally(topic string, handler func(event models.Event
 	c.logger.Info("New internal subscriber registered", "topic", topic)
 }
 
+/*
+
+	Core event processing
+
+*/
+
 func (c *Core) eventProcessingLoop() {
 	for {
 		select {
