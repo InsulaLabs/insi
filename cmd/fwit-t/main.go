@@ -92,6 +92,7 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error).")
 	disableChaos := flag.Bool("disable-chaos", false, "Disable the chaos monkey for deleting entities.")
 	numSubscribers := flag.Int("subscribers", 2, "Number of concurrent event subscribers to run.")
+	configFile := flag.String("config-file", "", "Path to an existing cluster config file. If provided, a local cluster will not be created.")
 	flag.Parse()
 
 	// Setup logger
@@ -116,55 +117,75 @@ func main() {
 	yellow := color.New(color.FgYellow)
 	red := color.New(color.FgRed)
 
-	// Create a temporary directory for the cluster
-	tempDir, err := os.MkdirTemp("", "insi-stress-test-*")
-	if err != nil {
-		red.Printf("❌ Failed to create temp dir: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() {
-		yellow.Printf("🧹 Cleaning up temporary directory: %s\n", tempDir)
-		os.RemoveAll(tempDir)
-	}()
-	cyan.Printf("📂 Created temporary directory for cluster data at %s\n", tempDir)
-
-	// Generate cluster configuration
-	cfg, err := generateClusterConfig(*clusterSize, tempDir)
-	if err != nil {
-		red.Printf("❌ Failed to generate cluster config: %v\n", err)
-		os.Exit(1)
-	}
-
-	configPath := filepath.Join(tempDir, "cluster.yaml")
-	configData, err := yaml.Marshal(cfg)
-	if err != nil {
-		red.Printf("❌ Failed to marshal config: %v\n", err)
-		os.Exit(1)
-	}
-	if err := os.WriteFile(configPath, configData, 0644); err != nil {
-		red.Printf("❌ Failed to write config file: %v\n", err)
-		os.Exit(1)
-	}
-	cyan.Printf("📜 Generated cluster configuration: %s\n", configPath)
-
-	// Setup and run the cluster runtime
-	rt, err := runtime.New([]string{"--config", configPath, "--host"}, configPath)
-	if err != nil {
-		red.Printf("❌ Failed to create runtime: %v\n", err)
-		os.Exit(1)
-	}
-
+	var cfg *config.Cluster
+	var rt *runtime.Runtime
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := rt.Run(); err != nil {
-			red.Printf("❌ Runtime exited with error: %v\n", err)
-		}
-	}()
+	var err error
 
-	cyan.Printf("⏳ Waiting for cluster to initialize and for root trackers to be set... (15s)\n")
-	time.Sleep(15 * time.Second)
+	if *configFile == "" {
+		cyan.Printf("🚀 Starting a new local cluster of size %d\n", *clusterSize)
+		// Create a temporary directory for the cluster
+		tempDir, err := os.MkdirTemp("", "insi-stress-test-*")
+		if err != nil {
+			red.Printf("❌ Failed to create temp dir: %v\n", err)
+			os.Exit(1)
+		}
+		defer func() {
+			yellow.Printf("🧹 Cleaning up temporary directory: %s\n", tempDir)
+			os.RemoveAll(tempDir)
+		}()
+		cyan.Printf("📂 Created temporary directory for cluster data at %s\n", tempDir)
+
+		// Generate cluster configuration
+		cfg, err = generateClusterConfig(*clusterSize, tempDir)
+		if err != nil {
+			red.Printf("❌ Failed to generate cluster config: %v\n", err)
+			os.Exit(1)
+		}
+
+		configPath := filepath.Join(tempDir, "cluster.yaml")
+		configData, err := yaml.Marshal(cfg)
+		if err != nil {
+			red.Printf("❌ Failed to marshal config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(configPath, configData, 0644); err != nil {
+			red.Printf("❌ Failed to write config file: %v\n", err)
+			os.Exit(1)
+		}
+		cyan.Printf("📜 Generated cluster configuration: %s\n", configPath)
+
+		// Setup and run the cluster runtime
+		rt, err = runtime.New([]string{"--config", configPath, "--host"}, configPath)
+		if err != nil {
+			red.Printf("❌ Failed to create runtime: %v\n", err)
+			os.Exit(1)
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := rt.Run(); err != nil {
+				red.Printf("❌ Runtime exited with error: %v\n", err)
+			}
+		}()
+
+		cyan.Printf("⏳ Waiting for local cluster to initialize... (15s)\n")
+		time.Sleep(15 * time.Second)
+	} else {
+		cyan.Printf("🔎 Using existing cluster configuration from: %s\n", *configFile)
+		configData, err := os.ReadFile(*configFile)
+		if err != nil {
+			red.Printf("❌ Failed to read config file %s: %v\n", *configFile, err)
+			os.Exit(1)
+		}
+		cfg = &config.Cluster{}
+		if err := yaml.Unmarshal(configData, cfg); err != nil {
+			red.Printf("❌ Failed to unmarshal config file %s: %v\n", *configFile, err)
+			os.Exit(1)
+		}
+		green.Printf("✅ Successfully loaded configuration for external cluster.\n")
+	}
 
 	// Setup FWI client
 	fwiClient, err := setupFWI(cfg, logger)
@@ -217,8 +238,10 @@ func main() {
 
 	if len(entityPool.entities) == 0 {
 		red.Println("❌ No entities were created, cannot run stress test.")
-		rt.Stop()
-		wg.Wait()
+		if rt != nil {
+			rt.Stop()
+			wg.Wait()
+		}
 		os.Exit(1)
 	}
 
@@ -309,15 +332,19 @@ func main() {
 	printMetricsSummary(allMetrics, &deletedEntities, subscriberMetrics)
 
 	// Stop the runtime
-	yellow.Println("🛑 Shutting down cluster...")
-	rt.Stop()
-	wg.Wait()
+	if rt != nil {
+		yellow.Println("🛑 Shutting down local cluster...")
+		rt.Stop()
+		wg.Wait()
 
-	// Give a moment for all node-level services to fully release file handles
-	// before we wipe the directory, preventing the BadgerDB error on exit.
-	time.Sleep(2 * time.Second)
+		// Give a moment for all node-level services to fully release file handles
+		// before we wipe the directory, preventing the BadgerDB error on exit.
+		time.Sleep(2 * time.Second)
 
-	green.Println("✅ Cluster shut down successfully.")
+		green.Println("✅ Local cluster shut down successfully.")
+	} else {
+		green.Println("✅ Stress test on external cluster complete.")
+	}
 }
 
 func generateClusterConfig(size int, homeDir string) (*config.Cluster, error) {

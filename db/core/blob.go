@@ -223,7 +223,7 @@ func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.
 	// We MUST use the insi client's internal http client, which is configured
 	// to handle the cluster's TLS (e.g., skip verification for self-signed certs).
 	// Using http.DefaultClient will fail TLS handshakes.
-	resp, err := x.insiClient.GetHttpClient().Do(req)
+	resp, err := x.insiClient.GetObjectHttpClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("could not download blob: %w", err)
 	}
