@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/badge"
+	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
+	"github.com/InsulaLabs/insi/db/blob"
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/rft"
 	"github.com/InsulaLabs/insi/db/tkv"
@@ -58,6 +60,10 @@ const (
 	we actually hit the db.
 */
 
+const (
+	CommonStartupTaskDelayDuration = time.Second * 10
+)
+
 type Core struct {
 	appCtx    context.Context
 	cfg       *config.Cluster
@@ -83,6 +89,12 @@ type Core struct {
 	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
 
 	apiCache *ttlcache.Cache[string, models.TokenData]
+
+	// This is a client that is used in the core of the database to talk to the
+	// cluster it is part of :o
+	loopbackClient *client.Client
+
+	blobService *blob.Service
 }
 
 type serverInstance struct {
@@ -226,8 +238,37 @@ func New(
 
 	go service.eventProcessingLoop()
 
-	// Make sure root keyUUID (root prefix) has a memory tracker
+	// Construct the "loopback" client that we can use internally to talk to the cluster
 
+	endpoints := []client.Endpoint{}
+
+	for _, node := range clusterCfg.Nodes {
+		endpoints = append(endpoints, client.Endpoint{
+			PublicBinding:  node.PublicBinding,
+			PrivateBinding: node.PrivateBinding,
+			ClientDomain:   node.ClientDomain,
+		})
+	}
+
+	service.loopbackClient, err = client.NewClient(&client.Config{
+		Logger:         logger,
+		ConnectionType: client.ConnectionTypeRandom,
+		ApiKey:         rootApiKey,
+		SkipVerify:     clusterCfg.ClientSkipVerify,
+		Timeout:        time.Second * 30,
+		Endpoints:      endpoints,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	blobService, err := blob.New(logger, service.loopbackClient, identity, endpoints)
+	if err != nil {
+		return nil, err
+	}
+
+	service.blobService = blobService
 	return service, nil
 }
 
@@ -429,10 +470,10 @@ func (c *Core) Run() {
 	priv := makeHttpServer(makePrivateMux(c.nodeCfg.PrivateBinding))
 
 	/*
-		Ensure root tracking exists and start the tombstone runner
+	 Kick off the startup tasks
 	*/
 	go func() {
-		time.Sleep(time.Second * 10)
+		time.Sleep(CommonStartupTaskDelayDuration)
 		c.ensureRootKeyTrackersExist()
 
 		/*
@@ -442,7 +483,36 @@ func (c *Core) Run() {
 			after the root key trackers exist.
 		*/
 		go c.tombstoneRunner()
+
+		/*
+			Start the blob service after the root key trackers exist
+			we need to wait for the cluster to start up so all routes are mounted
+			across the nodes.
+
+			We need the service so we have it in a "try starting until it works" loop
+			so we can be sure it is running and ready to use.
+		*/
+		go func() {
+			for {
+				select {
+				case <-c.appCtx.Done():
+					return
+				case <-time.After(CommonStartupTaskDelayDuration):
+					if err := c.blobService.Start(c.appCtx); err != nil {
+						c.logger.Error("Error starting blob service", "error", err)
+						color.HiRed("Error starting blob service: %s", err)
+						color.HiYellow("Retrying in 10 seconds...")
+						continue
+					}
+					return
+				}
+			}
+		}()
 	}()
+
+	/*
+		Launch the servers
+	*/
 
 	c.startedAt = time.Now()
 	wg := sync.WaitGroup{}
@@ -477,6 +547,14 @@ func (c *Core) Run() {
 	wg.Wait()
 
 	stopWg := sync.WaitGroup{}
+
+	stopWg.Add(1)
+	go func() {
+		defer stopWg.Done()
+		if err := c.blobService.Stop(); err != nil {
+			c.logger.Error("Error stopping blob service", "error", err)
+		}
+	}()
 
 	stopWg.Add(1)
 	go func() {
