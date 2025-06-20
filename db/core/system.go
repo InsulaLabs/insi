@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,10 +18,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// used by all endpoints to redirect WRITE related operations to the leader
-func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string) {
+type routeClassification int
 
-	leaderConnectAddress, err := c.fsm.LeaderHTTPAddress()
+const (
+	rcPublic routeClassification = iota
+	rcPrivate
+)
+
+// used by all endpoints to redirect WRITE related operations to the leader
+func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string, routeClassification routeClassification) {
+
+	leaderInfo, err := c.fsm.LeaderHTTPAddress()
 	if err != nil {
 		c.logger.Error(
 			"Failed to get leader's connect address for redirection",
@@ -33,6 +41,26 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 			http.StatusServiceUnavailable,
 		)
 		return
+	}
+
+	var leaderConnectAddress string
+
+	switch routeClassification {
+	case rcPublic:
+		leaderConnectAddress = leaderInfo.PublicBinding
+
+	case rcPrivate:
+		leaderConnectAddress = leaderInfo.PrivateBinding
+	}
+
+	// parse the public and private bindings
+	_, port, err := net.SplitHostPort(leaderConnectAddress)
+
+	// determine the address to return based on the client domain
+	// essentially, if a "domain" is provided, we use it to construct the
+	// address as "domain:port" rather than "ip:port"
+	if err == nil && leaderInfo.ClientDomain != "" {
+		leaderConnectAddress = net.JoinHostPort(leaderInfo.ClientDomain, port)
 	}
 
 	redirectURL := "https://" + leaderConnectAddress + originalPath
@@ -80,7 +108,7 @@ func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {
 
 func (c *Core) joinHandler(w http.ResponseWriter, r *http.Request) {
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
 		return
 	}
 
@@ -556,7 +584,7 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
 		return
 	}
 

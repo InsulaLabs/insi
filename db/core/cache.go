@@ -61,7 +61,7 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 	c.logger.Debug("SetCacheHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
 		return
 	}
 	defer r.Body.Close()
@@ -151,7 +151,7 @@ func (c *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 	c.logger.Debug("DeleteCacheHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
 		return
 	}
 	defer r.Body.Close()
@@ -215,7 +215,7 @@ func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
 		return
 	}
 	defer r.Body.Close()
@@ -282,7 +282,7 @@ func (c *Core) compareAndSwapCacheHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
 		return
 	}
 	defer r.Body.Close()

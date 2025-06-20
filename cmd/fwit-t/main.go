@@ -35,21 +35,38 @@ import (
 // Using FWT we will spin up a a cluster of 1, stress it out, get metrics, log it, and then do the same for 3 and 5.
 
 type StressMetrics struct {
-	EntityName    string
-	Sets          int64
-	SetsTime      time.Duration
-	Gets          int64
-	GetsTime      time.Duration
-	Deletes       int64
-	DeletesTime   time.Duration
-	Caches        int64
-	CachesTime    time.Duration
-	Publishes     int64
-	PublishesTime time.Duration
-	Bumps         int64
-	BumpsTime     time.Duration
-	Failures      int64
+	EntityName      string
+	Sets            int64
+	SetsTime        time.Duration
+	Gets            int64
+	GetsTime        time.Duration
+	Deletes         int64
+	DeletesTime     time.Duration
+	Caches          int64
+	CachesTime      time.Duration
+	Publishes       int64
+	PublishesTime   time.Duration
+	Bumps           int64
+	BumpsTime       time.Duration
+	BlobSets        int64
+	BlobSetsTime    time.Duration
+	BlobGets        int64
+	BlobGetsTime    time.Duration
+	BlobDeletes     int64
+	BlobDeletesTime time.Duration
+	Failures        int64
 }
+
+type TimedError struct {
+	Timestamp time.Time
+	Entity    string
+	Error     error
+}
+
+var (
+	globalErrors   []TimedError
+	globalErrorsMu sync.Mutex
+)
 
 type SubscriberMetrics struct {
 	SubscriberID   int
@@ -295,6 +312,11 @@ func main() {
 	yellow.Println("🛑 Shutting down cluster...")
 	rt.Stop()
 	wg.Wait()
+
+	// Give a moment for all node-level services to fully release file handles
+	// before we wipe the directory, preventing the BadgerDB error on exit.
+	time.Sleep(2 * time.Second)
+
 	green.Println("✅ Cluster shut down successfully.")
 }
 
@@ -304,14 +326,16 @@ func generateClusterConfig(size int, homeDir string) (*config.Cluster, error) {
 
 	for i := 0; i < size; i++ {
 		nodeID := fmt.Sprintf("node%d", i)
-		httpPort := 8080 + i
+		publicPort := 8280 + i
+		privatePort := 9090 + i // Different port for private API
 		raftPort := 7070 + i
 
 		nodes[nodeID] = config.Node{
-			HttpBinding:  fmt.Sprintf("127.0.0.1:%d", httpPort),
-			RaftBinding:  fmt.Sprintf("127.0.0.1:%d", raftPort),
-			NodeSecret:   fmt.Sprintf("secret-for-%s", nodeID),
-			ClientDomain: "localhost",
+			PublicBinding:  fmt.Sprintf("127.0.0.1:%d", publicPort),
+			PrivateBinding: fmt.Sprintf("127.0.0.1:%d", privatePort),
+			RaftBinding:    fmt.Sprintf("127.0.0.1:%d", raftPort),
+			NodeSecret:     fmt.Sprintf("secret-for-%s", nodeID),
+			ClientDomain:   "localhost",
 		}
 		raftPeers[i] = nodes[nodeID].RaftBinding
 	}
@@ -346,6 +370,8 @@ func generateClusterConfig(size int, homeDir string) (*config.Cluster, error) {
 			WebSocketWriteBufferSize: 4096,
 			MaxConnections:           1000,
 		},
+		TrustedProxies: []string{"127.0.0.1", "::1"},
+		PermittedIPs:   []string{"127.0.0.1", "::1"},
 	}, nil
 }
 
@@ -353,8 +379,9 @@ func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 	endpoints := make([]client.Endpoint, 0, len(cfg.Nodes))
 	for _, node := range cfg.Nodes {
 		endpoints = append(endpoints, client.Endpoint{
-			HostPort:     node.HttpBinding,
-			ClientDomain: node.ClientDomain,
+			PublicBinding:  node.PublicBinding,
+			PrivateBinding: node.PrivateBinding,
+			ClientDomain:   node.ClientDomain,
 		})
 	}
 
@@ -393,8 +420,10 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 	valueStore := entity.GetValueStore()
 	cacheStore := entity.GetCacheStore()
 	events := entity.GetEvents()
+	blobs := entity.GetBlobs()
 
 	knownKeys := make([]string, 0, 100)
+	knownBlobKeys := make([]string, 0, 100)
 	const keyPoolSize = 100
 
 	for {
@@ -405,7 +434,7 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 			// Non-blocking check, fall through to run an operation
 		}
 
-		op := rand.Intn(6) // Now 6 operations including delete
+		op := rand.Intn(9) // Now 9 operations to include blobs
 		key := "stress-key-" + strconv.Itoa(rand.Intn(1000))
 		value := "stress-value-" + strconv.Itoa(rand.Intn(100000))
 
@@ -428,12 +457,15 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 				}
 			}
 		case 1: // Get Value
-			start = time.Now()
-			_, err = valueStore.Get(ctx, key)
-			duration = time.Since(start)
-			if err == nil || err == client.ErrKeyNotFound {
-				atomic.AddInt64(&metrics.Gets, 1)
-				atomic.AddInt64((*int64)(&metrics.GetsTime), int64(duration))
+			if len(knownKeys) > 0 {
+				keyToGet := knownKeys[rand.Intn(len(knownKeys))]
+				start = time.Now()
+				_, err = valueStore.Get(ctx, keyToGet)
+				duration = time.Since(start)
+				if err == nil || errors.Is(err, client.ErrKeyNotFound) {
+					atomic.AddInt64(&metrics.Gets, 1)
+					atomic.AddInt64((*int64)(&metrics.GetsTime), int64(duration))
+				}
 			}
 		case 2: // Set Cache
 			start = time.Now()
@@ -472,13 +504,59 @@ func runEntityStress(ctx context.Context, entity fwi.Entity, logger *slog.Logger
 					knownKeys = append(knownKeys[:idx], knownKeys[idx+1:]...)
 				}
 			}
+		case 6: // Set Blob
+			key := "stress-blob-" + strconv.Itoa(rand.Intn(1000))
+			blobValue := "blob-data-" + strconv.Itoa(rand.Intn(100000))
+			start = time.Now()
+			err = blobs.Set(ctx, key, blobValue)
+			duration = time.Since(start)
+			if err == nil {
+				atomic.AddInt64(&metrics.BlobSets, 1)
+				atomic.AddInt64((*int64)(&metrics.BlobSetsTime), int64(duration))
+				if len(knownBlobKeys) < keyPoolSize {
+					knownBlobKeys = append(knownBlobKeys, key)
+				} else {
+					knownBlobKeys[rand.Intn(keyPoolSize)] = key
+				}
+			}
+		case 7: // Get Blob
+			if len(knownBlobKeys) > 0 {
+				keyToGet := knownBlobKeys[rand.Intn(len(knownBlobKeys))]
+				start = time.Now()
+				_, err = blobs.Get(ctx, keyToGet)
+				duration = time.Since(start)
+				if err == nil || errors.Is(err, client.ErrKeyNotFound) {
+					atomic.AddInt64(&metrics.BlobGets, 1)
+					atomic.AddInt64((*int64)(&metrics.BlobGetsTime), int64(duration))
+				}
+			}
+		case 8: // Delete Blob
+			if len(knownBlobKeys) > 0 {
+				idx := rand.Intn(len(knownBlobKeys))
+				keyToDelete := knownBlobKeys[idx]
+				start = time.Now()
+				err = blobs.Delete(ctx, keyToDelete)
+				duration = time.Since(start)
+				if err == nil {
+					atomic.AddInt64(&metrics.BlobDeletes, 1)
+					atomic.AddInt64((*int64)(&metrics.BlobDeletesTime), int64(duration))
+					knownBlobKeys = append(knownBlobKeys[:idx], knownBlobKeys[idx+1:]...)
+				}
+			}
 		}
-		if err != nil && err != client.ErrKeyNotFound {
+		if err != nil && !errors.Is(err, client.ErrKeyNotFound) {
 			atomic.AddInt64(&metrics.Failures, 1)
+			globalErrorsMu.Lock()
+			globalErrors = append(globalErrors, TimedError{
+				Timestamp: time.Now(),
+				Entity:    entity.GetName(),
+				Error:     err,
+			})
+			globalErrorsMu.Unlock()
 		}
 
-		baseSleep := 100 * time.Millisecond
-		jitter := time.Duration(rand.Intn(50)) * time.Millisecond // Jitter up to 50ms
+		baseSleep := 10 * time.Millisecond
+		jitter := time.Duration(rand.Intn(10)) * time.Millisecond // Jitter up to 10ms
 		time.Sleep(baseSleep + jitter)
 	}
 }
@@ -494,8 +572,8 @@ func printMetricsSummary(metrics []StressMetrics, deleted *struct {
 	bold := color.New(color.Bold)
 
 	header.Println("\n--- 📊 Stress Test Summary ---")
-	fmt.Printf("%-15s | %-16s | %-16s | %-16s | %-16s | %-16s | %-16s | %-10s\n", "Entity", "Sets (avg)", "Gets (avg)", "Deletes (avg)", "Caches (avg)", "Publishes (avg)", "Bumps (avg)", "Failures")
-	fmt.Println("--------------------------------------------------------------------------------------------------------------------------------------------------")
+	fmt.Printf("%-15s | %-16s | %-16s | %-16s | %-16s | %-16s | %-16s | %-16s | %-16s | %-16s | %-10s\n", "Entity", "Sets (avg)", "Gets (avg)", "Deletes (avg)", "Caches (avg)", "Publishes (avg)", "Bumps (avg)", "Blob Sets (avg)", "Blob Gets (avg)", "Blob Dels (avg)", "Failures")
+	fmt.Println("---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
 
 	var total StressMetrics
 	for _, m := range metrics {
@@ -513,6 +591,9 @@ func printMetricsSummary(metrics []StressMetrics, deleted *struct {
 		printOpMetric(cyan, m.Caches, m.CachesTime)
 		printOpMetric(cyan, m.Publishes, m.PublishesTime)
 		printOpMetric(cyan, m.Bumps, m.BumpsTime)
+		printOpMetric(cyan, m.BlobSets, m.BlobSetsTime)
+		printOpMetric(cyan, m.BlobGets, m.BlobGetsTime)
+		printOpMetric(cyan, m.BlobDeletes, m.BlobDeletesTime)
 
 		if m.Failures > 0 {
 			red.Printf("%-10d\n", m.Failures)
@@ -532,10 +613,16 @@ func printMetricsSummary(metrics []StressMetrics, deleted *struct {
 		total.PublishesTime += m.PublishesTime
 		total.Bumps += m.Bumps
 		total.BumpsTime += m.BumpsTime
+		total.BlobSets += m.BlobSets
+		total.BlobSetsTime += m.BlobSetsTime
+		total.BlobGets += m.BlobGets
+		total.BlobGetsTime += m.BlobGetsTime
+		total.BlobDeletes += m.BlobDeletes
+		total.BlobDeletesTime += m.BlobDeletesTime
 		total.Failures += m.Failures
 	}
 
-	fmt.Println("--------------------------------------------------------------------------------------------------------------------------------------------------")
+	fmt.Println("---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
 	bold.Printf("%-15s | ", "TOTALS")
 	printOpMetric(cyan, total.Sets, total.SetsTime)
 	printOpMetric(cyan, total.Gets, total.GetsTime)
@@ -543,6 +630,9 @@ func printMetricsSummary(metrics []StressMetrics, deleted *struct {
 	printOpMetric(cyan, total.Caches, total.CachesTime)
 	printOpMetric(cyan, total.Publishes, total.PublishesTime)
 	printOpMetric(cyan, total.Bumps, total.BumpsTime)
+	printOpMetric(cyan, total.BlobSets, total.BlobSetsTime)
+	printOpMetric(cyan, total.BlobGets, total.BlobGetsTime)
+	printOpMetric(cyan, total.BlobDeletes, total.BlobDeletesTime)
 
 	if total.Failures > 0 {
 		red.Printf("%-10d\n", total.Failures)
@@ -561,6 +651,16 @@ func printMetricsSummary(metrics []StressMetrics, deleted *struct {
 	}
 	bold.Printf("📡 Total Events Received by All Subscribers: %d\n", totalEventsReceived)
 	fmt.Println()
+
+	if len(globalErrors) > 0 {
+		header.Println("--- ❗ Detailed Error Log ---")
+		globalErrorsMu.Lock()
+		for _, e := range globalErrors {
+			red.Printf("[%s] Entity '%s': %v\n", e.Timestamp.Format(time.RFC3339), e.Entity, e.Error)
+		}
+		globalErrorsMu.Unlock()
+		fmt.Println()
+	}
 }
 
 func printOpMetric(c *color.Color, count int64, totalTime time.Duration) {

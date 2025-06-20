@@ -48,22 +48,22 @@ func attemptAutoJoin(
 		"Node is not the default leader. Attempting to join leader",
 		"node_id", cfg.NodeId,
 		"leader_id", leaderNodeId,
-		"leader_http_binding", leaderNodeCfg.HttpBinding,
+		"leader_private_binding", leaderNodeCfg.PrivateBinding,
 		"leader_client_domain", leaderNodeCfg.ClientDomain,
 	)
 
 	// Determine the target host and port for the join URL
 	var connectAddr string
 	if leaderNodeCfg.ClientDomain != "" {
-		_, port, err := net.SplitHostPort(leaderNodeCfg.HttpBinding)
+		_, port, err := net.SplitHostPort(leaderNodeCfg.PrivateBinding)
 		if err != nil {
 			cfg.Logger.Warn(
-				"Could not parse port from leader's HttpBinding",
-				"http_binding", leaderNodeCfg.HttpBinding,
+				"Could not parse port from leader's PrivateBinding",
+				"private_binding", leaderNodeCfg.PrivateBinding,
 				"client_domain", leaderNodeCfg.ClientDomain,
 				"error", err,
 			)
-			connectAddr = leaderNodeCfg.HttpBinding // Fallback to full HttpBinding
+			connectAddr = leaderNodeCfg.PrivateBinding // Fallback to full PrivateBinding
 		} else {
 			connectAddr = net.JoinHostPort(leaderNodeCfg.ClientDomain, port)
 			cfg.Logger.Info(
@@ -75,9 +75,9 @@ func attemptAutoJoin(
 			)
 		}
 	} else {
-		connectAddr = leaderNodeCfg.HttpBinding
+		connectAddr = leaderNodeCfg.PrivateBinding
 		cfg.Logger.Info(
-			"Auto-join will connect to leader via HttpBinding",
+			"Auto-join will connect to leader via PrivateBinding",
 			"node_id", cfg.NodeId,
 			"leader_id", leaderNodeId,
 			"connect_addr", connectAddr,

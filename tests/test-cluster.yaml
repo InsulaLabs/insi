@@ -20,6 +20,12 @@ trustedProxies:
   - "127.0.0.1"
   - "::1"
 
+permittedIPs:
+  - "127.0.0.1"
+  - "::1"
+  - "157.230.226.214" # insula.dev
+
+
 cache:
   standard-ttl: 1m  # 1 minute default ttl for cache
   keys: 10s         # 10 seconds for api keys once they hit cache (for test wait period)
@@ -51,17 +57,20 @@ sessions:
 nodes:
   node0:
     raftBinding: 127.0.0.1:2222
-    httpBinding: 127.0.0.1:8443
+    privateBinding: 127.0.0.1:8543
+    publicBinding: 127.0.0.1:8443
     clientDomain: "localhost"
     nodeSecret: "node0-secret"
   node1:
     raftBinding: 127.0.0.1:2223
-    httpBinding: 127.0.0.1:8444
+    privateBinding: 127.0.0.1:8544
+    publicBinding: 127.0.0.1:8444
     clientDomain: "localhost"
     nodeSecret: "node1-secret"
   node2:
     raftBinding: 127.0.0.1:2224
-    httpBinding: 127.0.0.1:8445
+    privateBinding: 127.0.0.1:8545
+    publicBinding: 127.0.0.1:8445
     clientDomain: "localhost"
     nodeSecret: "node2-secret"
 

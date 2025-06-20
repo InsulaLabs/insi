@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -63,7 +62,7 @@ type RaftIF interface {
 	Join(followerId string, followerAddress string) error
 	Leader() string
 	IsLeader() bool
-	LeaderHTTPAddress() (string, error) // Returns full URL: "https://host:http_port"
+	LeaderHTTPAddress() (LeaderInfo, error) // Returns full URL: "https://host:http_port"
 }
 
 type ValueStoreIF interface {
@@ -793,16 +792,27 @@ func (kf *kvFsm) Leader() string {
 	return string(kf.r.Leader())
 }
 
-func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {
-	leaderRaftAddr := fsm.r.Leader() // This is host:raft_port
+type LeaderInfo struct {
+	NodeId         string
+	PublicBinding  string
+	PrivateBinding string
+	ClientDomain   string
+}
+
+func (fsm *kvFsm) LeaderHTTPAddress() (LeaderInfo, error) {
+
+	// get the raw raft address from the leader
+	leaderRaftAddr := fsm.r.Leader()
 	if leaderRaftAddr == "" {
-		return "", fmt.Errorf("no current leader")
+		return LeaderInfo{}, fmt.Errorf("no current leader")
 	}
 
-	var leaderNodeID string // For logging
+	// get the node config for the leader by matching the address
+
+	var leaderNodeID string
 	var leaderNodeConfig config.Node
 	found := false
-	for nodeID, nodeCfg := range fsm.cfg.Nodes { // Iterate to find the node with this RaftBinding
+	for nodeID, nodeCfg := range fsm.cfg.Nodes {
 		if nodeCfg.RaftBinding == string(leaderRaftAddr) {
 			leaderNodeID = nodeID // Capture for logging
 			leaderNodeConfig = nodeCfg
@@ -812,39 +822,15 @@ func (fsm *kvFsm) LeaderHTTPAddress() (string, error) {
 	}
 
 	if !found {
-		return "", fmt.Errorf("leader Raft address '%s' not found in cluster configuration", leaderRaftAddr)
+		return LeaderInfo{}, fmt.Errorf("leader Raft address '%s' not found in cluster configuration", leaderRaftAddr)
 	}
 
-	// HttpBinding itself is host:port.
-	// ClientDomain is just a host.
-	hostPartFromBinding, portPart, err := net.SplitHostPort(leaderNodeConfig.HttpBinding)
-	if err != nil {
-		fsm.logger.Error("Failed to parse leader HttpBinding in LeaderHTTPAddress",
-			"leader_node_id", leaderNodeID,
-			"http_binding", leaderNodeConfig.HttpBinding,
-			"error", err)
-		// Fallback to returning the raw HttpBinding; the caller (redirectToLeader) will attempt to parse it again or use as is.
-		return leaderNodeConfig.HttpBinding, nil
-	}
-
-	addressToReturn := ""
-	if leaderNodeConfig.ClientDomain != "" {
-		addressToReturn = net.JoinHostPort(leaderNodeConfig.ClientDomain, portPart)
-		fsm.logger.Debug("LeaderHTTPAddress determined address (using ClientDomain)",
-			"leader_node_id", leaderNodeID,
-			"client_domain", leaderNodeConfig.ClientDomain,
-			"port", portPart,
-			"returned_address", addressToReturn)
-	} else {
-		// No ClientDomain, so use the host part from HttpBinding (effectively the original HttpBinding)
-		addressToReturn = net.JoinHostPort(hostPartFromBinding, portPart)
-		fsm.logger.Debug("LeaderHTTPAddress determined address (using host from HttpBinding)",
-			"leader_node_id", leaderNodeID,
-			"http_binding_host", hostPartFromBinding,
-			"port", portPart,
-			"returned_address", addressToReturn)
-	}
-	return addressToReturn, nil
+	return LeaderInfo{
+		NodeId:         leaderNodeID,
+		PublicBinding:  leaderNodeConfig.PublicBinding,
+		PrivateBinding: leaderNodeConfig.PrivateBinding,
+		ClientDomain:   leaderNodeConfig.ClientDomain,
+	}, nil
 }
 
 func (kf *kvFsm) SetNX(kvp models.KVPayload) error {

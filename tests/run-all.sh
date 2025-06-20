@@ -63,6 +63,10 @@ echo "🚀 Running cache-cas-setnx.sh..."
 run_test_script /tmp/insi-test-cluster/cache-cas-setnx.sh
 echo "✅ Success: cache-cas-setnx.sh completed."
 
+echo "🚀 Running blob.sh..."
+run_test_script /tmp/insi-test-cluster/blob.sh
+echo "✅ Success: blob.sh completed."
+
 sleep 5 # wait for insid to finish stopping and logging out
 
 cd $cwd

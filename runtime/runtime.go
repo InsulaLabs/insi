@@ -180,9 +180,10 @@ func (r *Runtime) GetClientForToken(token string) (*client.Client, error) {
 		eps := make([]client.Endpoint, 0, len(r.clusterCfg.Nodes))
 		for nodeId, node := range r.clusterCfg.Nodes {
 			ep := client.Endpoint{
-				HostPort:     node.HttpBinding,
-				ClientDomain: node.ClientDomain,
-				Logger:       r.logger.With("service", "insiClient").With("node", nodeId),
+				PublicBinding:  node.PublicBinding,
+				PrivateBinding: node.PrivateBinding,
+				ClientDomain:   node.ClientDomain,
+				Logger:         r.logger.With("service", "insiClient").With("node", nodeId),
 			}
 			eps = append(eps, ep)
 		}
@@ -429,8 +430,8 @@ func (r *Runtime) setupKeys(keyPath string) {
 	// Add IP addresses and DNS names from node configurations
 	// This is important for the certificate to be valid for the node's bindings.
 	for _, nodeCfg := range r.clusterCfg.Nodes {
-		if nodeCfg.HttpBinding != "" {
-			host, _, err := net.SplitHostPort(nodeCfg.HttpBinding)
+		if nodeCfg.PublicBinding != "" {
+			host, _, err := net.SplitHostPort(nodeCfg.PublicBinding)
 			if err == nil {
 				if ip := net.ParseIP(host); ip != nil {
 					template.IPAddresses = append(template.IPAddresses, ip)
@@ -438,10 +439,10 @@ func (r *Runtime) setupKeys(keyPath string) {
 					template.DNSNames = append(template.DNSNames, host)
 				}
 			} else {
-				if ip := net.ParseIP(nodeCfg.HttpBinding); ip != nil {
+				if ip := net.ParseIP(nodeCfg.PublicBinding); ip != nil {
 					template.IPAddresses = append(template.IPAddresses, ip)
-				} else if nodeCfg.HttpBinding != "" {
-					template.DNSNames = append(template.DNSNames, nodeCfg.HttpBinding)
+				} else if nodeCfg.PublicBinding != "" {
+					template.DNSNames = append(template.DNSNames, nodeCfg.PublicBinding)
 				}
 			}
 		}
