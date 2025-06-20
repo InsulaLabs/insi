@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/badge"
+	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/rft"
@@ -58,16 +60,22 @@ const (
 	we actually hit the db.
 */
 
+const (
+	CommonStartupTaskDelayDuration = time.Second * 10
+)
+
 type Core struct {
 	appCtx    context.Context
 	cfg       *config.Cluster
 	nodeCfg   *config.Node
+	nodeName  string // The logical name of this node (e.g. "node0")
 	logger    *slog.Logger
 	tkv       tkv.TKV
 	identity  badge.Badge
 	fsm       rft.FSMInstance
 	authToken string
-	mux       *http.ServeMux
+	pubMux    *http.ServeMux
+	privMux   *http.ServeMux
 
 	startedAt time.Time
 
@@ -82,6 +90,22 @@ type Core struct {
 	wsConnectionLock     sync.Mutex        // To protect the activeWsConnections counter
 
 	apiCache *ttlcache.Cache[string, models.TokenData]
+
+	// This is a client that is used in the core of the database to talk to the
+	// cluster it is part of :o
+	loopbackClient *client.Client
+
+	blobService *blobService
+
+	// Internal event handling
+	internalSubscribers     map[string][]func(event models.Event)
+	internalSubscribersLock sync.RWMutex
+}
+
+type serverInstance struct {
+	binding string
+	mux     *http.ServeMux
+	server  *http.Server
 }
 
 func (c *Core) GetRootClientKey() string {
@@ -104,7 +128,7 @@ func (s *Core) AddHandler(path string, handler http.Handler) error {
 	if !s.startedAt.IsZero() {
 		return fmt.Errorf("service already started, cannot add handler after startup")
 	}
-	s.mux.Handle(path, handler)
+	s.pubMux.Handle(path, handler)
 	return nil
 }
 
@@ -190,17 +214,20 @@ func New(
 	go apiCache.Start()
 
 	service := &Core{
-		appCtx:           ctx,
-		cfg:              clusterCfg,
-		nodeCfg:          nodeSpecificCfg,
-		logger:           logger,
-		identity:         identity,
-		tkv:              tkv,
-		fsm:              fsm,
-		authToken:        authToken,
-		rateLimiters:     rateLimiters,
-		mux:              http.NewServeMux(),
-		eventSubscribers: make(map[string]map[*eventSession]bool),
+		appCtx:              ctx,
+		cfg:                 clusterCfg,
+		nodeCfg:             nodeSpecificCfg,
+		nodeName:            asNodeId,
+		logger:              logger,
+		identity:            identity,
+		tkv:                 tkv,
+		fsm:                 fsm,
+		authToken:           authToken,
+		rateLimiters:        rateLimiters,
+		pubMux:              http.NewServeMux(),
+		privMux:             http.NewServeMux(),
+		eventSubscribers:    make(map[string]map[*eventSession]bool),
+		internalSubscribers: make(map[string][]func(models.Event)),
 		wsUpgrader: websocket.Upgrader{
 			ReadBufferSize:  clusterCfg.Sessions.WebSocketReadBufferSize,
 			WriteBufferSize: clusterCfg.Sessions.WebSocketWriteBufferSize,
@@ -218,8 +245,37 @@ func New(
 
 	go service.eventProcessingLoop()
 
-	// Make sure root keyUUID (root prefix) has a memory tracker
+	// Construct the "loopback" client that we can use internally to talk to the cluster
 
+	endpoints := []client.Endpoint{}
+
+	for _, node := range clusterCfg.Nodes {
+		endpoints = append(endpoints, client.Endpoint{
+			PublicBinding:  node.PublicBinding,
+			PrivateBinding: node.PrivateBinding,
+			ClientDomain:   node.ClientDomain,
+		})
+	}
+
+	service.loopbackClient, err = client.NewClient(&client.Config{
+		Logger:         logger,
+		ConnectionType: client.ConnectionTypeRandom,
+		ApiKey:         rootApiKey,
+		SkipVerify:     clusterCfg.ClientSkipVerify,
+		Timeout:        time.Second * 30,
+		Endpoints:      endpoints,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	blobService, err := newBlobService(logger, service, service.loopbackClient, identity, endpoints)
+	if err != nil {
+		return nil, err
+	}
+
+	service.blobService = blobService
 	return service, nil
 }
 
@@ -236,9 +292,9 @@ func (c *Core) getRemoteAddress(r *http.Request) string {
 	}
 
 	for _, node := range c.cfg.Nodes {
-		nodeHost, _, err := net.SplitHostPort(node.HttpBinding)
+		nodeHost, _, err := net.SplitHostPort(node.PublicBinding)
 		if err != nil {
-			c.logger.Warn("Could not parse node httpBinding", "binding", node.HttpBinding, "error", err)
+			c.logger.Warn("Could not parse node publicBinding", "binding", node.PublicBinding, "error", err)
 			continue
 		}
 		trusted[nodeHost] = struct{}{}
@@ -317,17 +373,6 @@ func (c *Core) ipFilterMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (c *Core) WithRoute(path string, handler http.Handler, limit int, burst int) {
-	limiter := rate.NewLimiter(rate.Limit(limit), burst)
-	c.mux.Handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow() {
-			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	}))
-}
-
 func (c *Core) isPermittedIP(r *http.Request) bool {
 	// If no IPs are configured, deny all traffic for security.
 	if len(c.cfg.PermittedIPs) == 0 {
@@ -348,67 +393,102 @@ func (c *Core) isPermittedIP(r *http.Request) bool {
 // Run forever until the context is cancelled
 func (c *Core) Run() {
 
-	// Values handlers
-	c.mux.Handle("/db/api/v1/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setHandler), "values")))
-	c.mux.Handle("/db/api/v1/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values")))
-	c.mux.Handle("/db/api/v1/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values")))
-	c.mux.Handle("/db/api/v1/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values")))
-	c.mux.Handle("/db/api/v1/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setNXHandler), "values")))
-	c.mux.Handle("/db/api/v1/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values")))
-	c.mux.Handle("/db/api/v1/bump", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.bumpHandler), "values")))
+	makePublicMux := func(binding string) *serverInstance {
 
-	// Cache handlers
-	c.mux.Handle("/db/api/v1/cache/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache")))
-	c.mux.Handle("/db/api/v1/cache/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache")))
+		// Values handlers
+		c.pubMux.Handle("/db/api/v1/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setNXHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/bump", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.bumpHandler), "values")))
 
-	// Events handlers
-	c.mux.Handle("/db/api/v1/events", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events")))
-	c.mux.Handle("/db/api/v1/events/subscribe", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events")))
+		c.pubMux.Handle("/db/api/v1/blob/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.uploadBlobHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getBlobHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteBlobHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateBlobKeysByPrefixHandler), "values")))
 
-	// System handlers
-	c.mux.Handle("/db/api/v1/join", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system")))
-	c.mux.Handle("/db/api/v1/ping", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system")))
+		// Cache handlers
+		c.pubMux.Handle("/db/api/v1/cache/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache")))
 
-	// System handle anyone can call with an api key to get their current usage and limits
-	c.mux.Handle("/db/api/v1/limits", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system")))
+		// Events handlers
+		c.pubMux.Handle("/db/api/v1/events", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events")))
+		c.pubMux.Handle("/db/api/v1/events/subscribe", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events")))
 
-	// Only ROOT can set limits
-	c.mux.Handle("/db/api/v1/admin/limits/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system")))
+		c.pubMux.Handle("/db/api/v1/ping", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system")))
 
-	// Admin API Key Management handlers (system category for rate limiting)
-	c.mux.Handle("/db/api/v1/admin/api/create", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system")))
-	c.mux.Handle("/db/api/v1/admin/api/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system")))
+		// System handle anyone can call with an api key to get their current usage and limits
+		c.pubMux.Handle("/db/api/v1/limits", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system")))
 
-	// Only ROOT can get limits for specific keys
-	c.mux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
-
-	httpListenAddr := c.nodeCfg.HttpBinding
-	c.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != ""))
-
-	srv := &http.Server{
-		Addr:    httpListenAddr,
-		Handler: c.mux,
+		return &serverInstance{
+			binding: binding,
+			mux:     c.pubMux,
+			server:  nil,
+		}
 	}
 
-	go func() {
-		<-c.appCtx.Done()
-		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancelShutdown()
+	makePrivateMux := func(binding string) *serverInstance {
 
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			c.logger.Error("Server shutdown error", "error", err)
+		// System handlers
+		c.privMux.Handle("/db/api/v1/join", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system")))
+
+		// Internal handlers
+		c.privMux.Handle("/db/internal/v1/blob/download", c.ipFilterMiddleware(http.HandlerFunc(c.internalDownloadBlobHandler)))
+
+		// Only ROOT can set limits
+		c.privMux.Handle("/db/api/v1/admin/limits/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system")))
+
+		// Admin API Key Management handlers (system category for rate limiting)
+		c.privMux.Handle("/db/api/v1/admin/api/create", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/api/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system")))
+
+		// Only ROOT can get limits for specific keys
+		c.privMux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
+
+		return &serverInstance{
+			binding: binding,
+			mux:     c.privMux,
+			server:  nil,
 		}
-	}()
+	}
+
+	httpListenAddr := c.nodeCfg.PublicBinding
+	c.logger.Info("Attempting to start server", "listen_addr", httpListenAddr, "tls_enabled", (c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != ""))
+
+	makeHttpServer := func(srv *serverInstance) *serverInstance {
+
+		srv.server = &http.Server{
+			Addr:    srv.binding,
+			Handler: srv.mux,
+		}
+
+		go func() {
+			<-c.appCtx.Done()
+			shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelShutdown()
+
+			if err := srv.server.Shutdown(shutdownCtx); err != nil {
+				c.logger.Error("Server shutdown error", "error", err)
+			}
+		}()
+
+		return srv
+	}
+
+	pub := makeHttpServer(makePublicMux(c.nodeCfg.PublicBinding))
+	priv := makeHttpServer(makePrivateMux(c.nodeCfg.PrivateBinding))
 
 	/*
-		Ensure root tracking exists and start the tombstone runner
+	 Kick off the startup tasks
 	*/
 	go func() {
-		time.Sleep(time.Second * 10)
+		time.Sleep(CommonStartupTaskDelayDuration)
 		c.ensureRootKeyTrackersExist()
 
 		/*
@@ -420,22 +500,58 @@ func (c *Core) Run() {
 		go c.tombstoneRunner()
 	}()
 
-	c.startedAt = time.Now()
+	/*
+		Launch the servers
+	*/
 
-	if c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != "" {
-		c.logger.Info("Starting HTTPS server", "cert", c.cfg.TLS.Cert, "key", c.cfg.TLS.Key)
-		srv.TLSConfig = &tls.Config{}
-		if err := srv.ListenAndServeTLS(c.cfg.TLS.Cert, c.cfg.TLS.Key); err != http.ErrServerClosed {
-			c.logger.Error("HTTPS server error", "error", err)
-		}
-	} else {
-		c.logger.Info("TLS cert or key not specified in config. Starting HTTP server (insecure).")
-		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			c.logger.Error("HTTP server error", "error", err)
-		}
+	// The blob service MUST be started before the http servers so that
+	// all nodes are ready to handle replication events.
+	if err := c.blobService.start(c.appCtx); err != nil {
+		c.logger.Error("Failed to start blob service, shutting down.", "error", err)
+		return
 	}
 
+	c.startedAt = time.Now()
+	wg := sync.WaitGroup{}
+
+	launch := func(srv *serverInstance) {
+		color.HiGreen("Launching server %s", srv.binding)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			if c.cfg.TLS.Cert != "" && c.cfg.TLS.Key != "" {
+				c.logger.Info("Starting HTTPS server", "cert", c.cfg.TLS.Cert, "key", c.cfg.TLS.Key)
+				srv.server.TLSConfig = &tls.Config{}
+				if err := srv.server.ListenAndServeTLS(c.cfg.TLS.Cert, c.cfg.TLS.Key); err != http.ErrServerClosed {
+					c.logger.Error("HTTPS server error", "error", err)
+				}
+			} else {
+				c.logger.Info("TLS cert or key not specified in config. Starting HTTP server (insecure).")
+				if err := srv.server.ListenAndServe(); err != http.ErrServerClosed {
+					c.logger.Error("HTTP server error", "error", err)
+				}
+			}
+		}()
+	}
+
+	/*
+		Signal will kill the servers which will free these contexts
+		which will allow the main context to exit
+	*/
+	launch(pub)
+	launch(priv)
+	wg.Wait()
+
 	stopWg := sync.WaitGroup{}
+
+	stopWg.Add(1)
+	go func() {
+		defer stopWg.Done()
+		if err := c.blobService.stop(); err != nil {
+			c.logger.Error("Error stopping blob service", "error", err)
+		}
+	}()
 
 	stopWg.Add(1)
 	go func() {
@@ -637,7 +753,6 @@ func (c *Core) tombstoneRunner() {
 			c.execTombstoneDeletion()
 		}
 	}
-
 }
 
 func (c *Core) execTombstoneDeletion() {
@@ -722,5 +837,74 @@ func (c *Core) execTombstoneDeletion() {
 		} else {
 			c.logger.Info("Successfully processed and deleted tombstone", "key_uuid", keyUUID)
 		}
+	}
+}
+
+func (c *Core) SubscribeInternally(topic string, handler func(event models.Event)) {
+	c.internalSubscribersLock.Lock()
+	defer c.internalSubscribersLock.Unlock()
+
+	c.internalSubscribers[topic] = append(c.internalSubscribers[topic], handler)
+	c.logger.Info("New internal subscriber registered", "topic", topic)
+}
+
+/*
+
+	Core event processing
+
+*/
+
+func (c *Core) eventProcessingLoop() {
+	for {
+		select {
+		case <-c.appCtx.Done():
+			c.logger.Info("Event processing loop stopping.")
+			return
+		case event := <-c.eventCh:
+			c.logger.Debug("Service event loop received event", "topic", event.Topic)
+
+			// --- Handle Internal Subscribers First ---
+			c.internalSubscribersLock.RLock()
+			if handlers, ok := c.internalSubscribers[event.Topic]; ok {
+				c.logger.Debug("Found internal subscribers for topic", "topic", event.Topic, "count", len(handlers))
+				for _, handler := range handlers {
+					// Launch in a goroutine to avoid blocking the event loop
+					go handler(event)
+				}
+			}
+			c.internalSubscribersLock.RUnlock()
+
+			// --- Then Handle WebSocket Subscribers ---
+			c.dispatchToWebsocketSubscribers(event)
+		}
+	}
+}
+
+func (c *Core) dispatchToWebsocketSubscribers(event models.Event) {
+	c.eventSubscribersLock.RLock()
+	defer c.eventSubscribersLock.RUnlock()
+
+	if subscribers, ok := c.eventSubscribers[event.Topic]; ok {
+		c.logger.Debug("Found WebSocket subscribers for topic", "topic", event.Topic, "count", len(subscribers))
+
+		// Marshal the event once for all subscribers of this topic.
+		message, err := json.Marshal(event)
+		if err != nil {
+			c.logger.Error("Failed to marshal event for WebSocket dispatch", "topic", event.Topic, "error", err)
+			return
+		}
+
+		for session := range subscribers {
+			// Select to avoid blocking if the send channel is full.
+			select {
+			case session.send <- message:
+				// Event sent successfully.
+			default:
+				// The client's channel is full. This indicates a slow client.
+				c.logger.Warn("Could not send event to client, channel is full", "topic", event.Topic, "remoteAddr", session.conn.RemoteAddr().String())
+			}
+		}
+	} else {
+		c.logger.Debug("No WebSocket subscribers for topic in dispatch", "topic", event.Topic)
 	}
 }

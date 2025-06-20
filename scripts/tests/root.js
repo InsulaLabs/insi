@@ -16,6 +16,7 @@ function main() {
         "cache_test",
         "events_test",
         "subscription_test",
+        "blob_test",
         "limits_test",
         "admin_test",
         "access_failures_test",

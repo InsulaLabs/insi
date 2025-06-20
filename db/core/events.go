@@ -191,65 +191,6 @@ func (c *Core) unregisterSubscriber(session *eventSession) {
 	close(session.send)
 }
 
-// Central event processing loop for the service.
-// Reads from FSM-populated eventCh and dispatches to WebSocket subscribers.
-func (c *Core) eventProcessingLoop() {
-	c.logger.Info("Starting service event processing loop for WebSocket dispatch")
-	for {
-		select {
-		case event := <-c.eventCh:
-			c.eventSubscribersLock.RLock()
-			hasSubscribers := len(c.eventSubscribers) > 0
-			c.eventSubscribersLock.RUnlock()
-
-			if !hasSubscribers {
-				c.logger.Debug("No active subscribers, skipping event dispatch", "topic", event.Topic)
-				continue
-			}
-
-			c.logger.Debug("Service event loop received event", "topic", event.Topic)
-			c.dispatchEventToSubscribersViaSessionSend(event)
-
-		case <-c.appCtx.Done():
-			c.logger.Info("Service event processing loop shutting down")
-			return
-		}
-	}
-}
-
-// dispatchEventToSubscribersViaSessionSend sends an event to all relevant subscriber sessions.
-func (c *Core) dispatchEventToSubscribersViaSessionSend(event models.Event) {
-	c.eventSubscribersLock.RLock()
-	defer c.eventSubscribersLock.RUnlock()
-
-	sessionsForTopic, ok := c.eventSubscribers[event.Topic]
-	if !ok {
-		c.logger.Debug("No WebSocket subscribers for topic in dispatchViaSessionSend", "topic", event.Topic)
-		return
-	}
-
-	if len(sessionsForTopic) == 0 {
-		c.logger.Debug("Zero WebSocket subscribers in map for topic (dispatchViaSessionSend)", "topic", event.Topic)
-		return
-	}
-
-	c.logger.Debug("Dispatching event via session send channels", "topic", event.Topic, "subscriber_count", len(sessionsForTopic))
-
-	message, err := json.Marshal(event)
-	if err != nil {
-		c.logger.Error("Failed to marshal event for WebSocket dispatch (dispatchViaSessionSend)", "topic", event.Topic, "error", err)
-		return
-	}
-	for session := range sessionsForTopic {
-		select {
-		case session.send <- message:
-			c.logger.Debug("Message queued for WebSocket subscriber", "topic", event.Topic, "remote_addr", session.conn.RemoteAddr())
-		default:
-			c.logger.Warn("Subscriber send channel full, message dropped", "topic", event.Topic, "remote_addr", session.conn.RemoteAddr())
-		}
-	}
-}
-
 // readPump pumps messages from the WebSocket connection to the hub.
 // The application runs readPump in a per-connection goroutine. The application
 // ensures that there is at most one reader on a connection by executing all
@@ -367,7 +308,7 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path)
+		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
 		return
 	}
 

@@ -67,6 +67,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -167,9 +168,10 @@ type ObjectHashResponse struct {
 }
 
 type Endpoint struct {
-	HostPort     string
-	ClientDomain string
-	Logger       *slog.Logger
+	PublicBinding  string
+	PrivateBinding string
+	ClientDomain   string
+	Logger         *slog.Logger
 }
 
 type Config struct {
@@ -188,7 +190,8 @@ type ErrorResponse struct {
 
 // Client is the API client for the insi service.
 type Client struct {
-	baseURL         *url.URL
+	publicBaseURL   *url.URL
+	privateBaseURL  *url.URL
 	httpClient      *http.Client
 	apiKey          string
 	logger          *slog.Logger
@@ -197,7 +200,8 @@ type Client struct {
 
 func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 	return &Client{
-		baseURL:         c.baseURL,
+		publicBaseURL:   c.publicBaseURL,
+		privateBaseURL:  c.privateBaseURL,
 		httpClient:      c.httpClient,
 		apiKey:          apiKey,
 		logger:          c.logger.WithGroup(name),
@@ -205,12 +209,19 @@ func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 	}
 }
 
+func (c *Client) GetHttpClient() *http.Client {
+	return c.httpClient
+}
+
 // NewClient creates a new insi API client.
 func NewClient(cfg *Config) (*Client, error) {
 
 	for _, endpoint := range cfg.Endpoints {
-		if endpoint.HostPort == "" {
-			return nil, fmt.Errorf("hostPort cannot be empty")
+		if endpoint.PublicBinding == "" {
+			return nil, fmt.Errorf("publicBinding cannot be empty")
+		}
+		if endpoint.PrivateBinding == "" {
+			return nil, fmt.Errorf("privateBinding cannot be empty")
 		}
 	}
 
@@ -219,44 +230,39 @@ func NewClient(cfg *Config) (*Client, error) {
 	}
 	clientLogger := cfg.Logger.WithGroup("insi_client")
 
-	connectHost := ""
-	connectPort := ""
-	connectClientDomain := ""
-
+	var selectedEndpoint Endpoint
 	if cfg.ConnectionType == ConnectionTypeDirect {
-		connectHost = cfg.Endpoints[0].HostPort
-		connectClientDomain = cfg.Endpoints[0].ClientDomain
+		selectedEndpoint = cfg.Endpoints[0]
 	} else if cfg.ConnectionType == ConnectionTypeRandom {
-		connectHost = cfg.Endpoints[rand.Intn(len(cfg.Endpoints))].HostPort
-		connectClientDomain = cfg.Endpoints[rand.Intn(len(cfg.Endpoints))].ClientDomain
+		selectedEndpoint = cfg.Endpoints[rand.Intn(len(cfg.Endpoints))]
 	}
 
-	// Parse port from HostPort. HostPort might be IP:port or Domain:port.
-	_, parsedPort, err := net.SplitHostPort(connectHost)
+	createBaseURL := func(binding, clientDomain string) (*url.URL, error) {
+		host, port, err := net.SplitHostPort(binding)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse binding '%s': %w", binding, err)
+		}
+
+		connectHost := host
+		if clientDomain != "" {
+			connectHost = clientDomain
+		}
+
+		finalConnectAddress := net.JoinHostPort(connectHost, port)
+		baseURLStr := fmt.Sprintf("https://%s", finalConnectAddress)
+		return url.Parse(baseURLStr)
+	}
+
+	publicBaseURL, err := createBaseURL(selectedEndpoint.PublicBinding, selectedEndpoint.ClientDomain)
 	if err != nil {
-		clientLogger.Error("Failed to parse port from HostPort", "hostPort", connectHost, "error", err)
-		return nil, fmt.Errorf("failed to parse port from HostPort '%s': %w", connectHost, err)
-	}
-	connectPort = parsedPort
-
-	// Determine the host for the connection URL.
-	if connectClientDomain != "" {
-		connectHost = connectClientDomain // Prefer ClientDomain if available
-		clientLogger.Debug("Using ClientDomain for connection URL host", "domain", connectClientDomain)
-	} else {
-		// Fallback to host from HostPort if ClientDomain is not set.
-		hostFromHostPort, _, _ := net.SplitHostPort(connectHost) // Error already handled for port, ignore here for host.
-		connectHost = hostFromHostPort
-		clientLogger.Debug("Using host from HostPort for connection URL (ClientDomain not provided)", "host", connectHost)
+		clientLogger.Error("Failed to parse public base URL", "error", err)
+		return nil, fmt.Errorf("failed to create public base URL: %w", err)
 	}
 
-	// We ENFORCE HTTPS - NEVER PERMIT HTTP
-	finalConnectAddress := net.JoinHostPort(connectHost, connectPort)
-	baseURLStr := fmt.Sprintf("https://%s", finalConnectAddress)
-	baseURL, err := url.Parse(baseURLStr)
+	privateBaseURL, err := createBaseURL(selectedEndpoint.PrivateBinding, selectedEndpoint.ClientDomain)
 	if err != nil {
-		clientLogger.Error("Failed to parse base URL", "url", baseURLStr, "error", err)
-		return nil, fmt.Errorf("failed to parse base URL '%s': %w", baseURLStr, err)
+		clientLogger.Error("Failed to parse private base URL", "error", err)
+		return nil, fmt.Errorf("failed to create private base URL: %w", err)
 	}
 
 	tlsClientCfg := &tls.Config{
@@ -265,8 +271,7 @@ func NewClient(cfg *Config) (*Client, error) {
 
 	if !cfg.SkipVerify {
 		clientLogger.Debug(
-			"TLS verification active. ServerName for SNI will be derived from target URL host.",
-			"initial_target_host", connectHost,
+			"TLS verification active.",
 			"tls_skip_verify", cfg.SkipVerify,
 		)
 	} else {
@@ -291,12 +296,14 @@ func NewClient(cfg *Config) (*Client, error) {
 
 	clientLogger.Debug(
 		"Insi client initialized",
-		"base_url", baseURL.String(),
+		"public_base_url", publicBaseURL.String(),
+		"private_base_url", privateBaseURL.String(),
 		"tls_skip_verify", cfg.SkipVerify,
 	)
 
 	return &Client{
-		baseURL:         baseURL,
+		publicBaseURL:   publicBaseURL,
+		privateBaseURL:  privateBaseURL,
 		httpClient:      httpClient,
 		apiKey:          cfg.ApiKey,
 		logger:          clientLogger,
@@ -310,7 +317,7 @@ func (c *Client) GetApiKey() string {
 }
 
 func (c *Client) GetBaseURL() *url.URL {
-	return c.baseURL
+	return c.publicBaseURL
 }
 
 func (c *Client) GetAccumulatedRedirects() uint64 {
@@ -321,13 +328,24 @@ func (c *Client) ResetAccumulatedRedirects() {
 	c.redirectCoutner.Store(0)
 }
 
+func isPrivatePath(path string) bool {
+	return strings.HasPrefix(path, "db/api/v1/join") || strings.HasPrefix(path, "db/api/v1/admin/")
+}
+
 // internal request helper
 func (c *Client) doRequest(method, path string, queryParams map[string]string, body interface{}, target interface{}) error {
 	originalMethod := method // Save original method to preserve it across redirects
 
+	var baseURL *url.URL
+	if isPrivatePath(path) {
+		baseURL = c.privateBaseURL
+	} else {
+		baseURL = c.publicBaseURL
+	}
+
 	// Construct the initial URL
 	initialPathURL := &url.URL{Path: path}
-	currentReqURL := c.baseURL.ResolveReference(initialPathURL)
+	currentReqURL := baseURL.ResolveReference(initialPathURL)
 
 	// Apply query parameters
 	if len(queryParams) > 0 {
@@ -564,7 +582,8 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 			isDataGetOperation := method == http.MethodGet &&
 				(strings.HasPrefix(path, "db/api/v1/get") ||
 					strings.HasPrefix(path, "db/api/v1/cache/get") ||
-					strings.HasPrefix(path, "db/api/v1/iterate"))
+					strings.HasPrefix(path, "db/api/v1/iterate") ||
+					strings.HasPrefix(path, "db/api/v1/blob/iterate"))
 
 			if isDataGetOperation {
 				return ErrKeyNotFound
@@ -1000,14 +1019,14 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 	// Construct WebSocket URL. Example: ws://localhost:8080/db/api/v1/events/subscribe?topic=MY_TOPIC&token=API_KEY
 	// Note: The server must handle the "token" query parameter for authentication.
 	wsScheme := "ws"
-	if c.baseURL.Scheme == "https" {
+	if c.publicBaseURL.Scheme == "https" {
 		wsScheme = "wss"
 	}
 
-	// hostPort is derived from c.baseURL.Host which already contains host:port
+	// hostPort is derived from c.publicBaseURL.Host which already contains host:port
 	wsURL := url.URL{
 		Scheme: wsScheme,
-		Host:   c.baseURL.Host, // c.baseURL.Host already has host:port
+		Host:   c.publicBaseURL.Host, // c.publicBaseURL.Host already has host:port
 		Path:   "/db/api/v1/events/subscribe",
 	}
 	query := wsURL.Query()
@@ -1137,4 +1156,237 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 			}
 		}
 	}
+}
+
+// --- Blob Operations ---
+
+// UploadBlob uploads a blob from an io.Reader. The caller is responsible for the reader.
+// The filename is used in the multipart form, can be empty.
+func (c *Client) UploadBlob(ctx context.Context, key string, data io.Reader, filename string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+
+	// Prepare multipart body
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	if err := writer.WriteField("key", key); err != nil {
+		return fmt.Errorf("failed to write key to multipart form: %w", err)
+	}
+
+	if filename == "" {
+		filename = "blob" // a default filename
+	}
+	part, err := writer.CreateFormFile("blob", filename)
+	if err != nil {
+		return fmt.Errorf("failed to create form file: %w", err)
+	}
+
+	if _, err := io.Copy(part, data); err != nil {
+		return fmt.Errorf("failed to copy blob data to form: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	// Prepare request
+	baseURL := c.publicBaseURL
+	pathURL := &url.URL{Path: "db/api/v1/blob/set"}
+	currentReqURL := baseURL.ResolveReference(pathURL)
+	contentType := writer.FormDataContentType()
+
+	var lastResp *http.Response
+
+	for redirects := 0; redirects < MaximumRedirects; redirects++ {
+		// We need a new reader for the body on each request attempt
+		bodyReader := bytes.NewReader(body.Bytes())
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, currentReqURL.String(), bodyReader)
+		if err != nil {
+			return fmt.Errorf("failed to create upload request: %w", err)
+		}
+		req.Header.Set("Authorization", c.apiKey)
+		req.Header.Set("Content-Type", contentType)
+
+		c.logger.Debug("Sending blob upload request", "url", currentReqURL.String())
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if lastResp != nil && lastResp.Body != nil {
+				lastResp.Body.Close()
+			}
+			return fmt.Errorf("http request for blob upload failed: %w", err)
+		}
+		if lastResp != nil && lastResp.Body != nil {
+			lastResp.Body.Close()
+		}
+		lastResp = resp
+
+		// Handle redirects
+		switch resp.StatusCode {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			loc := resp.Header.Get("Location")
+			if loc == "" {
+				resp.Body.Close()
+				return fmt.Errorf("redirect response missing Location header from %s", currentReqURL.String())
+			}
+			redirectURL, err := currentReqURL.Parse(loc)
+			if err != nil {
+				resp.Body.Close()
+				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
+			}
+			c.logger.Debug("Blob upload request redirected", "to", redirectURL.String())
+			currentReqURL = redirectURL
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+				c.redirectCoutner.Add(1)
+			}
+			continue
+		}
+
+		// Process final response
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil // Success
+		}
+
+		// Handle specific errors like in doRequest
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusBadRequest {
+			if currentDiskUsageStr := resp.Header.Get("X-Current-Disk-Usage"); currentDiskUsageStr != "" {
+				limitStr := resp.Header.Get("X-Disk-Usage-Limit")
+				current, _ := strconv.ParseInt(currentDiskUsageStr, 10, 64)
+				limit, _ := strconv.ParseInt(limitStr, 10, 64)
+				return &ErrDiskLimitExceeded{
+					CurrentUsage: current,
+					Limit:        limit,
+					Message:      strings.TrimSpace(string(bodyBytes)),
+				}
+			}
+		}
+
+		return fmt.Errorf("blob upload failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if lastResp != nil && lastResp.Body != nil {
+		lastResp.Body.Close()
+	}
+	return fmt.Errorf("stopped after %d redirects for blob upload, last URL: %s", MaximumRedirects, currentReqURL.String())
+}
+
+// GetBlob retrieves a blob as an io.ReadCloser. The caller MUST close the reader.
+func (c *Client) GetBlob(ctx context.Context, key string) (io.ReadCloser, error) {
+	if key == "" {
+		return nil, fmt.Errorf("key cannot be empty")
+	}
+
+	baseURL := c.publicBaseURL
+	pathURL := &url.URL{Path: "db/api/v1/blob/get"}
+	currentReqURL := baseURL.ResolveReference(pathURL)
+	q := currentReqURL.Query()
+	q.Set("key", key)
+	currentReqURL.RawQuery = q.Encode()
+
+	var lastResp *http.Response
+
+	for redirects := 0; redirects < MaximumRedirects; redirects++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, currentReqURL.String(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create get blob request: %w", err)
+		}
+		req.Header.Set("Authorization", c.apiKey)
+
+		c.logger.Debug("Sending get blob request", "url", currentReqURL.String())
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if lastResp != nil && lastResp.Body != nil {
+				lastResp.Body.Close()
+			}
+			return nil, fmt.Errorf("http request for get blob failed: %w", err)
+		}
+		if lastResp != nil && lastResp.Body != nil {
+			lastResp.Body.Close()
+		}
+		lastResp = resp
+
+		switch resp.StatusCode {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			loc := resp.Header.Get("Location")
+			if loc == "" {
+				resp.Body.Close()
+				return nil, fmt.Errorf("redirect response missing Location header from %s", currentReqURL.String())
+			}
+			redirectURL, err := currentReqURL.Parse(loc)
+			if err != nil {
+				resp.Body.Close()
+				return nil, fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
+			}
+			c.logger.Debug("Get blob redirected", "to", redirectURL.String())
+			currentReqURL = redirectURL
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+				c.redirectCoutner.Add(1)
+			}
+			continue
+		}
+
+		// Process final response
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return resp.Body, nil
+		}
+
+		// It's not a success status, so we need to handle it as an error.
+		defer resp.Body.Close()
+		bodyBytes, _ := io.ReadAll(resp.Body)
+
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, ErrKeyNotFound
+		}
+
+		return nil, fmt.Errorf("get blob failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if lastResp != nil && lastResp.Body != nil {
+		lastResp.Body.Close()
+	}
+	return nil, fmt.Errorf("stopped after %d redirects for get blob, last URL: %s", MaximumRedirects, currentReqURL.String())
+}
+
+// DeleteBlob deletes a blob by key.
+func (c *Client) DeleteBlob(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	payload := map[string]string{"key": key}
+	err := c.doRequest(http.MethodPost, "db/api/v1/blob/delete", nil, payload, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return ErrKeyNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// IterateBlobKeysByPrefix retrieves a list of blob keys matching a given prefix.
+func (c *Client) IterateBlobKeysByPrefix(prefix string, offset, limit int) ([]string, error) {
+	params := map[string]string{
+		"prefix": prefix,
+		"offset": strconv.Itoa(offset),
+		"limit":  strconv.Itoa(limit),
+	}
+	var response struct {
+		Data []string `json:"data"`
+	}
+	err := c.doRequest(http.MethodGet, "db/api/v1/blob/iterate/prefix", params, nil, &response)
+	if err != nil {
+		if errors.Is(err, ErrKeyNotFound) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	return response.Data, nil
 }

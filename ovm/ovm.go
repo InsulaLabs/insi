@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -75,6 +76,9 @@ func New(cfg *Config) (*OVM, error) {
 		return nil, err
 	}
 	if err := ovm.addCacheStore(cfg.SetupCtx); err != nil {
+		return nil, err
+	}
+	if err := ovm.addBlobStore(cfg.SetupCtx); err != nil {
 		return nil, err
 	}
 	if err := ovm.addEventEmitter(cfg.SetupCtx); err != nil {
@@ -484,6 +488,97 @@ func (o *OVM) addCacheStore(ctx context.Context) error {
 	})
 
 	return o.vm.Set("cache", cache)
+}
+
+func (o *OVM) addBlobStore(ctx context.Context) error {
+	blob, err := o.vm.Object(`({})`)
+	if err != nil {
+		return fmt.Errorf("failed to create blob object: %w", err)
+	}
+
+	// Set (Upload)
+	blob.Set("set", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		value, _ := call.Argument(1).ToString() // Blobs are uploaded as strings from JS
+		if key == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
+		}
+		_, err := withRetries(o, ctx, func() (any, error) {
+			// filename can be empty
+			return nil, o.insiClient.UploadBlob(ctx, key, strings.NewReader(value), "")
+		})
+		if err != nil {
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		return otto.Value{}
+	})
+
+	// Delete
+	blob.Set("delete", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		if key == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
+		}
+		_, err := withRetries(o, ctx, func() (any, error) {
+			return nil, o.insiClient.DeleteBlob(key)
+		})
+		if err != nil {
+			if errors.Is(err, client.ErrKeyNotFound) {
+				return otto.Value{}
+			}
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		return otto.Value{}
+	})
+
+	// Get (Download)
+	blob.Set("get", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		if key == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "key cannot be empty"))
+		}
+		value, err := withRetries(o, ctx, func() (string, error) {
+			reader, err := o.insiClient.GetBlob(ctx, key)
+			if err != nil {
+				return "", err
+			}
+			defer reader.Close()
+			data, err := io.ReadAll(reader)
+			if err != nil {
+				return "", fmt.Errorf("failed to read blob data: %w", err)
+			}
+			return string(data), nil
+		})
+		if err != nil {
+			if errors.Is(err, client.ErrKeyNotFound) {
+				return otto.NullValue()
+			}
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		val, _ := o.vm.ToValue(value)
+		return val
+	})
+
+	// IterateByPrefix
+	blob.Set("iterateByPrefix", func(call otto.FunctionCall) otto.Value {
+		prefix, _ := call.Argument(0).ToString()
+		offset, _ := call.Argument(1).ToInteger()
+		limit, _ := call.Argument(2).ToInteger()
+		if prefix == "" {
+			panic(o.vm.MakeCustomError("ArgumentError", "prefix cannot be empty"))
+		}
+		keys, err := withRetries(o, ctx, func() ([]string, error) {
+			return o.insiClient.IterateBlobKeysByPrefix(prefix, int(offset), int(limit))
+		})
+		if err != nil {
+			// client.IterateBlobKeysByPrefix returns empty slice on not found, so we only panic on other errors.
+			panic(o.vm.MakeCustomError("InsiClientError", err.Error()))
+		}
+		val, _ := o.vm.ToValue(keys)
+		return val
+	})
+
+	return o.vm.Set("blob", blob)
 }
 
 func (o *OVM) addEventEmitter(ctx context.Context) error {

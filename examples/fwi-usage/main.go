@@ -249,10 +249,11 @@ func generateClusterConfig(homeDir string) (*config.Cluster, error) {
 	nodeID := "node0"
 	nodes := map[string]config.Node{
 		nodeID: {
-			HttpBinding:  "127.0.0.1:8080",
-			RaftBinding:  "127.0.0.1:7070",
-			NodeSecret:   "secret-for-node0",
-			ClientDomain: "localhost",
+			PublicBinding:  "127.0.0.1:8080",
+			PrivateBinding: "127.0.0.1:7070",
+			RaftBinding:    "127.0.0.1:2222",
+			NodeSecret:     "secret-for-node0",
+			ClientDomain:   "localhost",
 		},
 	}
 	keyPath := filepath.Join(homeDir, "keys")
@@ -298,8 +299,9 @@ func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 	endpoints := make([]client.Endpoint, 0, len(cfg.Nodes))
 	for _, node := range cfg.Nodes {
 		endpoints = append(endpoints, client.Endpoint{
-			HostPort:     node.HttpBinding,
-			ClientDomain: node.ClientDomain,
+			PublicBinding:  node.PublicBinding,
+			PrivateBinding: node.PrivateBinding,
+			ClientDomain:   node.ClientDomain,
 		})
 	}
 
