@@ -175,6 +175,8 @@ func (c *Core) GetEntityByKeyUUID(keyUUID string) (models.Entity, error) {
 }
 
 func (c *Core) getEntityHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
+
 	_, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -201,6 +203,8 @@ func (c *Core) getEntityHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) getEntitiesHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
+
 	_, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -227,6 +231,8 @@ func (c *Core) getEntitiesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) getEntityByAliasHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
+
 	_, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
