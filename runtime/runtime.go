@@ -50,6 +50,7 @@ type Runtime struct {
 	rtClients map[string]*client.Client
 
 	currentLogLevel slog.Level
+	keySetupOnce    sync.Once
 }
 
 // New creates a new Runtime instance.
@@ -276,8 +277,10 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	keyPath := filepath.Join(r.clusterCfg.InsidHome, "keys")
 
 	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		nodeLogger.Info("Creating keys directory", "path", keyPath)
-		r.setupKeys(keyPath)
+		r.keySetupOnce.Do(func() {
+			nodeLogger.Info("Creating keys directory", "path", keyPath)
+			r.setupKeys(keyPath)
+		})
 	}
 
 	nodeDataRootPath := filepath.Join(r.clusterCfg.InsidHome, nodeId)
@@ -481,9 +484,13 @@ func (r *Runtime) setupKeys(keyPath string) {
 		r.logger.Error("Failed to open server.crt for writing", "error", err)
 		os.Exit(1)
 	}
-	defer certOut.Close()
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
 		r.logger.Error("Failed to write data to insid.crt", "error", err)
+		certOut.Close()
+		os.Exit(1)
+	}
+	if err := certOut.Close(); err != nil {
+		r.logger.Error("Failed to close server.crt", "error", err)
 		os.Exit(1)
 	}
 	r.logger.Info("Generated insid.crt", "path", certOut.Name())
@@ -493,15 +500,16 @@ func (r *Runtime) setupKeys(keyPath string) {
 		r.logger.Error("Failed to open server.key for writing", "error", err)
 		os.Exit(1)
 	}
-	defer keyOut.Close()
 	privBytes := x509.MarshalPKCS1PrivateKey(priv)
 	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
 		r.logger.Error("Failed to write data to server.key", "error", err)
+		keyOut.Close()
 		os.Exit(1)
 	}
-
-	// Sleep to ensure the files are written before we attempt to use them
-	time.Sleep(1 * time.Second)
+	if err := keyOut.Close(); err != nil {
+		r.logger.Error("Failed to close server.key", "error", err)
+		os.Exit(1)
+	}
 	r.logger.Info("Generated server.key", "path", keyOut.Name())
 }
 
