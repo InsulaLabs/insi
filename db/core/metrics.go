@@ -125,7 +125,7 @@ func (c *Core) UpdateCounters() {
 	c.metrics.PreviousCounters.OP_System.Store(c.metrics.ActiveCounters.OP_System.Load())
 	c.metrics.LastPeriod = now
 
-	c.logger.Info("Ops/sec",
+	c.logger.Debug("Ops/sec",
 		"vs", fmt.Sprintf("%.2f", c.metrics.CountersPerSecond.OP_VS),
 		"cache", fmt.Sprintf("%.2f", c.metrics.CountersPerSecond.OP_Cache),
 		"events", fmt.Sprintf("%.2f", c.metrics.CountersPerSecond.OP_Events),
