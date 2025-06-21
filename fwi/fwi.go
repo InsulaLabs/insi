@@ -100,6 +100,12 @@ type Blobs interface {
 	PopScope()
 }
 
+type Aliases interface {
+	MakeAlias(ctx context.Context) (string, error)
+	DeleteAlias(ctx context.Context, alias string) error
+	ListAliases(ctx context.Context) ([]string, error)
+}
+
 type Entity interface {
 	GetName() string
 	GetKey() string
@@ -112,6 +118,7 @@ type Entity interface {
 	GetEvents() Events // Get the event pub/sub for the entity
 	GetBlobs() Blobs   // Get the blob store for the entity
 
+	GetAliasManager() Aliases
 
 	// GetUsageInfo retrieves the current usage and limits for the entity.
 	GetUsageInfo(ctx context.Context) (*models.LimitsResponse, error)
@@ -186,6 +193,11 @@ type blobsImpl struct {
 	logger     *slog.Logger
 }
 
+type aliasesImpl struct {
+	insiClient *client.Client
+	logger     *slog.Logger
+}
+
 type fwiImpl struct {
 	insiCfg        *client.Config
 	rootInsiClient *client.Client
@@ -207,6 +219,7 @@ var _ KV = &valueStoreImpl{}
 var _ KV = &cacheStoreImpl{}
 var _ Events = &eventsImpl{}
 var _ Blobs = &blobsImpl{}
+var _ Aliases = &aliasesImpl{}
 
 func (e *entityImpl) GetName() string {
 	return e.name
@@ -251,6 +264,13 @@ func (e *entityImpl) GetBlobs() Blobs {
 	return &blobsImpl{
 		insiClient: e.insiClient,
 		logger:     e.logger.WithGroup("blobs"),
+	}
+}
+
+func (e *entityImpl) GetAliasManager() Aliases {
+	return &aliasesImpl{
+		insiClient: e.insiClient,
+		logger:     e.logger.WithGroup("aliases"),
 	}
 }
 
@@ -449,6 +469,38 @@ func (e *blobsImpl) PopScope() {
 	} else {
 		e.scope = ""
 	}
+}
+
+func (a *aliasesImpl) MakeAlias(ctx context.Context) (string, error) {
+	return withRetries(ctx, a.logger, func() (string, error) {
+		resp, err := a.insiClient.SetAlias()
+		if err != nil {
+			return "", err
+		}
+		if resp == nil {
+			return "", fmt.Errorf("server did not return an alias")
+		}
+		return resp.Alias, nil
+	})
+}
+
+func (a *aliasesImpl) DeleteAlias(ctx context.Context, alias string) error {
+	return withRetriesVoid(ctx, a.logger, func() error {
+		return a.insiClient.DeleteAlias(alias)
+	})
+}
+
+func (a *aliasesImpl) ListAliases(ctx context.Context) ([]string, error) {
+	return withRetries(ctx, a.logger, func() ([]string, error) {
+		resp, err := a.insiClient.ListAliases()
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil {
+			return []string{}, nil
+		}
+		return resp.Aliases, nil
+	})
 }
 
 func NewFWI(insiCfg *client.Config, rootInsiClient *client.Client, logger *slog.Logger) (FWI, error) {
