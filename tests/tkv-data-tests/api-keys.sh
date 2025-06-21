@@ -372,6 +372,117 @@ test_api_get_limits_for_other_key() {
     expect_success "API delete for key '$generated_key' after get-limits test" "$exit_code_delete" "$output_delete" "OK"
 }
 
+test_api_key_aliases() {
+    print_header "Test: API Key Aliases (Add, List, Use, Delete)"
+    local primary_key_name="primary_for_alias_$(date +%s)_$$"
+    local primary_key=""
+    local alias1_key=""
+    local alias2_key=""
+    local output_add_primary output_add_alias1 output_add_alias2 output_list_aliases output_ping_alias1 output_ping_alias2
+    local output_delete_alias1 output_verify_alias1_deleted output_ping_alias2_after_delete output_delete_primary
+    local exit_code_add_primary exit_code_add_alias1 exit_code_add_alias2 exit_code_list_aliases exit_code_ping_alias1 exit_code_ping_alias2
+    local exit_code_delete_alias1 exit_code_verify_alias1_deleted exit_code_ping_alias2_after_delete exit_code_delete_primary
+
+    # 1. Create a primary key to attach aliases to
+    echo -e "${INFO_EMOJI} Creating primary key '$primary_key_name' for alias test"
+    output_add_primary=$(run_insic "api" "add" "$primary_key_name")
+    exit_code_add_primary=$?
+    expect_success "Create primary key for alias test" "$exit_code_add_primary" "$output_add_primary" "API Key:"
+    if [ "$exit_code_add_primary" -ne 0 ]; then
+        echo -e "${FAILURE_EMOJI} ${RED}Failed to create primary key, aborting alias test.${NC}"
+        return
+    fi
+    primary_key=$(echo "$output_add_primary" | grep "API Key:" | awk '{print $3}')
+    echo -e "${INFO_EMOJI} Parsed primary key: $primary_key"
+
+    sleep 5
+
+    # 2. Create the first alias using the primary key
+    echo -e "${INFO_EMOJI} Creating first alias for key $primary_key"
+    output_add_alias1=$(run_insic_with_key "$primary_key" "alias" "add")
+    exit_code_add_alias1=$?
+    expect_success "Create first alias" "$exit_code_add_alias1" "$output_add_alias1" "Alias Key:"
+    if [ "$exit_code_add_alias1" -ne 0 ]; then
+        echo -e "${FAILURE_EMOJI} ${RED}Failed to create first alias, aborting remainder of alias test.${NC}"
+        run_insic "api" "delete" "$primary_key" # Cleanup
+        return
+    fi
+    alias1_key=$(echo "$output_add_alias1" | grep "Alias Key:" | awk '{print $3}')
+    echo -e "${INFO_EMOJI} Parsed alias 1 key: $alias1_key"
+
+    # 3. Create the second alias using the primary key
+    echo -e "${INFO_EMOJI} Creating second alias for key $primary_key"
+    output_add_alias2=$(run_insic_with_key "$primary_key" "alias" "add")
+    exit_code_add_alias2=$?
+    expect_success "Create second alias" "$exit_code_add_alias2" "$output_add_alias2" "Alias Key:"
+    if [ "$exit_code_add_alias2" -ne 0 ]; then
+        echo -e "${FAILURE_EMOJI} ${RED}Failed to create second alias, aborting remainder of alias test.${NC}"
+        run_insic "api" "delete" "$primary_key" # Cleanup
+        return
+    fi
+    alias2_key=$(echo "$output_add_alias2" | grep "Alias Key:" | awk '{print $3}')
+    echo -e "${INFO_EMOJI} Parsed alias 2 key: $alias2_key"
+
+    sleep 5
+
+    # 4. List aliases and verify both are present
+    echo -e "${INFO_EMOJI} Listing aliases for primary key $primary_key"
+    output_list_aliases=$(run_insic_with_key "$primary_key" "alias" "list")
+    exit_code_list_aliases=$?
+    expect_success "List aliases" "$exit_code_list_aliases" "$output_list_aliases" "$alias1_key"
+    expect_success "Check for second alias in list" "$exit_code_list_aliases" "$output_list_aliases" "$alias2_key"
+
+    # 5. Verify both aliases work by pinging with them
+    echo -e "${INFO_EMOJI} Verifying first alias key via ping: $alias1_key"
+    output_ping_alias1=$(run_insic_with_key "$alias1_key" "ping")
+    exit_code_ping_alias1=$?
+    expect_success "Ping with first alias" "$exit_code_ping_alias1" "$output_ping_alias1" "Ping Response:"
+
+    echo -e "${INFO_EMOJI} Verifying second alias key via ping: $alias2_key"
+    output_ping_alias2=$(run_insic_with_key "$alias2_key" "ping")
+    exit_code_ping_alias2=$?
+    expect_success "Ping with second alias" "$exit_code_ping_alias2" "$output_ping_alias2" "Ping Response:"
+
+    # 6. Delete the first alias using the primary key
+    echo -e "${INFO_EMOJI} Deleting first alias key: $alias1_key"
+    output_delete_alias1=$(run_insic_with_key "$primary_key" "alias" "delete" "$alias1_key")
+    exit_code_delete_alias1=$?
+    expect_success "Delete first alias" "$exit_code_delete_alias1" "$output_delete_alias1" "OK"
+
+    sleep 12
+
+    # 7. Verify the deleted alias is now invalid
+    echo -e "${INFO_EMOJI} Verifying that deleted alias is invalid: $alias1_key"
+    output_verify_alias1_deleted=$(run_insic "api" "verify" "$alias1_key")
+    exit_code_verify_alias1_deleted=$?
+    expect_error "Verify deleted alias" "$exit_code_verify_alias1_deleted" "$output_verify_alias1_deleted" "Verification FAILED"
+
+    # 8. Verify the second alias is the only one remaining in the list
+    echo -e "${INFO_EMOJI} Verifying the second alias is the only one remaining in the list"
+    output_list_after_delete=$(run_insic_with_key "$primary_key" "alias" "list")
+    exit_code_list_after_delete=$?
+    expect_success "List aliases after delete" "$exit_code_list_after_delete" "$output_list_after_delete" "$alias2_key"
+    if [[ "$output_list_after_delete" == *"$alias1_key"* ]]; then
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Deleted alias '$alias1_key' was found in list after deletion.${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    else
+        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Deleted alias '$alias1_key' was not found in list after deletion.${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    fi
+
+    # 9. Verify the second alias still works
+    echo -e "${INFO_EMOJI} Verifying second alias still works after deleting first: $alias2_key"
+    output_ping_alias2_after_delete=$(run_insic_with_key "$alias2_key" "ping")
+    exit_code_ping_alias2_after_delete=$?
+    expect_success "Ping with second alias after deleting first" "$exit_code_ping_alias2_after_delete" "$output_ping_alias2_after_delete" "Ping Response:"
+
+    # 10. Cleanup: Delete the primary key
+    echo -e "${INFO_EMOJI} Cleanup: Deleting primary key $primary_key"
+    output_delete_primary=$(run_insic "api" "delete" "$primary_key")
+    exit_code_delete_primary=$?
+    expect_success "Delete primary key for cleanup" "$exit_code_delete_primary" "$output_delete_primary" "OK"
+}
+
 # --- Main Execution ---
 main() {
     if [ -z "$1" ]; then
@@ -429,6 +540,7 @@ main() {
     test_api_key_lifecycle
     test_api_key_limits
     test_api_get_limits_for_other_key
+    test_api_key_aliases
 
     echo -e "\n${GREEN}All TKV API Key operations tests completed.${NC}"
 

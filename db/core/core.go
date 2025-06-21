@@ -426,6 +426,14 @@ func (c *Core) Run() {
 		// System handle anyone can call with an api key to get their current usage and limits
 		c.pubMux.Handle("/db/api/v1/limits", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system")))
 
+		// Aliases are so a caller can "alias" their api key to a different encoded value that they can use across the public
+		// api. They don't need to "get" the api key as we will return it in the response.
+		c.pubMux.Handle("/db/api/v1/alias/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setAliasHandler), "system")))
+		// Deletes the alias - this way we can disable api access without deleting the root api key (triggering data deletion)
+		c.pubMux.Handle("/db/api/v1/alias/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteAliasHandler), "system")))
+		// List is so they can get a list of all the aliases they have set for the purpose of deleting or debugging
+		c.pubMux.Handle("/db/api/v1/alias/list", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.listAliasesHandler), "system")))
+
 		return &serverInstance{
 			binding: binding,
 			mux:     c.pubMux,

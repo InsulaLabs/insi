@@ -165,6 +165,66 @@ func (c *Core) normalizeKeyName(keyName string) string {
 	return keyName
 }
 
+func (c *Core) validateTokenInner(token string) (models.TokenData, bool) {
+	apiCacheItem := c.apiCache.Get(token)
+	if apiCacheItem != nil {
+		return apiCacheItem.Value(), true
+	}
+
+	td, err := c.decomposeKey(token)
+	if err != nil {
+		c.logger.Error("Could not decompose key", "error", err)
+		return models.TokenData{}, false
+	}
+
+	// Ensure there's no tombstone (deleted key)
+	tombstoneKey := WithApiKeyTombstone(td.KeyUUID)
+	_, err = c.fsm.Get(tombstoneKey)
+	if err == nil {
+		c.logger.Error("Tombstone found for key (marked for deletion)", "key", td.KeyUUID)
+		return models.TokenData{}, false
+	}
+
+	// Get the key from the fsm
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
+	keyDataFromFsm, err := c.fsm.Get(fsmStorageKey)
+	if err != nil {
+		c.logger.Error("Could not get key data from FSM", "key", fsmStorageKey, "error", err)
+		return models.TokenData{}, false
+	}
+
+	// Data from FSM is plain JSON of models.TokenData, it should NOT be decrypted.
+	// It should be directly unmarshalled.
+	var tdFromFsm models.TokenData
+	if err := json.Unmarshal([]byte(keyDataFromFsm), &tdFromFsm); err != nil {
+		c.logger.Error(
+			"Could not unmarshal token data from FSM",
+			"key", fsmStorageKey,
+			"data", keyDataFromFsm,
+			"error", err,
+		)
+		return models.TokenData{}, false
+	}
+
+	// Compare the UUID from the decomposed token with the UUID stored in FSM for that entity.
+	if tdFromFsm.DataScopeUUID != td.DataScopeUUID ||
+		tdFromFsm.KeyUUID != td.KeyUUID {
+		c.logger.Error("UUID mismatch between token and FSM record",
+			"entity", td.Entity,
+			"data_scope_uuid_from_token", td.DataScopeUUID,
+			"key_uuid_from_token", td.KeyUUID,
+			"entity_from_fsm", tdFromFsm.Entity,
+			"data_scope_uuid_from_fsm", tdFromFsm.DataScopeUUID,
+			"key_uuid_from_fsm", tdFromFsm.KeyUUID,
+		)
+		return models.TokenData{}, false
+	}
+
+	c.apiCache.Set(token, tdFromFsm, c.cfg.Cache.Keys)
+
+	return tdFromFsm, true
+}
+
 func (c *Core) decomposeKey(token string) (models.TokenData, error) {
 
 	parts := strings.TrimPrefix(token, "insi_")
@@ -379,60 +439,33 @@ func (c *Core) ValidateToken(r *http.Request, rootOnly AccessEntity) (models.Tok
 		}, true
 	}
 
-	apiCacheItem := c.apiCache.Get(token)
-	if apiCacheItem != nil {
-		return apiCacheItem.Value(), true
+	// Attempt to validate the token directly
+	if td, ok := c.validateTokenInner(token); ok {
+		return td, true
 	}
 
-	td, err := c.decomposeKey(token)
+	// If direct validation fails, check if it's an alias
+	rootKeyUUID, err := c.fsm.Get(WithAliasToRoot(token))
 	if err != nil {
-		c.logger.Error("Could not decompose key", "error", err)
+		// Not an alias, or some other error. Validation fails.
 		return models.TokenData{}, false
 	}
 
-	// Ensure theres no tombstone (deleted key)
-	tombstoneKey := WithApiKeyTombstone(td.KeyUUID)
-	_, err = c.fsm.Get(tombstoneKey)
-	if err == nil {
-		c.logger.Error("Tombstone found for key (marked for deletion)", "key", td.KeyUUID)
-		return models.TokenData{}, false
-	}
-
-	// Get the key from the fsm
-	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
+	// It is an alias, now we need to get the root key's data
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, rootKeyUUID)
 	keyDataFromFsm, err := c.fsm.Get(fsmStorageKey)
 	if err != nil {
-		c.logger.Error("Could not get key data from FSM", "key", fsmStorageKey, "error", err)
+		c.logger.Error("Could not get root key data for alias from FSM", "root_key_uuid", rootKeyUUID, "error", err)
 		return models.TokenData{}, false
 	}
 
-	// Data from FSM is plain JSON of models.TokenData, it should NOT be decrypted.
-	// It should be directly unmarshalled.
 	var tdFromFsm models.TokenData
 	if err := json.Unmarshal([]byte(keyDataFromFsm), &tdFromFsm); err != nil {
-		c.logger.Error(
-			"Could not unmarshal token data from FSM",
-			"key", fsmStorageKey,
-			"data", keyDataFromFsm,
-			"error", err,
-		)
+		c.logger.Error("Could not unmarshal root key token data from FSM for alias", "root_key_uuid", rootKeyUUID, "error", err)
 		return models.TokenData{}, false
 	}
 
-	// Compare the UUID from the decomposed token with the UUID stored in FSM for that entity.
-	if tdFromFsm.DataScopeUUID != td.DataScopeUUID ||
-		tdFromFsm.KeyUUID != td.KeyUUID {
-		c.logger.Error("UUID mismatch between token and FSM record",
-			"entity", td.Entity,
-			"data_scope_uuid_from_token", td.DataScopeUUID,
-			"key_uuid_from_token", td.KeyUUID,
-			"entity_from_fsm", tdFromFsm.Entity,
-			"data_scope_uuid_from_fsm", tdFromFsm.DataScopeUUID,
-			"key_uuid_from_fsm", tdFromFsm.KeyUUID,
-		)
-		return models.TokenData{}, false
-	}
-
+	// Cache the original token (the alias) pointing to the root key's data
 	c.apiCache.Set(token, tdFromFsm, c.cfg.Cache.Keys)
 
 	return tdFromFsm, true

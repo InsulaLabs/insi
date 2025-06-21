@@ -172,6 +172,8 @@ func main() {
 		handleApi(cli, cmdArgs)
 	case "blob":
 		handleBlob(cli, cmdArgs)
+	case "alias":
+		handleAlias(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -210,6 +212,11 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.CyanString("[key_value]"), color.YellowString("Get limits. If key provided, gets for that key (--root required)."))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N"), color.YellowString("--root flag usually required"))
+
+	// Alias commands
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("alias"), color.CyanString("add"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("alias"), color.CyanString("delete"), color.CyanString("<alias_key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("alias"), color.CyanString("list"))
 
 	// Blob Commands
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("blob"), color.CyanString("upload"), color.CyanString("<key>"), color.CyanString("<filepath>"))
@@ -1167,5 +1174,88 @@ func handleBlobIterate(c *client.Client, args []string) {
 
 	for _, item := range results {
 		fmt.Println(item)
+	}
+}
+
+// --- Alias Command Handlers ---
+func handleAlias(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("alias: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "add":
+		handleAliasAdd(c, subArgs)
+	case "delete":
+		handleAliasDelete(c, subArgs)
+	case "list":
+		handleAliasList(c, subArgs)
+	default:
+		logger.Error("alias: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleAliasAdd(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("alias add: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	resp, err := c.SetAlias()
+	if err != nil {
+		logger.Error("Alias creation failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("Alias Key: %s\n", color.GreenString(resp.Alias))
+	color.HiGreen("OK")
+}
+
+func handleAliasDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("alias delete: requires <alias_key>")
+		printUsage()
+		os.Exit(1)
+	}
+	aliasKey := args[0]
+
+	err := c.DeleteAlias(aliasKey)
+	if err != nil {
+		logger.Error("Alias deletion failed", "alias", aliasKey, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleAliasList(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("alias list: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	resp, err := c.ListAliases()
+	if err != nil {
+		logger.Error("Failed to list aliases", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(resp.Aliases) == 0 {
+		fmt.Println("No aliases found for the current key.")
+		return
+	}
+
+	fmt.Println(color.CyanString("Aliases:"))
+	for _, alias := range resp.Aliases {
+		fmt.Printf("  - %s\n", alias)
 	}
 }
