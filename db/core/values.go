@@ -18,6 +18,8 @@ import (
 
 func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 
+	c.IndVSOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -53,6 +55,8 @@ func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndVSOp()
 
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
@@ -123,6 +127,9 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 */
 
 func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndVSOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -214,6 +221,9 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndVSOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -284,6 +294,9 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndVSOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -356,6 +369,9 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndVSOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -450,6 +466,9 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) bumpHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndVSOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)

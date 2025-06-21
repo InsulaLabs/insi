@@ -679,9 +679,18 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 						errorResp.Message,
 					)
 				}
+				// If JSON unmarshal fails, we have a raw text body.
+				// We should return it.
+				return fmt.Errorf(
+					"server returned status %d for %s %s: %s",
+					resp.StatusCode,
+					originalMethod,
+					currentReqURL.String(),
+					strings.TrimSpace(string(bodyBytes)),
+				)
 			}
 			return fmt.Errorf(
-				"server returned status %d for %s %s",
+				"server returned status %d for %s %s (and could not read body)",
 				resp.StatusCode,
 				originalMethod,
 				currentReqURL.String(),
@@ -1039,6 +1048,17 @@ func (c *Client) GetLimitsForKey(apiKey string) (*models.LimitsResponse, error) 
 	var response models.LimitsResponse
 
 	err := c.doRequest(http.MethodPost, "db/api/v1/admin/limits/get", nil, requestPayload, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// GetOpsPerSecond retrieves the current operations-per-second metrics for the node.
+// Only the root api key can get ops per second.
+func (c *Client) GetOpsPerSecond() (*models.OpsPerSecondCounters, error) {
+	var response models.OpsPerSecondCounters
+	err := c.doRequest(http.MethodGet, "db/api/v1/admin/metrics/ops", nil, nil, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -1487,4 +1507,35 @@ func (c *Client) setLeader(leaderURL *url.URL) error {
 	}
 
 	return fmt.Errorf("could not find matching endpoint for leader host: %s", leaderURL.Host)
+}
+
+// --- Alias Operations ---
+
+// SetAlias creates a new alias for the API key currently in use.
+func (c *Client) SetAlias() (*models.SetAliasResponse, error) {
+	var response models.SetAliasResponse
+	err := c.doRequest(http.MethodPost, "db/api/v1/alias/set", nil, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// DeleteAlias deletes a specific alias.
+func (c *Client) DeleteAlias(alias string) error {
+	if alias == "" {
+		return fmt.Errorf("alias cannot be empty for DeleteAlias")
+	}
+	requestPayload := models.DeleteAliasRequest{Alias: alias}
+	return c.doRequest(http.MethodPost, "db/api/v1/alias/delete", nil, requestPayload, nil)
+}
+
+// ListAliases lists all aliases for the current API key.
+func (c *Client) ListAliases() (*models.ListAliasesResponse, error) {
+	var response models.ListAliasesResponse
+	err := c.doRequest(http.MethodGet, "db/api/v1/alias/list", nil, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
 }

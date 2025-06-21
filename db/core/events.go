@@ -56,6 +56,8 @@ func (es *eventSubsystem) Receive(topic string, data any) error {
 	// to WebSocket subscribers from the service layer.
 	// The eventCh is still useful for the FSM->Service notification.
 
+	es.service.IndEventsOp()
+
 	event := models.Event{
 		Topic: topic,
 		Data:  data,
@@ -76,6 +78,9 @@ func (es *eventSubsystem) Receive(topic string, data any) error {
 
 // eventSubscribeHandler handles WebSocket requests for event subscriptions.
 func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndSubscribersOp()
+
 	// Authentication is handled by ValidateToken, which checks the Authorization header.
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
@@ -127,6 +132,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) registerSubscriber(session *eventSession) {
+	// already counted in IndEventsOp
 	c.eventSubscribersLock.Lock()
 	defer c.eventSubscribersLock.Unlock()
 
@@ -156,6 +162,7 @@ func (c *Core) registerSubscriber(session *eventSession) {
 }
 
 func (c *Core) unregisterSubscriber(session *eventSession) {
+	// already counted in IndEventsOp
 	c.eventSubscribersLock.Lock()
 	defer c.eventSubscribersLock.Unlock()
 
@@ -295,6 +302,7 @@ func (s *eventSession) writePump() {
 // -- WRITE OPERATIONS --
 
 func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
+	// captured in IndEventsOp
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

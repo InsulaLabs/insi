@@ -80,6 +80,7 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 }
 
 func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		c.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
@@ -107,6 +108,8 @@ func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {
 // -- SYSTEM OPERATIONS --
 
 func (c *Core) joinHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
+
 	if !c.fsm.IsLeader() {
 		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
 		return
@@ -165,6 +168,66 @@ func (c *Core) normalizeKeyName(keyName string) string {
 	return keyName
 }
 
+func (c *Core) validateTokenInner(token string) (models.TokenData, bool) {
+	apiCacheItem := c.apiCache.Get(token)
+	if apiCacheItem != nil {
+		return apiCacheItem.Value(), true
+	}
+
+	td, err := c.decomposeKey(token)
+	if err != nil {
+		c.logger.Error("Could not decompose key", "error", err)
+		return models.TokenData{}, false
+	}
+
+	// Ensure there's no tombstone (deleted key)
+	tombstoneKey := WithApiKeyTombstone(td.KeyUUID)
+	_, err = c.fsm.Get(tombstoneKey)
+	if err == nil {
+		c.logger.Error("Tombstone found for key (marked for deletion)", "key", td.KeyUUID)
+		return models.TokenData{}, false
+	}
+
+	// Get the key from the fsm
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
+	keyDataFromFsm, err := c.fsm.Get(fsmStorageKey)
+	if err != nil {
+		c.logger.Error("Could not get key data from FSM", "key", fsmStorageKey, "error", err)
+		return models.TokenData{}, false
+	}
+
+	// Data from FSM is plain JSON of models.TokenData, it should NOT be decrypted.
+	// It should be directly unmarshalled.
+	var tdFromFsm models.TokenData
+	if err := json.Unmarshal([]byte(keyDataFromFsm), &tdFromFsm); err != nil {
+		c.logger.Error(
+			"Could not unmarshal token data from FSM",
+			"key", fsmStorageKey,
+			"data", keyDataFromFsm,
+			"error", err,
+		)
+		return models.TokenData{}, false
+	}
+
+	// Compare the UUID from the decomposed token with the UUID stored in FSM for that entity.
+	if tdFromFsm.DataScopeUUID != td.DataScopeUUID ||
+		tdFromFsm.KeyUUID != td.KeyUUID {
+		c.logger.Error("UUID mismatch between token and FSM record",
+			"entity", td.Entity,
+			"data_scope_uuid_from_token", td.DataScopeUUID,
+			"key_uuid_from_token", td.KeyUUID,
+			"entity_from_fsm", tdFromFsm.Entity,
+			"data_scope_uuid_from_fsm", tdFromFsm.DataScopeUUID,
+			"key_uuid_from_fsm", tdFromFsm.KeyUUID,
+		)
+		return models.TokenData{}, false
+	}
+
+	c.apiCache.Set(token, tdFromFsm, c.cfg.Cache.Keys)
+
+	return tdFromFsm, true
+}
+
 func (c *Core) decomposeKey(token string) (models.TokenData, error) {
 
 	parts := strings.TrimPrefix(token, "insi_")
@@ -198,6 +261,7 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 	td := models.TokenData{
 		DataScopeUUID: dsUUID,
 		KeyUUID:       keyUUID,
+		IsAlias:       false,
 	}
 
 	// Data to be encrypted and base64 encoded for the actual API key string
@@ -270,7 +334,56 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 	return actualKey, nil
 }
 
+func (c *Core) spawnNewAliasKey(parentTd models.TokenData, aliasKeyName string) (string, error) {
+	aliasKeyName = c.normalizeKeyName(aliasKeyName)
+	aliasKeyUUID := uuid.New().String()
+
+	// Inherit DataScopeUUID from parent, and mark as an alias.
+	td := models.TokenData{
+		DataScopeUUID: parentTd.DataScopeUUID,
+		KeyUUID:       aliasKeyUUID,
+		IsAlias:       true,
+	}
+
+	// Data to be encrypted and base64 encoded for the actual API key string
+	tokenDataForApiKeyString, err := json.Marshal(td)
+	if err != nil {
+		return "", fmt.Errorf("could not marshal token data for alias api key string: %w", err)
+	}
+
+	encryptedKeyDataForApiKey, err := c.encrypt(tokenDataForApiKeyString)
+	if err != nil {
+		return "", fmt.Errorf("could not encrypt token data for alias api key string: %w", err)
+	}
+
+	b64KeyData := base64.StdEncoding.EncodeToString(encryptedKeyDataForApiKey)
+	actualKey := fmt.Sprintf("insi_%s", b64KeyData)
+
+	// NOW we set the entity to the keyName so we dont encode it into the actual key
+	td.Entity = aliasKeyName
+
+	keyDataForFsm, err := json.Marshal(td)
+	if err != nil {
+		return "", fmt.Errorf("could not marshal token data for FSM storage: %w", err)
+	}
+
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, aliasKeyUUID)
+
+	// Apply to FSM
+	if err := c.fsm.Set(models.KVPayload{
+		Key:   apiKeyFsmStorageKey,
+		Value: string(keyDataForFsm),
+	}); err != nil {
+		c.logger.Error("Failed to set alias API key in FSM", "key", apiKeyFsmStorageKey, "error", err)
+		return "", fmt.Errorf("failed to set alias API key in FSM for %s: %w", aliasKeyName, err)
+	}
+
+	return actualKey, nil
+}
+
 func (c *Core) deleteExistingApiKey(key string) error {
+
+	c.IndSystemOp()
 
 	if !c.fsm.IsLeader() {
 		return fmt.Errorf("this operation must be performed by the leader node")
@@ -303,6 +416,23 @@ func (c *Core) deleteExistingApiKey(key string) error {
 
 	c.apiCache.Delete(key)
 
+	return nil
+}
+
+func (c *Core) deleteApiKeyDirectly(key string) error {
+	td, err := c.decomposeKey(key)
+	if err != nil {
+		return fmt.Errorf("could not decompose key for direct deletion: %w", err)
+	}
+
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
+
+	if err := c.fsm.Delete(apiKeyFsmStorageKey); err != nil {
+		c.logger.Error("Could not delete api key from fsm directly", "key", apiKeyFsmStorageKey, "error", err)
+		return fmt.Errorf("could not delete api key from fsm directly: %w", err)
+	}
+
+	c.apiCache.Delete(key)
 	return nil
 }
 
@@ -379,67 +509,55 @@ func (c *Core) ValidateToken(r *http.Request, rootOnly AccessEntity) (models.Tok
 		}, true
 	}
 
-	apiCacheItem := c.apiCache.Get(token)
-	if apiCacheItem != nil {
-		return apiCacheItem.Value(), true
+	// Attempt to validate the token directly
+	if td, ok := c.validateTokenInner(token); ok {
+		// This is the primary path for both root and regular keys.
+		// If it's an alias, we need to fetch the root key's data scope.
+		if td.IsAlias {
+			rootKeyUUID, err := c.fsm.Get(WithAliasToRoot(token))
+			if err != nil {
+				// This case should be rare, implies an orphaned alias key.
+				c.logger.Error("Could not find root key for an alias token", "alias_key_uuid", td.KeyUUID, "error", err)
+				return models.TokenData{}, false
+			}
+
+			// Fetch the root key's full data from FSM.
+			rootFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, rootKeyUUID)
+			rootKeyDataFromFsm, err := c.fsm.Get(rootFsmStorageKey)
+			if err != nil {
+				c.logger.Error("Could not get root key data for alias from FSM", "root_key_uuid", rootKeyUUID, "error", err)
+				return models.TokenData{}, false
+			}
+
+			var rootTdFromFsm models.TokenData
+			if err := json.Unmarshal([]byte(rootKeyDataFromFsm), &rootTdFromFsm); err != nil {
+				c.logger.Error("Could not unmarshal root key token data from FSM for alias", "root_key_uuid", rootKeyUUID, "error", err)
+				return models.TokenData{}, false
+			}
+
+			// Construct the final token data for the request context:
+			// Use the root's DataScopeUUID for access control.
+			// Keep the alias's other details (Entity, KeyUUID, IsAlias flag).
+			finalTd := rootTdFromFsm
+			finalTd.Entity = td.Entity // Keep alias entity name
+			finalTd.IsAlias = true     // Mark that auth was via an alias
+
+			c.apiCache.Set(token, finalTd, c.cfg.Cache.Keys)
+			return finalTd, true
+		}
+		return td, true
 	}
 
-	td, err := c.decomposeKey(token)
-	if err != nil {
-		c.logger.Error("Could not decompose key", "error", err)
-		return models.TokenData{}, false
-	}
-
-	// Ensure theres no tombstone (deleted key)
-	tombstoneKey := WithApiKeyTombstone(td.KeyUUID)
-	_, err = c.fsm.Get(tombstoneKey)
-	if err == nil {
-		c.logger.Error("Tombstone found for key (marked for deletion)", "key", td.KeyUUID)
-		return models.TokenData{}, false
-	}
-
-	// Get the key from the fsm
-	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
-	keyDataFromFsm, err := c.fsm.Get(fsmStorageKey)
-	if err != nil {
-		c.logger.Error("Could not get key data from FSM", "key", fsmStorageKey, "error", err)
-		return models.TokenData{}, false
-	}
-
-	// Data from FSM is plain JSON of models.TokenData, it should NOT be decrypted.
-	// It should be directly unmarshalled.
-	var tdFromFsm models.TokenData
-	if err := json.Unmarshal([]byte(keyDataFromFsm), &tdFromFsm); err != nil {
-		c.logger.Error(
-			"Could not unmarshal token data from FSM",
-			"key", fsmStorageKey,
-			"data", keyDataFromFsm,
-			"error", err,
-		)
-		return models.TokenData{}, false
-	}
-
-	// Compare the UUID from the decomposed token with the UUID stored in FSM for that entity.
-	if tdFromFsm.DataScopeUUID != td.DataScopeUUID ||
-		tdFromFsm.KeyUUID != td.KeyUUID {
-		c.logger.Error("UUID mismatch between token and FSM record",
-			"entity", td.Entity,
-			"data_scope_uuid_from_token", td.DataScopeUUID,
-			"key_uuid_from_token", td.KeyUUID,
-			"entity_from_fsm", tdFromFsm.Entity,
-			"data_scope_uuid_from_fsm", tdFromFsm.DataScopeUUID,
-			"key_uuid_from_fsm", tdFromFsm.KeyUUID,
-		)
-		return models.TokenData{}, false
-	}
-
-	c.apiCache.Set(token, tdFromFsm, c.cfg.Cache.Keys)
-
-	return tdFromFsm, true
+	// If direct validation fails, something is wrong, as validateTokenInner should handle all valid keys (aliased or not).
+	// The logic below this point is effectively a fallback and should ideally not be hit.
+	c.logger.Warn("Token validation failed initial check, which should not happen for valid keys.", "token_prefix", strings.Split(token, "_")[0])
+	return models.TokenData{}, false
 }
 
 // Allow any user to get their limits and current usage
 func (c *Core) callerLimitsHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndSystemOp()
 
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
@@ -577,6 +695,8 @@ func (c *Core) callerLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
+	c.IndSystemOp()
+
 	tdr, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -672,6 +792,8 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 // Allow any user to get their limits and current usage
 func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndSystemOp()
 
 	// ONLY ROOT CAN GET LIMITS FOR SPECIFIC KEYS
 	_, ok := c.ValidateToken(r, RootOnly())
@@ -849,4 +971,27 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(limitsResponse)
+}
+
+func (c *Core) opsPerSecondHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
+
+	_, ok := c.ValidateToken(r, RootOnly())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
+		return
+	}
+
+	ops := c.GetOpsPerSecond()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(ops); err != nil {
+		c.logger.Error("failed to encode ops per second", "error", err)
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+	}
 }
