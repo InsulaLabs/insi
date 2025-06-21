@@ -174,6 +174,8 @@ func main() {
 		handleBlob(cli, cmdArgs)
 	case "alias":
 		handleAlias(cli, cmdArgs)
+	case "admin":
+		handleAdmin(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -223,6 +225,9 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("blob"), color.CyanString("download"), color.CyanString("<key>"), color.CyanString("<output_path>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("blob"), color.CyanString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("blob"), color.CyanString("iterate"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+
+	// Admin commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("admin"), color.CyanString("ops"), color.YellowString("--root flag required. Get node ops/sec."))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -1258,4 +1263,51 @@ func handleAliasList(c *client.Client, args []string) {
 	for _, alias := range resp.Aliases {
 		fmt.Printf("  - %s\n", alias)
 	}
+}
+
+func handleAdmin(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("admin: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "ops":
+		if !useRootKey {
+			logger.Error("admin ops requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s admin ops requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleAdminOps(c, subArgs)
+	default:
+		logger.Error("admin: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleAdminOps(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("admin ops: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	resp, err := c.GetOpsPerSecond()
+	if err != nil {
+		logger.Error("Failed to get ops per second", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	fmt.Println(color.CyanString("Operations Per Second:"))
+	fmt.Printf("  System:       %.2f\n", resp.OP_System)
+	fmt.Printf("  Value Store:  %.2f\n", resp.OP_VS)
+	fmt.Printf("  Cache:        %.2f\n", resp.OP_Cache)
+	fmt.Printf("  Events:       %.2f\n", resp.OP_Events)
+	fmt.Printf("  Subscribers:  %.2f\n", resp.OP_Subscribers)
+	fmt.Printf("  Blobs:        %.2f\n", resp.OP_Blobs)
 }

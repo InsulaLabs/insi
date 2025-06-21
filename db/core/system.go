@@ -80,6 +80,7 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 }
 
 func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		c.logger.Warn("Token validation failed during ping", "remote_addr", r.RemoteAddr)
@@ -107,6 +108,8 @@ func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {
 // -- SYSTEM OPERATIONS --
 
 func (c *Core) joinHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
+
 	if !c.fsm.IsLeader() {
 		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
 		return
@@ -380,6 +383,8 @@ func (c *Core) spawnNewAliasKey(parentTd models.TokenData, aliasKeyName string) 
 
 func (c *Core) deleteExistingApiKey(key string) error {
 
+	c.IndSystemOp()
+
 	if !c.fsm.IsLeader() {
 		return fmt.Errorf("this operation must be performed by the leader node")
 	}
@@ -552,6 +557,8 @@ func (c *Core) ValidateToken(r *http.Request, rootOnly AccessEntity) (models.Tok
 // Allow any user to get their limits and current usage
 func (c *Core) callerLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
+	c.IndSystemOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -688,6 +695,8 @@ func (c *Core) callerLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
+	c.IndSystemOp()
+
 	tdr, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -783,6 +792,8 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 // Allow any user to get their limits and current usage
 func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndSystemOp()
 
 	// ONLY ROOT CAN GET LIMITS FOR SPECIFIC KEYS
 	_, ok := c.ValidateToken(r, RootOnly())
@@ -960,4 +971,27 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(limitsResponse)
+}
+
+func (c *Core) opsPerSecondHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
+
+	_, ok := c.ValidateToken(r, RootOnly())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
+		return
+	}
+
+	ops := c.GetOpsPerSecond()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(ops); err != nil {
+		c.logger.Error("failed to encode ops per second", "error", err)
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+	}
 }

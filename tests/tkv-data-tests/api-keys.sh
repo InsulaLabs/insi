@@ -765,6 +765,85 @@ test_alias_shared_limits() {
     run_insic "api" "delete" "$primary_key"
 }
 
+test_blob_cleanup_on_parent_deletion() {
+    print_header "Test: Blob file is deleted when parent API key is deleted"
+    local key_name="key_with_blob_$(date +%s)_$$"
+    local blob_key="blob_to_be_orphaned"
+    local test_blob_file="/tmp/insi_orphan_blob_test.txt"
+    local primary_key=""
+
+    # 1. Create a primary key
+    echo -e "${INFO_EMOJI} Creating a primary key for the blob cleanup test"
+    run_insic "api" "add" "$key_name"
+    local exit_code_add=$?
+    local output_add=$CMD_OUTPUT
+    if [ "$exit_code_add" -ne 0 ]; then
+        echo -e "${FAILURE_EMOJI} ${RED}Failed to create primary key, cannot proceed.${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+        return
+    fi
+    primary_key=$(echo "$output_add" | grep "API Key:" | awk '{print $3}')
+    echo -e "${SUCCESS_EMOJI} ${GREEN}Created key: ${primary_key}${NC}"
+
+    # 2. Create a blob file and upload it with the new key
+    echo "This blob should be deleted when its parent key is." > "$test_blob_file"
+    echo -e "${INFO_EMOJI} Uploading blob with the new key"
+    run_insic_with_key "$primary_key" "blob" "upload" "$blob_key" "$test_blob_file"
+    local exit_code_upload=$?
+    local output_upload=$CMD_OUTPUT
+    expect_success "Blob upload with temporary key" "$exit_code_upload" "$output_upload"
+
+    # 3. Verify the blob file exists physically on all nodes
+    echo -e "${INFO_EMOJI} Verifying physical blob existence..."
+    sleep 10 # Allow time for replication
+    local key_hash=$(echo -n "$blob_key" | sha256sum | awk '{print $1}')
+    local insi_home=$(yq -r '.insiHome' "${DEFAULT_CONFIG_PATH}")
+    local node_ids=($(yq -r '.nodes | keys | .[]' "${DEFAULT_CONFIG_PATH}"))
+    local total_nodes=${#node_ids[@]}
+
+    # We don't know the data scope UUID, so we find the file by its content hash
+    local blob_file_paths=($(find "${insi_home}" -type f -name "${key_hash}"))
+    local found_count=${#blob_file_paths[@]}
+
+    if [ "$found_count" -eq "$total_nodes" ]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}Verified blob file exists on all ${total_nodes} nodes before key deletion.${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Blob not found on all nodes before key deletion. Found on ${found_count}/${total_nodes}.${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+        run_insic "api" "delete" "$primary_key" # Attempt cleanup
+        return
+    fi
+    
+    # 4. Delete the parent API key
+    echo -e "${INFO_EMOJI} Deleting parent API key '${primary_key}'"
+    run_insic "api" "delete" "$primary_key"
+    local exit_code_delete=$?
+    local output_delete=$CMD_OUTPUT
+    expect_success "Delete parent API key" "$exit_code_delete" "$output_delete" "OK"
+
+    # 5. Wait for the tombstone runner to clean everything up
+    echo -e "${INFO_EMOJI} Waiting 45 seconds for tombstone runner to clean up blobs..."
+    sleep 45
+
+    # 6. Verify the blob file has been physically deleted
+    echo -e "${INFO_EMOJI} Verifying physical blob no longer exists..."
+    local blob_file_paths_after=($(find "${insi_home}" -type f -name "${key_hash}"))
+    local found_count_after=${#blob_file_paths_after[@]}
+
+    if [ "$found_count_after" -eq 0 ]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}Verified blob file was physically deleted from all nodes after parent key deletion.${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Blob file still exists on ${found_count_after} node(s) after parent key deletion.${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+        echo -e "   Remaining files found at: ${blob_file_paths_after[*]}"
+    fi
+
+    # 7. Final cleanup
+    rm -f "$test_blob_file"
+}
+
 test_multi_alias_data_scope() {
     print_header "Test: Multi-Alias Data Scope"
     local primary_key_name="primary_for_multi_alias_$(date +%s)_$$"
@@ -982,6 +1061,7 @@ main() {
     test_alias_shared_limits
     test_multi_alias_data_scope
     test_alias_cleanup_on_parent_deletion
+    test_blob_cleanup_on_parent_deletion
 
     echo -e "\n${GREEN}All TKV API Key operations tests completed.${NC}"
 

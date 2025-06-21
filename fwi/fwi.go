@@ -158,6 +158,9 @@ type FWI interface {
 
 	// Update the limits for an entity.
 	UpdateEntityLimits(ctx context.Context, name string, newLimits models.Limits) error
+
+	// GetOpsPerSecond retrieves the current operations-per-second metrics for the node.
+	GetOpsPerSecond(ctx context.Context) (*models.OpsPerSecondCounters, error)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -823,6 +826,12 @@ func (f *fwiImpl) UpdateEntityLimits(
 
 	f.logger.Info("Successfully updated limits for entity", "name", name)
 	return nil
+}
+
+func (f *fwiImpl) GetOpsPerSecond(ctx context.Context) (*models.OpsPerSecondCounters, error) {
+	return withRetries(ctx, f.logger, func() (*models.OpsPerSecondCounters, error) {
+		return f.rootInsiClient.GetOpsPerSecond()
+	})
 }
 
 func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, error) {

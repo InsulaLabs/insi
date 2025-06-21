@@ -1,0 +1,89 @@
+🚀 Running metrics.sh...
+insid pid: 620960
+2025-06-21T12:13:24.012-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-21T12:13:24.012-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-21T12:13:24.015-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-21T12:13:24.015-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+2025-06-21T12:13:24.017-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-21T12:13:24.018-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-21T12:13:25.526-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-21T12:13:25.526-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-21T12:13:25.526-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-21T12:13:25.533-0400 [INFO]  election won: term=2 tally=1
+2025-06-21T12:13:25.533-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-21T12:13:25.561-0400 [WARN]  no known peers, aborting election
+2025-06-21T12:13:25.663-0400 [WARN]  no known peers, aborting election
+2025-06-21T12:13:34.021-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-21T12:13:34.025-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-21T12:13:34.025-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-21T12:13:34.028-0400 [INFO]  added peer, starting replication: peer=node2
+2025-06-21T12:13:34.029-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-21T12:13:34.029-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+2025-06-21T12:13:34.032-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+2025-06-21T12:13:34.032-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-21T12:13:34.034-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+2025-06-21T12:13:34.036-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+set root tracker key internal:api_key_memory_usage: value 0
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+ℹ️ Using insic executable: /tmp/insi-test-cluster/insic
+ℹ️ Using config: /tmp/insi-test-cluster/cluster.yaml
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mSUCCESS: Server Ping (and output contains 'Ping Response:')[0m
+ℹ️ Starting TKV Metrics operations tests...
+
+[0;34m==== Test: Metrics Endpoint Access Control ====[0m
+ℹ️ Attempting to get metrics without --root (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Get metrics without --root (and output contains 'requires --root flag')[0m
+ℹ️ Attempting to get metrics with --root (should succeed)
+✅ [0;32mSUCCESS: Get metrics with --root (and output contains 'Operations Per Second:')[0m
+✅ [0;32mSUCCESS: Check for System metric (and output contains 'System:')[0m
+✅ [0;32mSUCCESS: Check for Value Store metric (and output contains 'Value Store:')[0m
+
+[0;34m==== Test: Metrics Tracking ====[0m
+ℹ️ Testing Value Store metrics...
+Starting to run 'set' operations continuously...
+Stopped VS operations.
+✅ [0;32mSUCCESS: Get metrics during sustained VS operations (and output contains 'Operations Per Second:')[0m
+ℹ️ Detected Value Store Ops/sec: 28.99
+✅ [0;32mSUCCESS: Value Store ops/sec (28.99) is greater than 0.1 after operations.[0m
+ℹ️ Testing Cache Store metrics...
+Starting to run 'cache set' operations continuously...
+Stopped Cache operations.
+✅ [0;32mSUCCESS: Get metrics during sustained Cache operations (and output contains 'Operations Per Second:')[0m
+ℹ️ Detected Cache Ops/sec: 30.00
+✅ [0;32mSUCCESS: Cache ops/sec (30.00) is greater than 0.1 after operations.[0m
+
+[0;34m==== Test: Event and Subscriber Metrics Tracking ====[0m
+ℹ️ Testing Subscribers metric...
+Starting to run 'subscribe' operations continuously...
+Stopped subscriber load process.
+✅ [0;32mSUCCESS: Get metrics during sustained subscribe operations (and output contains 'Operations Per Second:')[0m
+ℹ️ Detected Subscribers Ops/sec: 5.00
+✅ [0;32mSUCCESS: Subscribers ops/sec (5.00) is greater than 0.1 after subscribing.[0m
+ℹ️ Testing Events metric...
+Starting to run 'publish' operations continuously...
+Stopped publish operations.
+✅ [0;32mSUCCESS: Get metrics during sustained publish operations (and output contains 'Operations Per Second:')[0m
+ℹ️ Detected Events Ops/sec: 29.98
+✅ [0;32mSUCCESS: Events ops/sec (29.98) is greater than 0.1 during publishing.[0m
+
+[0;32mAll TKV Metrics operations tests completed.[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 13
+[0;32mAll Metrics tests passed successfully![0m
+✅ Success: metrics.sh completed.
+🎉 All tests passed successfully!

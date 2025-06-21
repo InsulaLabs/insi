@@ -39,4 +39,4 @@
 #### VI. Cleanup on Primary Key Deletion (Tombstone)
 -   [x] ✅ **Parent Key Deletion:** A primary key can be deleted, which triggers the tombstone process.
 -   [x] ✅ **Verify Alias Invalidation:** After a primary key is deleted and the cleanup process runs, all of its former aliases are invalidated and can no longer be used.
--   [ ] ⬜️ **Verify Data Deletion:** This is difficult to verify with an external script, but the core goal of the tombstone is that all data associated with the key's `DataScopeUUID` is deleted from the store. The current test of verifying key invalidation is a strong proxy for this. 
+-   [x] ✅ **Verify Data Deletion:** This is difficult to verify with an external script, but the core goal of the tombstone is that all data associated with the key's `DataScopeUUID` is deleted from the store. We do this by generating blobs (a record that must be manually cleaned up by the server) and then deleting the key. After a period, we check to ensure the blobs are gone.

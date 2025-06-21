@@ -1054,6 +1054,17 @@ func (c *Client) GetLimitsForKey(apiKey string) (*models.LimitsResponse, error) 
 	return &response, nil
 }
 
+// GetOpsPerSecond retrieves the current operations-per-second metrics for the node.
+// Only the root api key can get ops per second.
+func (c *Client) GetOpsPerSecond() (*models.OpsPerSecondCounters, error) {
+	var response models.OpsPerSecondCounters
+	err := c.doRequest(http.MethodGet, "db/api/v1/admin/metrics/ops", nil, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
 // SubscribeToEvents connects to the event subscription WebSocket endpoint and prints incoming events.
 func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent func(data any)) error {
 	if topic == "" {

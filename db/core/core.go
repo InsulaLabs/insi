@@ -100,6 +100,8 @@ type Core struct {
 	// Internal event handling
 	internalSubscribers     map[string][]func(event models.Event)
 	internalSubscribersLock sync.RWMutex
+
+	metrics Metrics
 }
 
 type serverInstance struct {
@@ -276,6 +278,19 @@ func New(
 	}
 
 	service.blobService = blobService
+
+	go func() {
+		for {
+			select {
+			case <-service.appCtx.Done():
+				return
+			case <-time.After(time.Second):
+				service.UpdateCounters()
+
+			}
+		}
+	}()
+
 	return service, nil
 }
 
@@ -458,6 +473,8 @@ func (c *Core) Run() {
 
 		// Only ROOT can get limits for specific keys
 		c.privMux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
+
+		c.privMux.Handle("/db/api/v1/admin/metrics/ops", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.opsPerSecondHandler), "system")))
 
 		return &serverInstance{
 			binding: binding,
@@ -804,9 +821,28 @@ func (c *Core) execTombstoneDeletion() {
 
 		if len(keysToDelete) > 0 {
 			c.logger.Info("Deleting data for tombstoned key", "key_uuid", keyUUID, "data_scope_uuid", dataScopeUUID, "keys_to_delete_count", len(keysToDelete))
-			for _, key := range keysToDelete {
-				if err := c.fsm.Delete(string(key)); err != nil {
-					c.logger.Error("Could not delete key during tombstone cleanup", "key", string(key), "error", err)
+			for _, keyBytes := range keysToDelete {
+				key := string(keyBytes)
+
+				// Check if the key is for blob metadata
+				// Format is <dataScopeUUID>:blob:<key>
+				if strings.HasPrefix(key, dataScopeUUID+":blob:") {
+					c.logger.Debug("Found blob metadata to delete as part of key cleanup", "key", key)
+					blobMetaJSON, metaErr := c.fsm.Get(key)
+					if metaErr != nil {
+						c.logger.Error("Could not get blob metadata during tombstone cleanup", "key", key, "error", metaErr)
+						// Still attempt to delete the key from FSM later
+					} else {
+						// We need to publish a delete event so the blob service can delete the physical file.
+						// The blob service listens for the full metadata JSON as the payload.
+						if err := c.fsm.Publish(TopicBlobDeleted, blobMetaJSON); err != nil {
+							c.logger.Error("Could not publish blob deleted event during tombstone cleanup", "key", key, "error", err)
+						}
+					}
+				}
+
+				if err := c.fsm.Delete(key); err != nil {
+					c.logger.Error("Could not delete key during tombstone cleanup", "key", key, "error", err)
 				}
 			}
 
