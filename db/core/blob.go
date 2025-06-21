@@ -195,6 +195,9 @@ func (x *blobService) startEventSystem(ctx context.Context) {
 }
 
 func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.Blob) error {
+
+	x.core.IndBlobsOp()
+
 	// Find the peer to download from
 	var sourcePeer *peer
 	for i, p := range x.peers {
@@ -364,6 +367,7 @@ func (x *blobService) execTombstoneDeletion() {
 // ------------------------------- core routes -------------------------------
 
 func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndBlobsOp()
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -498,7 +502,7 @@ func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) internalDownloadBlobHandler(w http.ResponseWriter, r *http.Request) {
-
+	c.IndBlobsOp()
 	_, ok := c.ValidateToken(r, RootOnly())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -535,6 +539,7 @@ func (c *Core) internalDownloadBlobHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *Core) getBlobHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndBlobsOp()
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -572,6 +577,7 @@ func (c *Core) getBlobHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) deleteBlobHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndBlobsOp()
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -638,6 +644,7 @@ func (c *Core) deleteBlobHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndBlobsOp()
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)

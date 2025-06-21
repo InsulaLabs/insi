@@ -57,10 +57,9 @@ Deletion is a two-phase process that uses a "tombstone" pattern to gracefully ha
 2.  **Garbage Collection:**
     a. The `blobService` on each node runs a periodic background task.
     b. On the **leader node only**, this task (`execTombstoneDeletion`) scans the key-value store for tombstone records.
-    c. For each tombstone found, the leader performs the final cleanup:
-        i. It deletes the physical blob file from its local disk (`os.Remove`).
-        ii. It commits a `Delete` command to Raft to remove the original blob metadata.
-        iii. It commits a final `Delete` command to Raft to remove the tombstone record itself.
-    d. Because the metadata and tombstone deletions are Raft commands, they are replicated and applied on all follower nodes, ensuring the records are purged from the FSM cluster-wide.
-
-    > **Note on a current limitation:** The physical deletion of the blob file (`os.Remove`) currently only occurs on the leader node. On follower nodes, the file remains on disk as an orphaned file until it is manually cleaned up. A future implementation will likely use a dedicated deletion event to instruct followers to also remove the physical file.
+    c. For each tombstone found, the leader orchestrates the final cluster-wide cleanup:
+        i. It publishes an event with the topic `_:blob:deleted` to the Raft log. The payload contains the metadata of the blob to be deleted.
+        ii. As the event is replicated, every node in the cluster (including the leader) receives it. The `blobService` on each node is subscribed to this topic and proceeds to delete the physical blob file from its local disk (`os.Remove`).
+        iii. After publishing the event, the leader commits a `Delete` command to Raft to remove the original blob metadata.
+        iv. Finally, the leader commits another `Delete` command to Raft to remove the tombstone record itself.
+    d. This two-step process, using a combination of a leader-driven garbage collection task and a distributed event, ensures that both the physical blob files and their associated metadata are consistently and cleanly removed from all nodes across the cluster.

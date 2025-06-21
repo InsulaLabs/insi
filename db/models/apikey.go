@@ -17,6 +17,7 @@ type TokenData struct {
 	Entity        string `json:"e,omitempty"`
 	DataScopeUUID string `json:"ds"`
 	KeyUUID       string `json:"k"`
+	IsAlias       bool   `json:"is_alias,omitempty"`
 }
 
 type Limits struct {
@@ -38,4 +39,21 @@ type SetLimitsRequest struct {
 
 type GetLimitsRequest struct {
 	ApiKey string `json:"api_key"`
+}
+
+// NOTE: When i mention "root" below I DONT mean the "system root key" - I mean the "entity root key" aka the one made from spawnApiKey
+// set alias is a get with the auth token header set tot he entity key (the api key) that the user wants to derive from
+
+type SetAliasResponse struct {
+	Alias string `json:"alias"` // The encrypted api key that acts as an alias to the root api key
+}
+
+// Deletes the alias - the authenticaor token to access must NOT be the alias and MUST be the entity-root key (not the system root key)
+type DeleteAliasRequest struct {
+	Alias string `json:"alias"` // The encrypted api key that acts as an alias to the root api key
+}
+
+// The request is just a get and we use the api key they auth with as the root
+type ListAliasesResponse struct {
+	Aliases []string `json:"aliases"` // returns names and keys for all aliases they have set
 }

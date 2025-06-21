@@ -17,6 +17,8 @@ import (
 
 func (c *Core) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 
+	c.IndCacheOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -51,6 +53,8 @@ func (c *Core) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 // -- WRITE OPERATIONS --
 
 func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndCacheOp()
 
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
@@ -142,6 +146,8 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 
+	c.IndCacheOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -208,6 +214,9 @@ func (c *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndCacheOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -275,6 +284,9 @@ func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) compareAndSwapCacheHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndCacheOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -382,6 +394,9 @@ func parseOffsetAndLimit(r *http.Request) (int, int) {
 }
 
 func (c *Core) iterateCacheKeysByPrefixHandler(w http.ResponseWriter, r *http.Request) {
+
+	c.IndCacheOp()
+
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)

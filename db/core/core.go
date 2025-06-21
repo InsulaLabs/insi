@@ -100,6 +100,8 @@ type Core struct {
 	// Internal event handling
 	internalSubscribers     map[string][]func(event models.Event)
 	internalSubscribersLock sync.RWMutex
+
+	metrics Metrics
 }
 
 type serverInstance struct {
@@ -276,6 +278,19 @@ func New(
 	}
 
 	service.blobService = blobService
+
+	go func() {
+		for {
+			select {
+			case <-service.appCtx.Done():
+				return
+			case <-time.After(time.Second):
+				service.UpdateCounters()
+
+			}
+		}
+	}()
+
 	return service, nil
 }
 
@@ -426,6 +441,14 @@ func (c *Core) Run() {
 		// System handle anyone can call with an api key to get their current usage and limits
 		c.pubMux.Handle("/db/api/v1/limits", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system")))
 
+		// Aliases are so a caller can "alias" their api key to a different encoded value that they can use across the public
+		// api. They don't need to "get" the api key as we will return it in the response.
+		c.pubMux.Handle("/db/api/v1/alias/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setAliasHandler), "system")))
+		// Deletes the alias - this way we can disable api access without deleting the root api key (triggering data deletion)
+		c.pubMux.Handle("/db/api/v1/alias/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteAliasHandler), "system")))
+		// List is so they can get a list of all the aliases they have set for the purpose of deleting or debugging
+		c.pubMux.Handle("/db/api/v1/alias/list", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.listAliasesHandler), "system")))
+
 		return &serverInstance{
 			binding: binding,
 			mux:     c.pubMux,
@@ -450,6 +473,8 @@ func (c *Core) Run() {
 
 		// Only ROOT can get limits for specific keys
 		c.privMux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
+
+		c.privMux.Handle("/db/api/v1/admin/metrics/ops", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.opsPerSecondHandler), "system")))
 
 		return &serverInstance{
 			binding: binding,
@@ -796,17 +821,72 @@ func (c *Core) execTombstoneDeletion() {
 
 		if len(keysToDelete) > 0 {
 			c.logger.Info("Deleting data for tombstoned key", "key_uuid", keyUUID, "data_scope_uuid", dataScopeUUID, "keys_to_delete_count", len(keysToDelete))
-			for _, key := range keysToDelete {
-				if err := c.fsm.Delete(string(key)); err != nil {
-					c.logger.Error("Could not delete key during tombstone cleanup", "key", string(key), "error", err)
+			for _, keyBytes := range keysToDelete {
+				key := string(keyBytes)
+
+				// Check if the key is for blob metadata
+				// Format is <dataScopeUUID>:blob:<key>
+				if strings.HasPrefix(key, dataScopeUUID+":blob:") {
+					c.logger.Debug("Found blob metadata to delete as part of key cleanup", "key", key)
+					blobMetaJSON, metaErr := c.fsm.Get(key)
+					if metaErr != nil {
+						c.logger.Error("Could not get blob metadata during tombstone cleanup", "key", key, "error", metaErr)
+						// Still attempt to delete the key from FSM later
+					} else {
+						// We need to publish a delete event so the blob service can delete the physical file.
+						// The blob service listens for the full metadata JSON as the payload.
+						if err := c.fsm.Publish(TopicBlobDeleted, blobMetaJSON); err != nil {
+							c.logger.Error("Could not publish blob deleted event during tombstone cleanup", "key", key, "error", err)
+						}
+					}
+				}
+
+				if err := c.fsm.Delete(key); err != nil {
+					c.logger.Error("Could not delete key during tombstone cleanup", "key", key, "error", err)
 				}
 			}
+
 			// If we deleted keys, there might be more. We'll process them in the next run.
 			c.logger.Info("Partial data deleted for key. Will continue in next cycle.", "key_uuid", keyUUID)
 			continue
 		}
 
-		// 3. If no more data keys are found, delete the API key metadata and the key itself.
+		// Clean up aliases associated with this key
+		aliasPrefix := WithRootToAliasPrefix(keyUUID)
+		// We can use a large limit here as the number of aliases is capped.
+		aliasMappingKeys, err := c.fsm.Iterate(aliasPrefix, 0, MaxAliasesPerKey*2)
+		if err != nil {
+			c.logger.Error("Could not iterate over alias mappings for cleanup", "parent_key_uuid", keyUUID, "error", err)
+			// Don't return, still try to clean up the primary key
+		}
+
+		if len(aliasMappingKeys) > 0 {
+			c.logger.Info("Found aliases to clean up for tombstoned key", "parent_key_uuid", keyUUID, "count", len(aliasMappingKeys))
+			for _, aliasMappingKeyBytes := range aliasMappingKeys {
+				fullMappingKey := string(aliasMappingKeyBytes)
+				// Key format is `internal:root_to_alias:<keyUUID>:<aliasKey>`
+				aliasKey := strings.TrimPrefix(fullMappingKey, aliasPrefix+":")
+
+				c.logger.Debug("Deleting alias as part of parent key cleanup", "parent_key_uuid", keyUUID, "alias_key", aliasKey)
+
+				// 1. Delete the alias key itself directly (no tombstone)
+				if err := c.deleteApiKeyDirectly(aliasKey); err != nil {
+					c.logger.Error("Could not delete alias key directly during cleanup", "alias_key", aliasKey, "error", err)
+				}
+
+				// 2. Delete the root -> alias mapping
+				if err := c.fsm.Delete(fullMappingKey); err != nil {
+					c.logger.Error("Could not delete root-to-alias mapping during cleanup", "mapping_key", fullMappingKey, "error", err)
+				}
+
+				// 3. Delete the alias -> root mapping
+				if err := c.fsm.Delete(WithAliasToRoot(aliasKey)); err != nil {
+					c.logger.Error("Could not delete alias-to-root mapping during cleanup", "alias_key", aliasKey, "error", err)
+				}
+			}
+		}
+
+		// If no more data keys are found, delete the API key metadata and the key itself.
 		c.logger.Info("All user data deleted for key. Deleting metadata.", "key_uuid", keyUUID)
 
 		metaKeysToDelete := []string{

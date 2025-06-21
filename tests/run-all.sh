@@ -39,6 +39,10 @@ function run_test_script() {
     stop_insid
 }
 
+echo "🚀 Running metrics.sh..."
+run_test_script /tmp/insi-test-cluster/metrics.sh
+echo "✅ Success: metrics.sh completed."
+
 echo "🚀 Running api-keys.sh..."
 run_test_script /tmp/insi-test-cluster/api-keys.sh
 echo "✅ Success: api-keys.sh completed."
