@@ -809,12 +809,48 @@ func (c *Core) execTombstoneDeletion() {
 					c.logger.Error("Could not delete key during tombstone cleanup", "key", string(key), "error", err)
 				}
 			}
+
 			// If we deleted keys, there might be more. We'll process them in the next run.
 			c.logger.Info("Partial data deleted for key. Will continue in next cycle.", "key_uuid", keyUUID)
 			continue
 		}
 
-		// 3. If no more data keys are found, delete the API key metadata and the key itself.
+		// Clean up aliases associated with this key
+		aliasPrefix := WithRootToAliasPrefix(keyUUID)
+		// We can use a large limit here as the number of aliases is capped.
+		aliasMappingKeys, err := c.fsm.Iterate(aliasPrefix, 0, MaxAliasesPerKey*2)
+		if err != nil {
+			c.logger.Error("Could not iterate over alias mappings for cleanup", "parent_key_uuid", keyUUID, "error", err)
+			// Don't return, still try to clean up the primary key
+		}
+
+		if len(aliasMappingKeys) > 0 {
+			c.logger.Info("Found aliases to clean up for tombstoned key", "parent_key_uuid", keyUUID, "count", len(aliasMappingKeys))
+			for _, aliasMappingKeyBytes := range aliasMappingKeys {
+				fullMappingKey := string(aliasMappingKeyBytes)
+				// Key format is `internal:root_to_alias:<keyUUID>:<aliasKey>`
+				aliasKey := strings.TrimPrefix(fullMappingKey, aliasPrefix+":")
+
+				c.logger.Debug("Deleting alias as part of parent key cleanup", "parent_key_uuid", keyUUID, "alias_key", aliasKey)
+
+				// 1. Delete the alias key itself directly (no tombstone)
+				if err := c.deleteApiKeyDirectly(aliasKey); err != nil {
+					c.logger.Error("Could not delete alias key directly during cleanup", "alias_key", aliasKey, "error", err)
+				}
+
+				// 2. Delete the root -> alias mapping
+				if err := c.fsm.Delete(fullMappingKey); err != nil {
+					c.logger.Error("Could not delete root-to-alias mapping during cleanup", "mapping_key", fullMappingKey, "error", err)
+				}
+
+				// 3. Delete the alias -> root mapping
+				if err := c.fsm.Delete(WithAliasToRoot(aliasKey)); err != nil {
+					c.logger.Error("Could not delete alias-to-root mapping during cleanup", "alias_key", aliasKey, "error", err)
+				}
+			}
+		}
+
+		// If no more data keys are found, delete the API key metadata and the key itself.
 		c.logger.Info("All user data deleted for key. Deleting metadata.", "key_uuid", keyUUID)
 
 		metaKeysToDelete := []string{

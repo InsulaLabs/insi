@@ -41,7 +41,7 @@ When an API key is deleted, it is not immediately purged from the system. Instea
 4.  Once all user data is deleted, the runner cleans up the key's metadata (resource trackers, limits) and the API key itself.
 5.  Finally, the tombstone record is removed.
 
-This asynchronous process ensures that deleting a key with a large amount of data does not block the system.
+This asynchronous process ensures that deleting a key with a large amount of data does not block the system. This cleanup also includes the automatic deletion of any aliases created by the key.
 
 ## API Key Aliases
 

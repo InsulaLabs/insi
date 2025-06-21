@@ -679,9 +679,18 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 						errorResp.Message,
 					)
 				}
+				// If JSON unmarshal fails, we have a raw text body.
+				// We should return it.
+				return fmt.Errorf(
+					"server returned status %d for %s %s: %s",
+					resp.StatusCode,
+					originalMethod,
+					currentReqURL.String(),
+					strings.TrimSpace(string(bodyBytes)),
+				)
 			}
 			return fmt.Errorf(
-				"server returned status %d for %s %s",
+				"server returned status %d for %s %s (and could not read body)",
 				resp.StatusCode,
 				originalMethod,
 				currentReqURL.String(),

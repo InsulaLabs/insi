@@ -273,6 +273,16 @@ func (c *Core) deleteAliasHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An alias key cannot be used to perform a delete operation.
+	if td.IsAlias {
+		c.logger.Warn(
+			"Forbidden attempt to delete an alias using an alias key",
+			"auth_key_uuid", td.KeyUUID,
+		)
+		http.Error(w, "Forbidden: an alias key cannot be used to delete an alias, use the parent key", http.StatusForbidden)
+		return
+	}
+
 	if !c.fsm.IsLeader() {
 		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
 		return
@@ -284,20 +294,30 @@ func (c *Core) deleteAliasHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the alias belongs to this token
-	rootKeyUUID, err := c.fsm.Get(WithAliasToRoot(req.Alias))
+	// Verify that the key attempting the deletion is the *parent* of the alias.
+	rootKeyUUIDForAlias, err := c.fsm.Get(WithAliasToRoot(req.Alias))
 	if err != nil {
+		// This can be treated as "not found" because if the mapping doesn't exist,
+		// the alias is invalid or doesn't exist.
+		c.logger.Warn("Could not find root key mapping for alias being deleted", "alias", req.Alias, "error", err)
 		http.Error(w, "Alias not found", http.StatusNotFound)
 		return
 	}
 
-	if rootKeyUUID != td.KeyUUID {
-		http.Error(w, "Forbidden: alias does not belong to the authenticated key", http.StatusForbidden)
+	// The authenticated key's UUID must match the UUID stored in the alias-to-root mapping.
+	if rootKeyUUIDForAlias != td.KeyUUID {
+		c.logger.Warn(
+			"Forbidden attempt to delete an alias with a non-parent key",
+			"auth_key_uuid", td.KeyUUID,
+			"alias_to_delete", req.Alias,
+			"alias_parent_uuid", rootKeyUUIDForAlias,
+		)
+		http.Error(w, "Forbidden: you can only delete aliases belonging to the authenticated key", http.StatusForbidden)
 		return
 	}
 
 	// Delete the actual API key created for the alias
-	if err := c.deleteExistingApiKey(req.Alias); err != nil {
+	if err := c.deleteApiKeyDirectly(req.Alias); err != nil {
 		c.logger.Error("Could not delete underlying api key for alias", "alias", req.Alias, "error", err)
 		// Continue, try to delete the mappings anyway
 	}

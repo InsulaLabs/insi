@@ -414,6 +414,23 @@ func (c *Core) deleteExistingApiKey(key string) error {
 	return nil
 }
 
+func (c *Core) deleteApiKeyDirectly(key string) error {
+	td, err := c.decomposeKey(key)
+	if err != nil {
+		return fmt.Errorf("could not decompose key for direct deletion: %w", err)
+	}
+
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
+
+	if err := c.fsm.Delete(apiKeyFsmStorageKey); err != nil {
+		c.logger.Error("Could not delete api key from fsm directly", "key", apiKeyFsmStorageKey, "error", err)
+		return fmt.Errorf("could not delete api key from fsm directly: %w", err)
+	}
+
+	c.apiCache.Delete(key)
+	return nil
+}
+
 func (c *Core) encrypt(data []byte) ([]byte, error) {
 	hash := sha256.Sum256([]byte(c.cfg.InstanceSecret))
 	aesKey := hash[:]
