@@ -258,6 +258,7 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 	td := models.TokenData{
 		DataScopeUUID: dsUUID,
 		KeyUUID:       keyUUID,
+		IsAlias:       false,
 	}
 
 	// Data to be encrypted and base64 encoded for the actual API key string
@@ -327,6 +328,53 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 		Key:   WithApiKeyMaxSubscriptions(keyUUID),
 		Value: fmt.Sprintf("%d", ApiDefaultMaxSubscriptions),
 	})
+	return actualKey, nil
+}
+
+func (c *Core) spawnNewAliasKey(parentTd models.TokenData, aliasKeyName string) (string, error) {
+	aliasKeyName = c.normalizeKeyName(aliasKeyName)
+	aliasKeyUUID := uuid.New().String()
+
+	// Inherit DataScopeUUID from parent, and mark as an alias.
+	td := models.TokenData{
+		DataScopeUUID: parentTd.DataScopeUUID,
+		KeyUUID:       aliasKeyUUID,
+		IsAlias:       true,
+	}
+
+	// Data to be encrypted and base64 encoded for the actual API key string
+	tokenDataForApiKeyString, err := json.Marshal(td)
+	if err != nil {
+		return "", fmt.Errorf("could not marshal token data for alias api key string: %w", err)
+	}
+
+	encryptedKeyDataForApiKey, err := c.encrypt(tokenDataForApiKeyString)
+	if err != nil {
+		return "", fmt.Errorf("could not encrypt token data for alias api key string: %w", err)
+	}
+
+	b64KeyData := base64.StdEncoding.EncodeToString(encryptedKeyDataForApiKey)
+	actualKey := fmt.Sprintf("insi_%s", b64KeyData)
+
+	// NOW we set the entity to the keyName so we dont encode it into the actual key
+	td.Entity = aliasKeyName
+
+	keyDataForFsm, err := json.Marshal(td)
+	if err != nil {
+		return "", fmt.Errorf("could not marshal token data for FSM storage: %w", err)
+	}
+
+	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, aliasKeyUUID)
+
+	// Apply to FSM
+	if err := c.fsm.Set(models.KVPayload{
+		Key:   apiKeyFsmStorageKey,
+		Value: string(keyDataForFsm),
+	}); err != nil {
+		c.logger.Error("Failed to set alias API key in FSM", "key", apiKeyFsmStorageKey, "error", err)
+		return "", fmt.Errorf("failed to set alias API key in FSM for %s: %w", aliasKeyName, err)
+	}
+
 	return actualKey, nil
 }
 
@@ -441,34 +489,47 @@ func (c *Core) ValidateToken(r *http.Request, rootOnly AccessEntity) (models.Tok
 
 	// Attempt to validate the token directly
 	if td, ok := c.validateTokenInner(token); ok {
+		// This is the primary path for both root and regular keys.
+		// If it's an alias, we need to fetch the root key's data scope.
+		if td.IsAlias {
+			rootKeyUUID, err := c.fsm.Get(WithAliasToRoot(token))
+			if err != nil {
+				// This case should be rare, implies an orphaned alias key.
+				c.logger.Error("Could not find root key for an alias token", "alias_key_uuid", td.KeyUUID, "error", err)
+				return models.TokenData{}, false
+			}
+
+			// Fetch the root key's full data from FSM.
+			rootFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, rootKeyUUID)
+			rootKeyDataFromFsm, err := c.fsm.Get(rootFsmStorageKey)
+			if err != nil {
+				c.logger.Error("Could not get root key data for alias from FSM", "root_key_uuid", rootKeyUUID, "error", err)
+				return models.TokenData{}, false
+			}
+
+			var rootTdFromFsm models.TokenData
+			if err := json.Unmarshal([]byte(rootKeyDataFromFsm), &rootTdFromFsm); err != nil {
+				c.logger.Error("Could not unmarshal root key token data from FSM for alias", "root_key_uuid", rootKeyUUID, "error", err)
+				return models.TokenData{}, false
+			}
+
+			// Construct the final token data for the request context:
+			// Use the root's DataScopeUUID for access control.
+			// Keep the alias's other details (Entity, KeyUUID, IsAlias flag).
+			finalTd := rootTdFromFsm
+			finalTd.Entity = td.Entity // Keep alias entity name
+			finalTd.IsAlias = true     // Mark that auth was via an alias
+
+			c.apiCache.Set(token, finalTd, c.cfg.Cache.Keys)
+			return finalTd, true
+		}
 		return td, true
 	}
 
-	// If direct validation fails, check if it's an alias
-	rootKeyUUID, err := c.fsm.Get(WithAliasToRoot(token))
-	if err != nil {
-		// Not an alias, or some other error. Validation fails.
-		return models.TokenData{}, false
-	}
-
-	// It is an alias, now we need to get the root key's data
-	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, rootKeyUUID)
-	keyDataFromFsm, err := c.fsm.Get(fsmStorageKey)
-	if err != nil {
-		c.logger.Error("Could not get root key data for alias from FSM", "root_key_uuid", rootKeyUUID, "error", err)
-		return models.TokenData{}, false
-	}
-
-	var tdFromFsm models.TokenData
-	if err := json.Unmarshal([]byte(keyDataFromFsm), &tdFromFsm); err != nil {
-		c.logger.Error("Could not unmarshal root key token data from FSM for alias", "root_key_uuid", rootKeyUUID, "error", err)
-		return models.TokenData{}, false
-	}
-
-	// Cache the original token (the alias) pointing to the root key's data
-	c.apiCache.Set(token, tdFromFsm, c.cfg.Cache.Keys)
-
-	return tdFromFsm, true
+	// If direct validation fails, something is wrong, as validateTokenInner should handle all valid keys (aliased or not).
+	// The logic below this point is effectively a fallback and should ideally not be hit.
+	c.logger.Warn("Token validation failed initial check, which should not happen for valid keys.", "token_prefix", strings.Split(token, "_")[0])
+	return models.TokenData{}, false
 }
 
 // Allow any user to get their limits and current usage

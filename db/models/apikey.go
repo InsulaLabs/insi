@@ -17,6 +17,7 @@ type TokenData struct {
 	Entity        string `json:"e,omitempty"`
 	DataScopeUUID string `json:"ds"`
 	KeyUUID       string `json:"k"`
+	IsAlias       bool   `json:"is_alias,omitempty"`
 }
 
 type Limits struct {

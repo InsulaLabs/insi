@@ -214,6 +214,11 @@ func (c *Core) setAliasHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if td.IsAlias {
+		http.Error(w, "Cannot create an alias from an alias key", http.StatusBadRequest)
+		return
+	}
+
 	if !c.fsm.IsLeader() {
 		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
 		return
@@ -235,7 +240,7 @@ func (c *Core) setAliasHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Generate a new key that will serve as the alias
 	// The entity name for an alias key doesn't matter as much, but this is descriptive.
-	aliasKey, err := c.spawnNewApiKey(fmt.Sprintf("alias_for_%s", td.Entity))
+	aliasKey, err := c.spawnNewAliasKey(td, fmt.Sprintf("alias_for_%s", td.Entity))
 	if err != nil {
 		c.logger.Error("Could not create api key for alias", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

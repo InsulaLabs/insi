@@ -373,7 +373,7 @@ test_api_get_limits_for_other_key() {
 }
 
 test_api_key_aliases() {
-    print_header "Test: API Key Aliases (Add, List, Use, Delete)"
+    print_header "Test: API Key Aliases (Add, List, Use, Delete, Data Scope, Chaining)"
     local primary_key_name="primary_for_alias_$(date +%s)_$$"
     local primary_key=""
     local alias1_key=""
@@ -382,6 +382,9 @@ test_api_key_aliases() {
     local output_delete_alias1 output_verify_alias1_deleted output_ping_alias2_after_delete output_delete_primary
     local exit_code_add_primary exit_code_add_alias1 exit_code_add_alias2 exit_code_list_aliases exit_code_ping_alias1 exit_code_ping_alias2
     local exit_code_delete_alias1 exit_code_verify_alias1_deleted exit_code_ping_alias2_after_delete exit_code_delete_primary
+    local output_set_primary output_get_alias output_add_alias_from_alias
+    local exit_code_set_primary exit_code_get_alias exit_code_add_alias_from_alias
+    local output_set_alias exit_code_set_alias output_get_alias_write exit_code_get_alias_write
 
     # 1. Create a primary key to attach aliases to
     echo -e "${INFO_EMOJI} Creating primary key '$primary_key_name' for alias test"
@@ -394,6 +397,12 @@ test_api_key_aliases() {
     fi
     primary_key=$(echo "$output_add_primary" | grep "API Key:" | awk '{print $3}')
     echo -e "${INFO_EMOJI} Parsed primary key: $primary_key"
+
+    # 1a. Set a value with the primary key to test data scope inheritance
+    echo -e "${INFO_EMOJI} Setting a value with the primary key '$primary_key' to test data scope inheritance"
+    output_set_primary=$(run_insic_with_key "$primary_key" "set" "alias-test-key" "alias-test-value")
+    exit_code_set_primary=$?
+    expect_success "Set value with primary key" "$exit_code_set_primary" "$output_set_primary" "OK"
 
     sleep 5
 
@@ -409,6 +418,30 @@ test_api_key_aliases() {
     fi
     alias1_key=$(echo "$output_add_alias1" | grep "Alias Key:" | awk '{print $3}')
     echo -e "${INFO_EMOJI} Parsed alias 1 key: $alias1_key"
+
+    # 2a. Try to get the value with the new alias key. It should work.
+    echo -e "${INFO_EMOJI} Getting value with the alias key '$alias1_key' to test data scope"
+    output_get_alias=$(run_insic_with_key "$alias1_key" "get" "alias-test-key")
+    exit_code_get_alias=$?
+    expect_success "Get value with alias key" "$exit_code_get_alias" "$output_get_alias" "alias-test-value"
+
+    # 2b. Attempt to create an alias from the alias key. It should fail.
+    echo -e "${INFO_EMOJI} Attempting to create an alias from another alias (should fail)"
+    output_add_alias_from_alias=$(run_insic_with_key "$alias1_key" "alias" "add")
+    exit_code_add_alias_from_alias=$?
+    expect_error "Create alias from alias key" "$exit_code_add_alias_from_alias" "$output_add_alias_from_alias" "Cannot create an alias from an alias key"
+
+    # 2c. Set a value with the alias key. It should succeed, inheriting the primary key's limits.
+    echo -e "${INFO_EMOJI} Setting a value with the alias key '$alias1_key' to test limit inheritance"
+    output_set_alias=$(run_insic_with_key "$alias1_key" "set" "alias-write-test" "this-should-work")
+    exit_code_set_alias=$?
+    expect_success "Set value with alias key" "$exit_code_set_alias" "$output_set_alias" "OK"
+
+    # 2d. Get the value set by the alias using the primary key to confirm it wrote to the same scope
+    echo -e "${INFO_EMOJI} Getting value set by alias using the primary key '$primary_key'"
+    output_get_alias_write=$(run_insic_with_key "$primary_key" "get" "alias-write-test")
+    exit_code_get_alias_write=$?
+    expect_success "Get value (set by alias) with primary key" "$exit_code_get_alias_write" "$output_get_alias_write" "this-should-work"
 
     # 3. Create the second alias using the primary key
     echo -e "${INFO_EMOJI} Creating second alias for key $primary_key"
@@ -483,6 +516,75 @@ test_api_key_aliases() {
     expect_success "Delete primary key for cleanup" "$exit_code_delete_primary" "$output_delete_primary" "OK"
 }
 
+test_multi_alias_data_scope() {
+    print_header "Test: Multi-Alias Data Scope"
+    local primary_key_name="primary_for_multi_alias_$(date +%s)_$$"
+    local primary_key=""
+    local alias1_key=""
+    local alias2_key=""
+    local alias3_key=""
+
+    # 1. Create a primary key
+    echo -e "${INFO_EMOJI} Creating primary key '$primary_key_name' for multi-alias test"
+    local output_add_primary=$(run_insic "api" "add" "$primary_key_name")
+    local exit_code_add_primary=$?
+    expect_success "Create primary key for multi-alias test" "$exit_code_add_primary" "$output_add_primary" "API Key:"
+    if [ "$exit_code_add_primary" -ne 0 ]; then return; fi
+    primary_key=$(echo "$output_add_primary" | grep "API Key:" | awk '{print $3}')
+
+    # 2. Create three aliases
+    echo -e "${INFO_EMOJI} Creating 3 aliases for key $primary_key"
+    local output_add_alias1=$(run_insic_with_key "$primary_key" "alias" "add")
+    if [ $? -ne 0 ]; then run_insic "api" "delete" "$primary_key"; return; fi
+    alias1_key=$(echo "$output_add_alias1" | grep "Alias Key:" | awk '{print $3}')
+    echo -e "${INFO_EMOJI}  - Alias 1: $alias1_key"
+
+    local output_add_alias2=$(run_insic_with_key "$primary_key" "alias" "add")
+     if [ $? -ne 0 ]; then run_insic "api" "delete" "$primary_key"; return; fi
+    alias2_key=$(echo "$output_add_alias2" | grep "Alias Key:" | awk '{print $3}')
+     echo -e "${INFO_EMOJI}  - Alias 2: $alias2_key"
+
+    local output_add_alias3=$(run_insic_with_key "$primary_key" "alias" "add")
+     if [ $? -ne 0 ]; then run_insic "api" "delete" "$primary_key"; return; fi
+    alias3_key=$(echo "$output_add_alias3" | grep "Alias Key:" | awk '{print $3}')
+     echo -e "${INFO_EMOJI}  - Alias 3: $alias3_key"
+
+    sleep 5
+
+    # 3. Use alias 1 to set a value
+    local test_key="multi_alias_key"
+    local initial_value="value_from_alias1"
+    echo -e "${INFO_EMOJI} Using Alias 1 to set '$test_key' to '$initial_value'"
+    local output_set1=$(run_insic_with_key "$alias1_key" "set" "$test_key" "$initial_value")
+    local exit_code_set1=$?
+    expect_success "Set value with alias 1" "$exit_code_set1" "$output_set1" "OK"
+
+    # 4. Use alias 2 to get the value
+    echo -e "${INFO_EMOJI} Using Alias 2 to get '$test_key'"
+    local output_get2=$(run_insic_with_key "$alias2_key" "get" "$test_key")
+    local exit_code_get2=$?
+    expect_success "Get value with alias 2" "$exit_code_get2" "$output_get2" "$initial_value"
+
+    # 5. Update the value with alias 3
+    local updated_value="updated_by_alias3"
+    echo -e "${INFO_EMOJI} Using Alias 3 to update '$test_key' to '$updated_value'"
+    local output_set3=$(run_insic_with_key "$alias3_key" "set" "$test_key" "$updated_value")
+    local exit_code_set3=$?
+    expect_success "Update value with alias 3" "$exit_code_set3" "$output_set3" "OK"
+
+    # 6. Confirm with the root key
+    echo -e "${INFO_EMOJI} Using primary key to confirm final value of '$test_key'"
+    local output_get_root=$(run_insic_with_key "$primary_key" "get" "$test_key")
+    local exit_code_get_root=$?
+    expect_success "Confirm updated value with primary key" "$exit_code_get_root" "$output_get_root" "$updated_value"
+
+    # 7. Cleanup
+    echo -e "${INFO_EMOJI} Cleanup: Deleting primary key for multi-alias test: $primary_key"
+    local output_delete_primary=$(run_insic "api" "delete" "$primary_key")
+    local exit_code_delete_primary=$?
+    expect_success "Delete primary key for multi-alias cleanup" "$exit_code_delete_primary" "$output_delete_primary" "OK"
+}
+
 # --- Main Execution ---
 main() {
     if [ -z "$1" ]; then
@@ -541,6 +643,7 @@ main() {
     test_api_key_limits
     test_api_get_limits_for_other_key
     test_api_key_aliases
+    test_multi_alias_data_scope
 
     echo -e "\n${GREEN}All TKV API Key operations tests completed.${NC}"
 
