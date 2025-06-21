@@ -474,6 +474,11 @@ func (c *Core) Run() {
 		// Only ROOT can get limits for specific keys
 		c.privMux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
 
+		// Insight handlers
+		c.privMux.Handle("/db/api/v1/admin/insight/entity", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getEntityHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/insight/entities", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getEntitiesHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/insight/entity_by_alias", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getEntityByAliasHandler), "system")))
+
 		c.privMux.Handle("/db/api/v1/admin/metrics/ops", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.opsPerSecondHandler), "system")))
 
 		return &serverInstance{
@@ -900,6 +905,9 @@ func (c *Core) execTombstoneDeletion() {
 			WithApiKeyMaxDiskUsage(keyUUID),
 			WithApiKeyMaxEvents(keyUUID),
 			WithApiKeyMaxSubscriptions(keyUUID),
+			// Insight refs
+			withApiKeyRef(keyUUID),
+			withApiKeyDataScope(keyUUID),
 			// The API key itself
 			fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, keyUUID),
 		}

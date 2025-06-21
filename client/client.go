@@ -1065,6 +1065,51 @@ func (c *Client) GetOpsPerSecond() (*models.OpsPerSecondCounters, error) {
 	return &response, nil
 }
 
+// GetEntity retrieves a single entity by its root API key.
+// Only the root api key can perform this operation.
+func (c *Client) GetEntity(rootApiKey string) (*models.Entity, error) {
+	if rootApiKey == "" {
+		return nil, fmt.Errorf("rootApiKey cannot be empty")
+	}
+	requestPayload := models.InsightRequestEntity{RootApiKey: rootApiKey}
+	var response models.InsightResponseEntity
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/admin/insight/entity", nil, requestPayload, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response.Entity, nil
+}
+
+// GetEntities retrieves a list of entities.
+// Only the root api key can perform this operation.
+func (c *Client) GetEntities(offset, limit int) ([]models.Entity, error) {
+	requestPayload := models.InsightRequestEntities{Offset: offset, Limit: limit}
+	var response models.InsightResponseEntities
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/admin/insight/entities", nil, requestPayload, &response)
+	if err != nil {
+		return nil, err
+	}
+	return response.Entities, nil
+}
+
+// GetEntityByAlias retrieves a single entity by its alias.
+// Only the root api key can perform this operation.
+func (c *Client) GetEntityByAlias(alias string) (*models.Entity, error) {
+	if alias == "" {
+		return nil, fmt.Errorf("alias cannot be empty")
+	}
+	requestPayload := models.InsightRequestEntityByAlias{Alias: alias}
+	var response models.InsightResponseEntityByAlias
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/admin/insight/entity_by_alias", nil, requestPayload, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response.Entity, nil
+}
+
 // SubscribeToEvents connects to the event subscription WebSocket endpoint and prints incoming events.
 func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent func(data any)) error {
 	if topic == "" {
