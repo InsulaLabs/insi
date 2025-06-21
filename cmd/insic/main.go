@@ -228,6 +228,9 @@ func printUsage() {
 
 	// Admin commands
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("admin"), color.CyanString("ops"), color.YellowString("--root flag required. Get node ops/sec."))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("admin"), color.CyanString("insight"), color.CyanString("entity"), color.CyanString("<root_api_key>"), color.YellowString("--root flag required."))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("admin"), color.CyanString("insight"), color.CyanString("entities"), color.CyanString("[offset]"), color.CyanString("[limit]"), color.YellowString("--root flag required."))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("admin"), color.CyanString("insight"), color.CyanString("entity-by-alias"), color.CyanString("<alias>"), color.YellowString("--root flag required."))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -1282,6 +1285,13 @@ func handleAdmin(c *client.Client, args []string) {
 			os.Exit(1)
 		}
 		handleAdminOps(c, subArgs)
+	case "insight":
+		if !useRootKey {
+			logger.Error("admin insight requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s admin insight requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleAdminInsight(c, subArgs)
 	default:
 		logger.Error("admin: unknown sub-command", "sub_command", subCommand)
 		printUsage()
@@ -1310,4 +1320,149 @@ func handleAdminOps(c *client.Client, args []string) {
 	fmt.Printf("  Events:       %.2f\n", resp.OP_Events)
 	fmt.Printf("  Subscribers:  %.2f\n", resp.OP_Subscribers)
 	fmt.Printf("  Blobs:        %.2f\n", resp.OP_Blobs)
+}
+
+func handleAdminInsight(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("admin insight: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "entity":
+		handleAdminInsightEntity(c, subArgs)
+	case "entities":
+		handleAdminInsightEntities(c, subArgs)
+	case "entity-by-alias":
+		handleAdminInsightEntityByAlias(c, subArgs)
+	default:
+		logger.Error("admin insight: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleAdminInsightEntity(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("admin insight entity: requires <root_api_key>")
+		printUsage()
+		os.Exit(1)
+	}
+	rootApiKey := args[0]
+	entity, err := c.GetEntity(rootApiKey)
+	if err != nil {
+		logger.Error("Failed to get entity", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	printEntity(entity)
+}
+
+func handleAdminInsightEntities(c *client.Client, args []string) {
+	offset, limit := 0, 10
+	var err error
+	if len(args) > 0 {
+		offset, err = strconv.Atoi(args[0])
+		if err != nil {
+			logger.Error("admin insight entities: invalid offset", "offset_str", args[0], "error", err)
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[0], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 1 {
+		limit, err = strconv.Atoi(args[1])
+		if err != nil {
+			logger.Error("admin insight entities: invalid limit", "limit_str", args[1], "error", err)
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[1], err)
+			os.Exit(1)
+		}
+	}
+
+	entities, err := c.GetEntities(offset, limit)
+	if err != nil {
+		logger.Error("Failed to get entities", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(entities) == 0 {
+		color.HiYellow("No entities found.")
+		return
+	}
+
+	for i, entity := range entities {
+		e := entity
+		printEntity(&e)
+		if i < len(entities)-1 {
+			fmt.Println(color.GreenString("--------------------"))
+		}
+	}
+}
+
+func handleAdminInsightEntityByAlias(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("admin insight entity-by-alias: requires <alias>")
+		printUsage()
+		os.Exit(1)
+	}
+	alias := args[0]
+	entity, err := c.GetEntityByAlias(alias)
+	if err != nil {
+		logger.Error("Failed to get entity by alias", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	printEntity(entity)
+}
+
+func printEntity(entity *models.Entity) {
+	fmt.Println(color.CyanString("Entity Details:"))
+	fmt.Printf("  Root API Key:    %s\n", entity.RootApiKey)
+	fmt.Printf("  Key UUID:        %s\n", entity.KeyUUID)
+	fmt.Printf("  Data Scope UUID: %s\n", entity.DataScopeUUID)
+
+	if len(entity.Aliases) > 0 {
+		fmt.Println("  Aliases:")
+		for _, alias := range entity.Aliases {
+			fmt.Printf("    - %s\n", alias)
+		}
+	} else {
+		fmt.Println("  Aliases:         None")
+	}
+
+	if entity.Usage.MaxLimits != nil {
+		fmt.Println(color.CyanString("\n  Maximum Limits:"))
+		if entity.Usage.MaxLimits.BytesOnDisk != nil {
+			fmt.Printf("    Bytes on Disk:     %d\n", *entity.Usage.MaxLimits.BytesOnDisk)
+		}
+		if entity.Usage.MaxLimits.BytesInMemory != nil {
+			fmt.Printf("    Bytes in Memory:   %d\n", *entity.Usage.MaxLimits.BytesInMemory)
+		}
+		if entity.Usage.MaxLimits.EventsEmitted != nil {
+			fmt.Printf("    Events Emitted:    %d\n", *entity.Usage.MaxLimits.EventsEmitted)
+		}
+		if entity.Usage.MaxLimits.Subscribers != nil {
+			fmt.Printf("    Subscribers:       %d\n", *entity.Usage.MaxLimits.Subscribers)
+		}
+	}
+
+	if entity.Usage.CurrentUsage != nil {
+		fmt.Println(color.CyanString("\n  Current Usage:"))
+		if entity.Usage.CurrentUsage.BytesOnDisk != nil {
+			fmt.Printf("    Bytes on Disk:     %d\n", *entity.Usage.CurrentUsage.BytesOnDisk)
+		}
+		if entity.Usage.CurrentUsage.BytesInMemory != nil {
+			fmt.Printf("    Bytes in Memory:   %d\n", *entity.Usage.CurrentUsage.BytesInMemory)
+		}
+		if entity.Usage.CurrentUsage.EventsEmitted != nil {
+			fmt.Printf("    Events Emitted:    %d\n", *entity.Usage.CurrentUsage.EventsEmitted)
+		}
+		if entity.Usage.CurrentUsage.Subscribers != nil {
+			fmt.Printf("    Subscribers:       %d\n", *entity.Usage.CurrentUsage.Subscribers)
+		}
+	}
+	fmt.Println()
 }

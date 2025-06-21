@@ -300,6 +300,16 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 	}
 
 	c.fsm.Set(models.KVPayload{
+		Key:   withApiKeyRef(keyUUID),
+		Value: actualKey,
+	})
+
+	c.fsm.Set(models.KVPayload{
+		Key:   withApiKeyDataScope(keyUUID),
+		Value: dsUUID,
+	})
+
+	c.fsm.Set(models.KVPayload{
 		Key:   WithApiKeyMemoryUsage(keyUUID),
 		Value: "0",
 	})

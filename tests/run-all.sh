@@ -39,6 +39,10 @@ function run_test_script() {
     stop_insid
 }
 
+echo "🚀 Running insight.sh..."
+run_test_script /tmp/insi-test-cluster/insight.sh
+echo "✅ Success: insight.sh completed."
+
 echo "🚀 Running metrics.sh..."
 run_test_script /tmp/insi-test-cluster/metrics.sh
 echo "✅ Success: metrics.sh completed."
@@ -70,6 +74,7 @@ echo "✅ Success: cache-cas-setnx.sh completed."
 echo "🚀 Running blob.sh..."
 run_test_script /tmp/insi-test-cluster/blob.sh
 echo "✅ Success: blob.sh completed."
+
 
 sleep 5 # wait for insid to finish stopping and logging out
 
