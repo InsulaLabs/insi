@@ -93,6 +93,17 @@ if ! ps -p "$SUB_PID" > /dev/null; then
 fi
 echo "Subscriber process seems to be running."
 
+# Wait until the subscriber reports a successful connection
+echo "Waiting for subscriber to connect..."
+if ! timeout 10s grep -q "Successfully connected" <(tail -f "$OUTPUT_FILE"); then
+    echo "ERROR: Subscriber did not report successful connection within 10 seconds."
+    echo "--- Subscriber Logs ---"
+    cat "$OUTPUT_FILE"
+    echo "-----------------------"
+    exit 1
+fi
+echo "Subscriber connected."
+
 # 2. Publish messages
 echo "Publishing $NUM_MESSAGES messages to topic '$TOPIC'..."
 for MSG_DATA in "${MESSAGES[@]}"; do
@@ -121,8 +132,8 @@ echo "Verifying received messages in $OUTPUT_FILE..."
 MISSING_MESSAGES=0
 for MSG_DATA in "${MESSAGES[@]}"; do
     # Grep for the data part of the event, as insic subscribe has some prefix
-    # Example line: Received event on topic 'test-event-topic-12345': Test_Data_3_12345
-    if grep -q "Received event on topic '$TOPIC': $MSG_DATA" "$OUTPUT_FILE"; then
+    # Example line: Received event on topic 'test-event-topic-12345': Data=Test_Data_3_12345
+    if grep -q "Received event on topic '$TOPIC': Data=$MSG_DATA" "$OUTPUT_FILE"; then
         echo "OK: Found message '$MSG_DATA'"
     else
         echo "ERROR: Did not find message '$MSG_DATA'"
