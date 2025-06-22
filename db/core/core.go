@@ -102,6 +102,8 @@ type Core struct {
 	internalSubscribersLock sync.RWMutex
 
 	metrics Metrics
+
+	subscriptionSlotLock sync.Mutex
 }
 
 type serverInstance struct {
@@ -463,6 +465,8 @@ func (c *Core) Run() {
 
 		// Internal handlers
 		c.privMux.Handle("/db/internal/v1/blob/download", c.ipFilterMiddleware(http.HandlerFunc(c.internalDownloadBlobHandler)))
+		c.privMux.Handle("/db/internal/v1/subscriptions/request_slot", c.ipFilterMiddleware(http.HandlerFunc(c.requestSubscriptionSlotHandler)))
+		c.privMux.Handle("/db/internal/v1/subscriptions/release_slot", c.ipFilterMiddleware(http.HandlerFunc(c.releaseSubscriptionSlotHandler)))
 
 		// Only ROOT can set limits
 		c.privMux.Handle("/db/api/v1/admin/limits/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system")))
@@ -975,10 +979,17 @@ func (c *Core) dispatchToWebsocketSubscribers(event models.Event) {
 	if subscribers, ok := c.eventSubscribers[event.Topic]; ok {
 		c.logger.Debug("Found WebSocket subscribers for topic", "topic", event.Topic, "count", len(subscribers))
 
+		// Construct the full payload to send to clients
+		payload := models.EventPayload{
+			Topic:     event.Topic, // This is the prefixed topic
+			Data:      event.Data,
+			EmittedAt: time.Now(),
+		}
+
 		// Marshal the event once for all subscribers of this topic.
-		message, err := json.Marshal(event)
+		message, err := json.Marshal(payload)
 		if err != nil {
-			c.logger.Error("Failed to marshal event for WebSocket dispatch", "topic", event.Topic, "error", err)
+			c.logger.Error("Failed to marshal event payload for WebSocket dispatch", "topic", event.Topic, "error", err)
 			return
 		}
 

@@ -1,9 +1,11 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -76,6 +78,142 @@ func (es *eventSubsystem) Receive(topic string, data any) error {
 	return nil
 }
 
+// requestSubscriptionSlot attempts to reserve a subscription slot for the given key.
+// It performs the action directly if the node is the leader, otherwise it calls the leader's internal API.
+// Returns true if the slot was granted, false if the limit was reached, and an error for other failures.
+func (c *Core) requestSubscriptionSlot(keyUUID string) (bool, error) {
+	if c.fsm.IsLeader() {
+		// We are the leader, perform the atomic check-and-increment locally.
+		c.subscriptionSlotLock.Lock()
+		defer c.subscriptionSlotLock.Unlock()
+
+		limit, current, err := c.getSubscriptionUsage(keyUUID)
+		if err != nil {
+			return false, fmt.Errorf("could not get subscription usage on leader: %w", err)
+		}
+
+		if current >= limit {
+			return false, nil // Limit reached
+		}
+
+		if err := c.fsm.BumpInteger(WithApiKeySubscriptions(keyUUID), 1); err != nil {
+			return false, fmt.Errorf("failed to bump subscription count on leader: %w", err)
+		}
+		c.logger.Info("Subscription slot granted locally by leader", "key_uuid", keyUUID)
+		return true, nil // Slot granted
+	}
+
+	// We are a follower, call the leader's internal API.
+	leaderInfo, err := c.fsm.LeaderHTTPAddress()
+	if err != nil {
+		return false, fmt.Errorf("follower could not get leader's address: %w", err)
+	}
+
+	payload := subscriptionSlotRequest{KeyUUID: keyUUID}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal slot request payload: %w", err)
+	}
+
+	_, port, err := net.SplitHostPort(leaderInfo.PrivateBinding)
+	if err != nil {
+		return false, fmt.Errorf("could not parse leader private binding '%s': %w", leaderInfo.PrivateBinding, err)
+	}
+	host := "localhost"
+	if leaderInfo.ClientDomain != "" {
+		host = leaderInfo.ClientDomain
+	}
+	leaderPrivateURL := fmt.Sprintf("https://%s/db/internal/v1/subscriptions/request_slot", net.JoinHostPort(host, port))
+
+	req, err := http.NewRequest(http.MethodPost, leaderPrivateURL, bytes.NewBuffer(body))
+	if err != nil {
+		return false, fmt.Errorf("failed to create internal slot request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", c.loopbackClient.GetApiKey())
+
+	c.logger.Debug("Forwarding subscription slot request to leader", "leader_url", leaderPrivateURL)
+	resp, err := c.loopbackClient.GetHttpClient().Do(req)
+	if err != nil {
+		return false, fmt.Errorf("internal slot request to leader failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		c.logger.Info("Subscription slot granted by leader", "leader_url", leaderPrivateURL)
+		return true, nil // Slot granted
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		c.logger.Warn("Subscription slot denied by leader, limit reached", "leader_url", leaderPrivateURL)
+		return false, nil // Limit reached
+	}
+
+	respBody, _ := io.ReadAll(resp.Body)
+	return false, fmt.Errorf("unexpected status code from leader slot request: %d - %s", resp.StatusCode, string(respBody))
+}
+
+// releaseSubscriptionSlot tells the leader to decrement the subscription count.
+func (c *Core) releaseSubscriptionSlot(keyUUID string) {
+	if c.fsm.IsLeader() {
+		// We are the leader, decrement locally.
+		if err := c.fsm.BumpInteger(WithApiKeySubscriptions(keyUUID), -1); err != nil {
+			c.logger.Error("Failed to decrement subscription count on leader", "key_uuid", keyUUID, "error", err)
+		}
+		return
+	}
+
+	// We are a follower, call the leader's internal API.
+	// This is a "fire-and-forget" style call, we log errors but don't block/fail.
+	go func() {
+		leaderInfo, err := c.fsm.LeaderHTTPAddress()
+		if err != nil {
+			c.logger.Error("Could not get leader address to release slot", "error", err)
+			return
+		}
+
+		payload := subscriptionSlotRequest{KeyUUID: keyUUID}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			c.logger.Error("Failed to marshal slot release payload", "error", err)
+			return
+		}
+
+		_, port, err := net.SplitHostPort(leaderInfo.PrivateBinding)
+		if err != nil {
+			c.logger.Error("Could not parse leader private binding for slot release", "binding", leaderInfo.PrivateBinding, "error", err)
+			return
+		}
+		host := "localhost"
+		if leaderInfo.ClientDomain != "" {
+			host = leaderInfo.ClientDomain
+		}
+		leaderPrivateURL := fmt.Sprintf("https://%s/db/internal/v1/subscriptions/release_slot", net.JoinHostPort(host, port))
+
+		req, err := http.NewRequest(http.MethodPost, leaderPrivateURL, bytes.NewBuffer(body))
+		if err != nil {
+			c.logger.Error("Failed to create internal slot release request", "error", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", c.loopbackClient.GetApiKey())
+
+		c.logger.Debug("Forwarding subscription slot release to leader", "leader_url", leaderPrivateURL)
+		resp, err := c.loopbackClient.GetHttpClient().Do(req)
+		if err != nil {
+			c.logger.Error("Internal slot release request to leader failed", "error", err)
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			respBody, _ := io.ReadAll(resp.Body)
+			c.logger.Error("Unexpected status code from leader slot release request", "status", resp.StatusCode, "body", string(respBody))
+		} else {
+			c.logger.Info("Successfully released subscription slot on leader", "leader_url", leaderPrivateURL)
+		}
+	}()
+}
+
 // eventSubscribeHandler handles WebSocket requests for event subscriptions.
 func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -88,10 +226,27 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Request a subscription slot. This is an atomic operation on the leader.
+	slotGranted, err := c.requestSubscriptionSlot(td.KeyUUID)
+	if err != nil {
+		c.logger.Error("Failed to request subscription slot", "key_uuid", td.KeyUUID, "error", err)
+		http.Error(w, "internal server error during slot request", http.StatusInternalServerError)
+		return
+	}
+
+	if !slotGranted {
+		c.logger.Warn("Subscription rejected, limit reached", "key_uuid", td.KeyUUID)
+		http.Error(w, "subscriber limit exceeded", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Slot was granted, proceed with WebSocket upgrade. If anything fails from here,
+	// we must release the slot.
 	topic := r.URL.Query().Get("topic")
 	if topic == "" {
 		c.logger.Warn("WebSocket connection attempt without topic")
 		http.Error(w, "Missing topic", http.StatusBadRequest)
+		c.releaseSubscriptionSlot(td.KeyUUID) // Release the slot
 		return
 	}
 
@@ -104,6 +259,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 		c.wsConnectionLock.Unlock()
 		c.logger.Warn("Max WebSocket connections reached, rejecting new connection", "current", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections)
 		http.Error(w, "Too many connections", http.StatusServiceUnavailable)
+		c.releaseSubscriptionSlot(td.KeyUUID) // Release the slot
 		return
 	}
 	// Incrementing will be done in registerSubscriber after successful upgrade
@@ -111,7 +267,8 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := c.wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		c.logger.Error("Failed to upgrade WebSocket connection", "error", err, "topic", prefixedTopic)
+		c.logger.Error("Failed to upgrade WebSocket connection, releasing slot", "error", err, "topic", prefixedTopic, "key_uuid", td.KeyUUID)
+		c.releaseSubscriptionSlot(td.KeyUUID) // Release the slot
 		return
 	}
 	c.logger.Info("WebSocket connection upgraded", "remote_addr", conn.RemoteAddr().String(), "topic", prefixedTopic)
@@ -132,7 +289,6 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) registerSubscriber(session *eventSession) {
-	// already counted in IndEventsOp
 	c.eventSubscribersLock.Lock()
 	defer c.eventSubscribersLock.Unlock()
 
@@ -140,8 +296,9 @@ func (c *Core) registerSubscriber(session *eventSession) {
 	defer c.wsConnectionLock.Unlock()
 
 	if c.activeWsConnections >= int32(c.cfg.Sessions.MaxConnections) {
-		c.logger.Error("Attempted to register subscriber when max connections already met or exceeded", "active", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections)
+		c.logger.Error("Attempted to register subscriber when max connections already met or exceeded, releasing slot", "active", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections, "key_uuid", session.keyUUID)
 		go session.conn.Close()
+		c.releaseSubscriptionSlot(session.keyUUID)
 		return
 	}
 	c.activeWsConnections++
@@ -151,18 +308,10 @@ func (c *Core) registerSubscriber(session *eventSession) {
 		c.eventSubscribers[session.topic] = make(map[*eventSession]bool)
 	}
 	c.eventSubscribers[session.topic][session] = true
-
-	if c.fsm.IsLeader() {
-		if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), 1); err != nil {
-			c.logger.Error("Could not bump integer via FSM for subscribers", "error", err)
-		}
-	}
-
-	c.logger.Info("Subscriber registered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
+	c.logger.Info("Subscriber registered locally", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 }
 
 func (c *Core) unregisterSubscriber(session *eventSession) {
-	// already counted in IndEventsOp
 	c.eventSubscribersLock.Lock()
 	defer c.eventSubscribersLock.Unlock()
 
@@ -172,14 +321,10 @@ func (c *Core) unregisterSubscriber(session *eventSession) {
 	if sessionsInTopic, ok := c.eventSubscribers[session.topic]; ok {
 		if _, ok := sessionsInTopic[session]; ok {
 			delete(c.eventSubscribers[session.topic], session)
-			c.logger.Info("Subscriber unregistered", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
+			c.logger.Info("Subscriber unregistered, releasing slot", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 
-			if c.fsm.IsLeader() {
-				if err := c.fsm.BumpInteger(WithApiKeySubscriptions(session.keyUUID), -1); err != nil {
-					c.logger.Error("Could not bump integer via FSM for subscribers on unregister", "error", err)
-					// Don't fail, just log.
-				}
-			}
+			// Release the subscription slot on the leader
+			c.releaseSubscriptionSlot(session.keyUUID)
 
 			// Decrement connection count only if we actually found and removed the session
 			if c.activeWsConnections > 0 {
@@ -297,6 +442,96 @@ func (s *eventSession) writePump() {
 			return
 		}
 	}
+}
+
+// requestSubscriptionSlotHandler is an internal handler called by follower nodes
+// to atomically request a subscription slot from the leader.
+func (c *Core) requestSubscriptionSlotHandler(w http.ResponseWriter, r *http.Request) {
+
+	_, ok := c.ValidateToken(r, RootOnly())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.logger.Error("Non-leader received request for subscription slot. This is a bug and should not happen.")
+		http.Error(w, "this node is not the leader", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req subscriptionSlotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.KeyUUID == "" {
+		http.Error(w, "key_uuid is missing", http.StatusBadRequest)
+		return
+	}
+
+	// This is the critical atomic section
+	c.subscriptionSlotLock.Lock()
+	defer c.subscriptionSlotLock.Unlock()
+
+	limit, current, err := c.getSubscriptionUsage(req.KeyUUID)
+	if err != nil {
+		c.logger.Error("Could not get subscription usage", "key_uuid", req.KeyUUID, "error", err)
+		http.Error(w, "failed to check usage", http.StatusInternalServerError)
+		return
+	}
+
+	if current >= limit {
+		c.logger.Warn("Subscription slot request denied, limit reached", "key_uuid", req.KeyUUID, "current", current, "limit", limit)
+		http.Error(w, "subscriber limit exceeded", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Limit not reached, grant slot by incrementing
+	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(req.KeyUUID), 1); err != nil {
+		c.logger.Error("Failed to bump subscription count", "key_uuid", req.KeyUUID, "error", err)
+		http.Error(w, "failed to update usage", http.StatusInternalServerError)
+		return
+	}
+
+	c.logger.Info("Subscription slot granted", "key_uuid", req.KeyUUID)
+	w.WriteHeader(http.StatusOK)
+}
+
+// releaseSubscriptionSlotHandler is an internal handler called by follower nodes
+// to release a subscription slot on the leader.
+func (c *Core) releaseSubscriptionSlotHandler(w http.ResponseWriter, r *http.Request) {
+
+	_, ok := c.ValidateToken(r, RootOnly())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.logger.Error("Non-leader received request to release subscription slot. This is a bug and should not happen.")
+		http.Error(w, "this node is not the leader", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req subscriptionSlotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.KeyUUID == "" {
+		http.Error(w, "key_uuid is missing", http.StatusBadRequest)
+		return
+	}
+
+	// Decrement the count. We don't need to lock for a simple decrement,
+	// and we log errors but don't fail the request to prevent blocking.
+	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(req.KeyUUID), -1); err != nil {
+		c.logger.Error("Failed to decrement subscription count", "key_uuid", req.KeyUUID, "error", err)
+	}
+
+	c.logger.Info("Subscription slot released", "key_uuid", req.KeyUUID)
+	w.WriteHeader(http.StatusOK)
 }
 
 // -- WRITE OPERATIONS --
@@ -443,4 +678,27 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		// Don't fail the whole request, but log it.
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+type subscriptionSlotRequest struct {
+	KeyUUID string `json:"key_uuid"`
+}
+
+func (c *Core) getSubscriptionUsage(keyUUID string) (limit, current int64, err error) {
+	limitStr, err := c.fsm.Get(WithApiKeyMaxSubscriptions(keyUUID))
+	if err != nil {
+		return 0, 0, fmt.Errorf("could not get max subscribers limit: %w", err)
+	}
+	limit, err = strconv.ParseInt(limitStr, 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("could not parse max subscribers limit: %w", err)
+	}
+
+	currentSubsStr, err := c.fsm.Get(WithApiKeySubscriptions(keyUUID))
+	if err != nil && !tkv.IsErrKeyNotFound(err) {
+		return 0, 0, fmt.Errorf("could not get current subscribers: %w", err)
+	}
+	current, _ = strconv.ParseInt(currentSubsStr, 10, 64)
+
+	return limit, current, nil
 }

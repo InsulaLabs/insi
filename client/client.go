@@ -153,6 +153,15 @@ func (e *ErrEventsLimitExceeded) Error() string {
 	return fmt.Sprintf("events limit exceeded: %s. Current: %d, Limit: %d", e.Message, e.CurrentUsage, e.Limit)
 }
 
+// ErrSubscriberLimitExceeded is returned when the subscriber limit is exceeded.
+type ErrSubscriberLimitExceeded struct {
+	Message string
+}
+
+func (e *ErrSubscriberLimitExceeded) Error() string {
+	return fmt.Sprintf("subscriber limit exceeded: %s", e.Message)
+}
+
 // ObjectUploadResponse is the response from a successful object upload.
 type ObjectUploadResponse struct {
 	Status           string `json:"status,omitempty"`
@@ -1116,26 +1125,24 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 		return fmt.Errorf("topic cannot be empty")
 	}
 
-	// Construct WebSocket URL. Example: ws://localhost:8080/db/api/v1/events/subscribe?topic=MY_TOPIC&token=API_KEY
-	// Note: The server must handle the "token" query parameter for authentication.
 	wsScheme := "ws"
 	if c.publicBaseURL.Scheme == "https" {
 		wsScheme = "wss"
 	}
 
-	// hostPort is derived from c.publicBaseURL.Host which already contains host:port
-	wsURL := url.URL{
+	c.mu.RLock()
+	// Initial URL construction
+	currentWsURL := &url.URL{
 		Scheme: wsScheme,
-		Host:   c.publicBaseURL.Host, // c.publicBaseURL.Host already has host:port
+		Host:   c.publicBaseURL.Host,
 		Path:   "/db/api/v1/events/subscribe",
 	}
-	query := wsURL.Query()
+	c.mu.RUnlock()
+
+	query := currentWsURL.Query()
 	query.Set("topic", topic)
-	wsURL.RawQuery = query.Encode()
+	currentWsURL.RawQuery = query.Encode()
 
-	c.logger.Info("Attempting to connect to WebSocket for event subscription", "url", wsURL.String())
-
-	// The Authorization header is used for authentication on the WebSocket upgrade request.
 	header := http.Header{}
 	header.Set("Authorization", c.apiKey)
 
@@ -1147,10 +1154,65 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 		},
 	}
 
-	conn, resp, err := dialer.Dial(wsURL.String(), header)
-	if err != nil {
-		errMsg := fmt.Sprintf("failed to dial websocket %s", wsURL.String())
-		if resp != nil {
+	var conn *websocket.Conn
+	var err error
+
+	for redirects := 0; redirects < MaximumRedirects; redirects++ {
+		c.logger.Info("Attempting to connect to WebSocket for event subscription", "url", currentWsURL.String(), "attempt", redirects+1)
+		var resp *http.Response
+		conn, resp, err = dialer.Dial(currentWsURL.String(), header)
+		if err == nil {
+			// Success
+			break
+		}
+
+		if resp == nil {
+			c.logger.Error("WebSocket dial error with no response", "url", currentWsURL.String(), "error", err)
+			return fmt.Errorf("failed to dial websocket %s: %w", currentWsURL.String(), err)
+		}
+		defer resp.Body.Close()
+
+		switch resp.StatusCode {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			loc := resp.Header.Get("Location")
+			if loc == "" {
+				return fmt.Errorf("redirect response missing Location header from %s", currentWsURL.String())
+			}
+
+			redirectURL, parseErr := currentWsURL.Parse(loc)
+			if parseErr != nil {
+				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, parseErr)
+			}
+
+			c.logger.Debug("WebSocket subscription redirected",
+				"from_url", currentWsURL.String(),
+				"to_url", redirectURL.String(),
+				"status_code", resp.StatusCode)
+
+			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+				c.redirectCoutner.Add(1)
+				if c.enableLeaderStickiness {
+					if stickErr := c.setLeader(redirectURL); stickErr != nil {
+						c.logger.Warn("Failed to set sticky leader from WebSocket redirect", "error", stickErr)
+					}
+				}
+			}
+
+			*currentWsURL = *redirectURL
+			if currentWsURL.Scheme == "http" {
+				currentWsURL.Scheme = "ws"
+			} else if currentWsURL.Scheme == "https" {
+				currentWsURL.Scheme = "wss"
+			}
+			continue
+
+		default:
+			errMsg := fmt.Sprintf("failed to dial websocket %s", currentWsURL.String())
+			if resp.StatusCode == http.StatusServiceUnavailable {
+				bodyBytes, _ := io.ReadAll(resp.Body)
+				return &ErrSubscriberLimitExceeded{Message: strings.TrimSpace(string(bodyBytes))}
+			}
+
 			errMsg = fmt.Sprintf(
 				"%s: (status: %s), error: %v",
 				errMsg,
@@ -1159,72 +1221,28 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 			)
 			c.logger.Error(
 				"WebSocket dial error with response",
-				"url", wsURL.String(),
+				"url", currentWsURL.String(),
 				"status", resp.Status,
 				"error", err,
 			)
-			return fmt.Errorf("%s: %w", errMsg, err)
+			return fmt.Errorf(errMsg)
 		}
-		c.logger.Error("WebSocket dial error", "url", wsURL.String(), "error", err)
-		return fmt.Errorf("%s: %w", errMsg, err)
 	}
+
+	if err != nil {
+		return fmt.Errorf("failed to connect to websocket after %d redirects, last url: %s, error: %w", MaximumRedirects, currentWsURL.String(), err)
+	}
+
 	defer conn.Close()
 
-	/*
-		Handle pong messages to keep the connection alive if the server sends pings
-		This helps prevent proxies or the server itself from closing the connection due to inactivity.
-	*/
-	conn.SetPongHandler(func(string) error {
-		c.logger.Debug("Received pong from server")
-		return nil
-	})
+	fmt.Println("Successfully connected to event stream.")
 
-	/*
-		Periodically send pings to the server to keep the connection alive
-		This helps prevent proxies or the server itself from closing the connection due to inactivity.
-	*/
+	done := make(chan struct{})
+
+	// Goroutine to read messages from the server
 	go func() {
-		ticker := time.NewTicker(WebSocketPingInterval)
-		defer ticker.Stop()
+		defer close(done)
 		for {
-			select {
-			case <-ticker.C:
-				c.logger.Debug("Sending ping to server")
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-					c.logger.Error("Error sending ping", "error", err)
-					return // Stop pinging if there's an error
-				}
-			case <-ctx.Done(): // Listen for context cancellation
-				c.logger.Info("Context cancelled, closing WebSocket ping loop.")
-				// Attempt to send a close message to the server.
-				err := conn.WriteMessage(
-					websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-				)
-				if err != nil {
-					c.logger.Error("Error sending close message during ping loop shutdown", "error", err)
-				}
-				return
-			}
-		}
-	}()
-
-	c.logger.Info("Successfully connected to WebSocket. Listening for events...", "topic", topic)
-
-	for {
-		select {
-		case <-ctx.Done():
-			c.logger.Info("Context cancelled, closing WebSocket read loop.")
-			// Attempt to send a close message to the server.
-			err := conn.WriteMessage(
-				websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-			)
-			if err != nil {
-				c.logger.Error("Error sending close message during read loop shutdown", "error", err)
-			}
-			return ctx.Err() // Return context error
-		default:
 			messageType, message, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(
@@ -1237,12 +1255,21 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 						"error", err,
 					)
 				}
-				return err
+				return
 			}
 
 			if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
-				var event models.Event
-				if err := json.Unmarshal(message, &event); err != nil {
+				var payload models.EventPayload
+				if err := json.Unmarshal(message, &payload); err != nil {
+					// It might be an error message from the server instead of an event.
+					var errorResp ErrorResponse
+					if err2 := json.Unmarshal(message, &errorResp); err2 == nil {
+						// It's a structured error. Return it so the client can exit.
+						c.logger.Error("Received error message from WebSocket", "error_type", errorResp.ErrorType, "message", errorResp.Message)
+						return
+					}
+
+					// It's neither an event nor a known error structure. Log and continue.
 					c.logger.Error(
 						"Failed to unmarshal event message",
 						"error", err,
@@ -1251,10 +1278,35 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 					continue
 				}
 				if onEvent != nil {
-					onEvent(event.Data)
+					onEvent(payload)
 				}
 			}
 		}
+	}()
+
+	select {
+	case <-done:
+		c.logger.Info("Context cancelled, closing WebSocket read loop.")
+		// Attempt to send a close message to the server.
+		err := conn.WriteMessage(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		)
+		if err != nil {
+			c.logger.Error("Error sending close message during read loop shutdown", "error", err)
+		}
+		return ctx.Err() // Return context error
+	case <-ctx.Done():
+		c.logger.Info("Context cancelled, closing WebSocket read loop.")
+		// Attempt to send a close message to the server.
+		err := conn.WriteMessage(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		)
+		if err != nil {
+			c.logger.Error("Error sending close message during read loop shutdown", "error", err)
+		}
+		return ctx.Err() // Return context error
 	}
 }
 
