@@ -77,36 +77,25 @@ The cluster is configured using a `cluster.yaml` file. This file defines the nod
 
 ### Running a Server
 
-The main application for running an Insi node is `insid`. You can start a node or a full cluster using the `insio` tool, which wraps the `insid` runtime.
+The main application for running an Insi node is `insid`. 
 
 ```bash
 # Start a multi-node cluster as defined in cluster.yaml
-go run ./cmd/insio server --config cluster.yaml --host
+./insid --host --config cluster.yaml
 ```
 
 ### Interacting with Insi
 
-#### `insio` CLI Tool
+#### `insic` CLI Tool
 
-The `insio` command-line tool (`cmd/insio/main.go`) is the primary utility for interacting with a running Insi cluster. It can be used to:
-- Start a server (`insio server`).
-- Ping a node to check its status (`insio ping`).
-- Verify an API key (`insio verify`).
-- Execute JavaScript files against the server using the embedded OVM (`insio run`).
+- Start a server (`insid server` (Above)).
+Use insic "see `insic --help`"
 
 #### `fwi` Go Library
 
 For programmatic access from your Go applications, the `fwi` library (`fwi/fwi.go`) provides a high-level, developer-friendly interface. It abstracts away the direct client communication and simplifies the management of Entities and their associated data stores.
 
 A comprehensive example of how to use the `fwi` library to configure a cluster, create an Entity, and use the Value, Cache, and Events stores can be found in `examples/fwi-usage/main.go`.
-
-#### OVM Scripting
-
-Insi includes an embedded **OVM (Otto Virtual Machine)** that can execute JavaScript code on the client side via ovm that leverages the insi http client to
-aide in scripting common actions, routines, etc. The client dynamically handles rate limiting so things like "running a set operation in a for loop" will
-work, and respect the server's rate limit.
-
-A collection of example scripts, including tests and utility functions, can be found in the `scripts/` directory.
 
 ## Development & Testing
 
@@ -175,29 +164,12 @@ badger 2025/06/17 16:21:05 INFO: Lifetime L0 stalled for: 0s
 ## TESTING
 
 If you look in `tests/run-all.sh` you'll see how I started testing. I started off by just making bash scripts to run
-against the `insic` command line application (pre js ovm) to ensure each route was tested and we got the expected values.
+against the `insic` command line application to ensure each route was tested and we got the expected values.
 Bash scripts made testing the node cluster really simple as we could just spin them up in the configuration we needed
 and then had direct access to logs.
 
 Eventually the complexities grew but it capped off at a manageable level and now rest in their current form.
 
-### JS Tests
-
-I wanted to wrap the insi client up in some sort of scripting language to really test the heck out of it and to
-make cli usage at an entity-level easier. So I wrote `ovm` that wraps the insi client and works with its rate limiter
-logic to ensure that the js runtime doesn't do something stupid.
-
-Since JS is single-threaded (of course) the way I handled implementing the subscriptions object is thus:
-
-You request a subscriber accumulator in the runtime which subscribes to "real time" events on the vms behalf. The vm
-can then poll the accumulator for events as it sees fit.
-
-### APPEARANCE OF TEST OVERLAP
-
-I wanted to ensure the ovm was working as expected so there is technically "test overlap" betweeen `tests/` and `scripts/tests` but until `insic` is retired (if ever) both test suites need to be ran to ensure full-system integration coverage.
-The `tests/` exercise insi AND insic, while `scripts/tests` exercise insi AND the ovm. Obviously both test sets test the
-`client` library (insi client) that is the backbone of all abstractions around the http endpoints and handles all errors
-and headers in replies to ensure redirects are followed and rate limits are fully able to be respected (server sends back when they can make the next request in the header - client can give this info to caller - ovm and fwi work with this data to respect limits.)
 
 # DB Implementation
 
@@ -227,7 +199,6 @@ The project includes a comprehensive `Makefile` to simplify the build process. A
 -   `make all`: (Default) Compiles all development binaries:
     -   `insid`: The Insi server daemon.
     -   `insic`: The legacy command-line client.
-    -   `insio`: The OVM runner for executing JS scripts.
     -   `fwit-t`: The stress testing tool.
 -   `make prod`: Compiles all binaries optimized for production (smaller and stripped of debug information).
 -   `make test`: Runs the full Go test suite for all packages.
@@ -239,33 +210,9 @@ You can also build each component individually for both development and producti
 
 -   **Server**: `make server` or `make server-prod`
 -   **Client**: `make client` or `make client-prod`
--   **OVM Runner**: `make ovm` or `make ovm-prod`
 -   **Stress Test Tool**: `make fwit` or `make fwit-prod`
 
-When building the OVM runner (`insio`), the `Makefile` also automatically copies the `scripts/` directory into the `build/` directory, ensuring that the runner has access to all necessary test and utility scripts.
-
 # Testing
-
-
-## JS Automation
-
-Terminal One
-
-```
-make prod && cd build
-./insio server --host --config cluster.yaml
-```
-
-If its a new system give it ~10 seconds to let file system creation and installation to occur.
-
-Terminal Two
-
-```
-cd build
-./insio run  --root scripts/tests/root.js  
-```
-
-## Bash
 
 The bash tests don't require you to launch a cluster yourself, it handles everything
 as long as `make build` has been run, then you can simply:
