@@ -280,17 +280,31 @@ func handleSubscribe(c *client.Client, args []string) {
 	}()
 
 	cb := func(data any) {
-		fmt.Printf("Received event on topic '%s': %+v\n", color.CyanString(topic), data)
+		payload, ok := data.(models.EventPayload)
+		if !ok {
+			// Fallback for unexpected data types
+			fmt.Printf("Received event on topic '%s': %+v\n", color.CyanString(topic), data)
+			return
+		}
+		// The topic in the payload is the prefixed one, which we don't need to show the user.
+		// We already have the user-facing topic from the command argument.
+		fmt.Printf("Received event on topic '%s': Data=%+v\n", color.CyanString(topic), payload.Data)
 	}
 
 	logger.Info("Attempting to subscribe to events", "topic", color.CyanString(topic))
 	err := c.SubscribeToEvents(topic, ctx, cb)
 	if err != nil {
-		if err == context.Canceled {
+		if errors.Is(err, context.Canceled) {
 			logger.Info("Subscription cancelled gracefully.", "topic", color.CyanString(topic))
 		} else {
 			logger.Error("Subscription failed", "topic", topic, "error", err)
-			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			var subErr *client.ErrSubscriberLimitExceeded
+			if errors.As(err, &subErr) {
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error: subscriber limit exceeded:"), subErr.Message)
+			} else {
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
+			os.Exit(1)
 		}
 	}
 	logger.Info("Subscription process finished.", "topic", color.CyanString(topic))

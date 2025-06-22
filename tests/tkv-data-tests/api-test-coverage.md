@@ -34,6 +34,7 @@
 
 #### V. Data Scoping & Resource Inheritance
 -   [x] ✅ **Shared Data Scope (Read/Write):** An alias can read data created by its parent and write data readable by its parent and sibling aliases.
+-   [x] ✅ **Cross-Alias Data Access:** Multiple aliases of the same parent can read and write to each other's data within the shared scope. (e.g., alias1 sets a value, alias2 reads it, alias3 updates it, and the parent can see the final result).
 -   [x] ✅ **Shared Limits:** An alias should operate under the resource limits of its parent. (e.g., set a low disk limit on the parent, then have the alias attempt to upload a large blob and expect it to fail).
 
 #### VI. Cleanup on Primary Key Deletion (Tombstone)

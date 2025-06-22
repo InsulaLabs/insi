@@ -91,8 +91,9 @@ type Events interface {
 }
 
 type Blobs interface {
-	Get(ctx context.Context, key string) (string, error)
-	Set(ctx context.Context, key string, value string) error
+	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	Set(ctx context.Context, key, value string) error
+	SetReader(ctx context.Context, key string, r io.Reader) error
 	Delete(ctx context.Context, key string) error
 	IterateKeys(ctx context.Context, prefix string, offset, limit int) ([]string, error)
 
@@ -117,6 +118,7 @@ type Entity interface {
 	GetCacheStore() KV // Get the cache store for the entity
 	GetEvents() Events // Get the event pub/sub for the entity
 	GetBlobs() Blobs   // Get the blob store for the entity
+	GetFS() FS         // Get the virtual file system for the entity
 
 	GetAliasManager() Aliases
 
@@ -268,6 +270,10 @@ func (e *entityImpl) GetBlobs() Blobs {
 		insiClient: e.insiClient,
 		logger:     e.logger.WithGroup("blobs"),
 	}
+}
+
+func (e *entityImpl) GetFS() FS {
+	return NewVFS(e.GetValueStore(), e.GetBlobs(), e.logger)
 }
 
 func (e *entityImpl) GetAliasManager() Aliases {
@@ -424,25 +430,21 @@ func (e *eventsImpl) PopScope() {
 	}
 }
 
-func (e *blobsImpl) Get(ctx context.Context, key string) (string, error) {
-	return withRetries(ctx, e.logger, func() (string, error) {
-		iorc, err := e.insiClient.GetBlob(ctx, assembleKey(e.scope, key))
-		if err != nil {
-			return "", err
-		}
-		defer iorc.Close()
-
-		content, err := io.ReadAll(iorc)
-		if err != nil {
-			return "", err
-		}
-		return string(content), nil
+func (e *blobsImpl) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	return withRetries(ctx, e.logger, func() (io.ReadCloser, error) {
+		return e.insiClient.GetBlob(ctx, assembleKey(e.scope, key))
 	})
 }
 
 func (e *blobsImpl) Set(ctx context.Context, key string, value string) error {
 	return withRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.UploadBlob(ctx, assembleKey(e.scope, key), strings.NewReader(value), key)
+	})
+}
+
+func (e *blobsImpl) SetReader(ctx context.Context, key string, r io.Reader) error {
+	return withRetriesVoid(ctx, e.logger, func() error {
+		return e.insiClient.UploadBlob(ctx, assembleKey(e.scope, key), r, key)
 	})
 }
 

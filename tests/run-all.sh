@@ -39,6 +39,10 @@ function run_test_script() {
     stop_insid
 }
 
+echo "🚀 Running usage.sh..."
+run_test_script /tmp/insi-test-cluster/usage.sh
+echo "✅ Success: usage.sh completed."
+
 echo "🚀 Running insight.sh..."
 run_test_script /tmp/insi-test-cluster/insight.sh
 echo "✅ Success: insight.sh completed."
