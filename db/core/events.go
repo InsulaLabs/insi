@@ -40,7 +40,6 @@ type eventSession struct {
 type eventSubsystem struct {
 	service *Core
 	eventCh chan models.Event
-	// We don't need to manage subscribers directly here anymore,
 	// the Service will handle dispatch based on its eventSubscribers map.
 }
 
