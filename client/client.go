@@ -49,10 +49,6 @@
 	   For instance: In this system we have the potential for redirects when attempting to write data
 	    as only the leader can write to the cluster. This client will follow the redirects and count
 		them internally.
-
-    Where the client sites inside the system:
-		The entire JS runtime utlizes this client. It is the "backend" to a JS client. Its also
-		used in other tools to facilitate dialog with the system.
 */
 
 package client
