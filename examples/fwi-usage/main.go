@@ -264,6 +264,8 @@ func generateClusterConfig(homeDir string) (*config.Cluster, error) {
 		ClientSkipVerify: true,
 		DefaultLeader:    nodeID,
 		Nodes:            nodes,
+		TrustedProxies:   []string{"127.0.0.1"},
+		PermittedIPs:     []string{"127.0.0.1"},
 		TLS: config.TLS{
 			// The runtime will generate self-signed certs if these files don't exist.
 			Cert: filepath.Join(keyPath, "server.crt"),
@@ -355,7 +357,6 @@ func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 			SkipVerify:     true,
 			Logger:         logger.WithGroup("fwi-entities"),
 		},
-		rootClient,
 		logger,
 	)
 }

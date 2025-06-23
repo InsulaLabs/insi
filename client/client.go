@@ -212,15 +212,22 @@ type Client struct {
 func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
+	// Create copies of the URLs to prevent pointer sharing. This is crucial for
+	// leader stickiness, ensuring that a redirect for one derived client doesn't
+	// affect the base URLs of the original client or other derived clients.
+	publicURLCopy := *c.publicBaseURL
+	privateURLCopy := *c.privateBaseURL
+
 	return &Client{
-		publicBaseURL:          c.publicBaseURL,
-		privateBaseURL:         c.privateBaseURL,
+		publicBaseURL:          &publicURLCopy,
+		privateBaseURL:         &privateURLCopy,
 		httpClient:             c.httpClient,
 		objectClient:           c.objectClient,
 		apiKey:                 apiKey,
 		logger:                 c.logger.WithGroup(name),
 		redirectCoutner:        atomic.Uint64{},
-		endpoints:              c.endpoints, // Propagate endpoints
+		endpoints:              c.endpoints,
 		enableLeaderStickiness: c.enableLeaderStickiness,
 	}
 }

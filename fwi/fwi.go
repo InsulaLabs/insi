@@ -204,11 +204,12 @@ type aliasesImpl struct {
 }
 
 type fwiImpl struct {
-	insiCfg        *client.Config
-	rootInsiClient *client.Client
-	entities       map[string]Entity
-	mu             sync.RWMutex
-	logger         *slog.Logger
+	insiCfg               *client.Config
+	rootInsiClient        *client.Client
+	cleanDerivationClient *client.Client
+	entities              map[string]Entity
+	mu                    sync.RWMutex
+	logger                *slog.Logger
 }
 
 type entityRecord struct {
@@ -508,13 +509,25 @@ func (a *aliasesImpl) ListAliases(ctx context.Context) ([]string, error) {
 	})
 }
 
-func NewFWI(insiCfg *client.Config, rootInsiClient *client.Client, logger *slog.Logger) (FWI, error) {
+func NewFWI(insiCfg *client.Config, logger *slog.Logger) (FWI, error) {
 	l := logger.WithGroup("fwi")
+
+	rootInsiClient, err := client.NewClient(insiCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create root insi client: %w", err)
+	}
+
+	cleanDerivationClient, err := client.NewClient(insiCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clean derivation insi client: %w", err)
+	}
+
 	f := &fwiImpl{
-		rootInsiClient: rootInsiClient,
-		entities:       make(map[string]Entity),
-		logger:         l,
-		insiCfg:        insiCfg,
+		rootInsiClient:        rootInsiClient,
+		cleanDerivationClient: cleanDerivationClient,
+		entities:              make(map[string]Entity),
+		logger:                l,
+		insiCfg:               insiCfg,
 	}
 
 	if _, err := f.rootInsiClient.Ping(); err != nil {
@@ -610,7 +623,7 @@ func (f *fwiImpl) CreateEntity(
 		return nil, err
 	}
 
-	entityClient := f.rootInsiClient.DeriveWithApiKey(name, key.Key)
+	entityClient := f.cleanDerivationClient.DeriveWithApiKey(name, key.Key)
 
 	entity := &entityImpl{
 		name:       name,
@@ -693,7 +706,7 @@ func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 			continue
 		}
 
-		entityClient := f.rootInsiClient.DeriveWithApiKey(er.Name, er.Key)
+		entityClient := f.cleanDerivationClient.DeriveWithApiKey(er.Name, er.Key)
 		entity := &entityImpl{
 			name:       er.Name,
 			insiClient: entityClient,
@@ -860,7 +873,7 @@ func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, er
 		}
 
 		if er.Name == name {
-			entityClient := f.rootInsiClient.DeriveWithApiKey(er.Name, er.Key)
+			entityClient := f.cleanDerivationClient.DeriveWithApiKey(er.Name, er.Key)
 			entity := &entityImpl{
 				name:       er.Name,
 				insiClient: entityClient,
