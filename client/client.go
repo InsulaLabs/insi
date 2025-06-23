@@ -225,6 +225,10 @@ func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 	}
 }
 
+func (c *Client) DeriveWithEntity(entity *models.Entity) *Client {
+	return c.DeriveWithApiKey(entity.DataScopeUUID, entity.RootApiKey)
+}
+
 func (c *Client) GetHttpClient() *http.Client {
 	return c.httpClient
 }
