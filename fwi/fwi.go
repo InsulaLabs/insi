@@ -665,8 +665,15 @@ func (f *fwiImpl) CreateOrLoadEntity(
 		return nil, err
 	}
 
-	// Entity does not exist, so create it.
-	return f.CreateEntity(ctx, name, maxlimits)
+	entity, err = f.CreateEntity(ctx, name, maxlimits)
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			f.logger.Warn("Race condition on entity creation, reloading.", "name", name)
+			return f.GetEntity(ctx, name)
+		}
+		return nil, err
+	}
+	return entity, nil
 }
 
 func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
