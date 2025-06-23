@@ -1,7 +1,9 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -139,4 +141,27 @@ func (c *Core) GetOpsPerSecond() models.OpsPerSecondCounters {
 	c.metrics.lock.Lock()
 	defer c.metrics.lock.Unlock()
 	return c.metrics.CountersPerSecond
+}
+
+func (c *Core) opsPerSecondHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndSystemOp()
+
+	_, ok := c.ValidateToken(r, RootOnly())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
+		return
+	}
+
+	ops := c.GetOpsPerSecond()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(ops); err != nil {
+		c.logger.Error("failed to encode ops per second", "error", err)
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+	}
 }
