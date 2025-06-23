@@ -1611,7 +1611,7 @@ func (c *Client) setLeader(leaderURL *url.URL) error {
 // SetAlias creates a new alias for the API key currently in use.
 func (c *Client) SetAlias() (*models.SetAliasResponse, error) {
 	var response models.SetAliasResponse
-	err := c.doRequest(http.MethodGet, "db/api/v1/alias/set", nil, nil, &response)
+	err := c.doRequest(http.MethodPost, "db/api/v1/alias/set", nil, nil, &response)
 	if err != nil {
 		return nil, err
 	}
