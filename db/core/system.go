@@ -982,26 +982,3 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(limitsResponse)
 }
-
-func (c *Core) opsPerSecondHandler(w http.ResponseWriter, r *http.Request) {
-	c.IndSystemOp()
-
-	_, ok := c.ValidateToken(r, RootOnly())
-	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	if !c.fsm.IsLeader() {
-		c.redirectToLeader(w, r, r.URL.Path, rcPrivate)
-		return
-	}
-
-	ops := c.GetOpsPerSecond()
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(ops); err != nil {
-		c.logger.Error("failed to encode ops per second", "error", err)
-		http.Error(w, "failed to encode response", http.StatusInternalServerError)
-	}
-}

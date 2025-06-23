@@ -1221,7 +1221,7 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 				"status", resp.Status,
 				"error", err,
 			)
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("failed to dial websocket %s: %w", currentWsURL.String(), err)
 		}
 	}
 
