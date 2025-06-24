@@ -379,18 +379,20 @@ func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Hand
 	})
 }
 
-func (c *Core) ipFilterMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !c.isPermittedIP(r) {
-			c.logger.Warn("IP address not permitted", "remote_addr", r.RemoteAddr)
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+func (c *Core) getIpFilterMiddleware(isPrivate bool) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !c.isPermittedIP(r, isPrivate) {
+				c.logger.Warn("IP address not permitted", "remote_addr", r.RemoteAddr)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
-func (c *Core) isPermittedIP(r *http.Request) bool {
+func (c *Core) isPermittedIP(r *http.Request, isPrivate bool) bool {
 	// If no IPs are configured, deny all traffic for security.
 	if len(c.cfg.PermittedIPs) == 0 {
 		return false
@@ -399,6 +401,12 @@ func (c *Core) isPermittedIP(r *http.Request) bool {
 	remoteIP := c.getRemoteAddress(r)
 
 	for _, ip := range c.cfg.PermittedIPs {
+
+		// Making management routes not able to be accessed except for by specific IPS and
+		// not permitting EVERYONE on the private routes.
+		if ip == "*" && !isPrivate {
+			return true
+		}
 		if ip == remoteIP {
 			return true
 		}
@@ -407,49 +415,57 @@ func (c *Core) isPermittedIP(r *http.Request) bool {
 	return false
 }
 
+func (c *Core) ipPublicFilterMiddleware() func(next http.Handler) http.Handler {
+	return c.getIpFilterMiddleware(false)
+}
+
+func (c *Core) ipPrivateFilterMiddleware() func(next http.Handler) http.Handler {
+	return c.getIpFilterMiddleware(true)
+}
+
 // Run forever until the context is cancelled
 func (c *Core) Run() {
 
 	makePublicMux := func(binding string) *serverInstance {
 
 		// Values handlers
-		c.pubMux.Handle("/db/api/v1/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setHandler), "values")))
-		c.pubMux.Handle("/db/api/v1/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values")))
-		c.pubMux.Handle("/db/api/v1/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values")))
-		c.pubMux.Handle("/db/api/v1/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values")))
-		c.pubMux.Handle("/db/api/v1/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setNXHandler), "values")))
-		c.pubMux.Handle("/db/api/v1/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values")))
-		c.pubMux.Handle("/db/api/v1/bump", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.bumpHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/set", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.setHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/get", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.getHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/delete", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.deleteHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/iterate/prefix", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.iterateKeysByPrefixHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/setnx", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.setNXHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/cas", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/bump", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.bumpHandler), "values")))
 
-		c.pubMux.Handle("/db/api/v1/blob/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.uploadBlobHandler), "values")))
-		c.pubMux.Handle("/db/api/v1/blob/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getBlobHandler), "values")))
-		c.pubMux.Handle("/db/api/v1/blob/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteBlobHandler), "values")))
-		c.pubMux.Handle("/db/api/v1/blob/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateBlobKeysByPrefixHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/set", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.uploadBlobHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/get", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.getBlobHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/delete", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.deleteBlobHandler), "values")))
+		c.pubMux.Handle("/db/api/v1/blob/iterate/prefix", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.iterateBlobKeysByPrefixHandler), "values")))
 
 		// Cache handlers
-		c.pubMux.Handle("/db/api/v1/cache/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache")))
-		c.pubMux.Handle("/db/api/v1/cache/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache")))
-		c.pubMux.Handle("/db/api/v1/cache/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache")))
-		c.pubMux.Handle("/db/api/v1/cache/setnx", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache")))
-		c.pubMux.Handle("/db/api/v1/cache/cas", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache")))
-		c.pubMux.Handle("/db/api/v1/cache/iterate/prefix", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/set", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/get", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.getCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/delete", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.deleteCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/setnx", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.setCacheNXHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/cas", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.compareAndSwapCacheHandler), "cache")))
+		c.pubMux.Handle("/db/api/v1/cache/iterate/prefix", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.iterateCacheKeysByPrefixHandler), "cache")))
 
 		// Events handlers
-		c.pubMux.Handle("/db/api/v1/events", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events")))
-		c.pubMux.Handle("/db/api/v1/events/subscribe", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events")))
+		c.pubMux.Handle("/db/api/v1/events", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events")))
+		c.pubMux.Handle("/db/api/v1/events/subscribe", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events")))
 
-		c.pubMux.Handle("/db/api/v1/ping", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system")))
+		c.pubMux.Handle("/db/api/v1/ping", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system")))
 
 		// System handle anyone can call with an api key to get their current usage and limits
-		c.pubMux.Handle("/db/api/v1/limits", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system")))
+		c.pubMux.Handle("/db/api/v1/limits", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.callerLimitsHandler), "system")))
 
 		// Aliases are so a caller can "alias" their api key to a different encoded value that they can use across the public
 		// api. They don't need to "get" the api key as we will return it in the response.
-		c.pubMux.Handle("/db/api/v1/alias/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setAliasHandler), "system")))
+		c.pubMux.Handle("/db/api/v1/alias/set", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.setAliasHandler), "system")))
 		// Deletes the alias - this way we can disable api access without deleting the root api key (triggering data deletion)
-		c.pubMux.Handle("/db/api/v1/alias/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.deleteAliasHandler), "system")))
+		c.pubMux.Handle("/db/api/v1/alias/delete", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.deleteAliasHandler), "system")))
 		// List is so they can get a list of all the aliases they have set for the purpose of deleting or debugging
-		c.pubMux.Handle("/db/api/v1/alias/list", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.listAliasesHandler), "system")))
+		c.pubMux.Handle("/db/api/v1/alias/list", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.listAliasesHandler), "system")))
 
 		return &serverInstance{
 			binding: binding,
@@ -461,29 +477,29 @@ func (c *Core) Run() {
 	makePrivateMux := func(binding string) *serverInstance {
 
 		// System handlers
-		c.privMux.Handle("/db/api/v1/join", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system")))
+		c.privMux.Handle("/db/api/v1/join", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.joinHandler), "system")))
 
 		// Internal handlers
-		c.privMux.Handle("/db/internal/v1/blob/download", c.ipFilterMiddleware(http.HandlerFunc(c.internalDownloadBlobHandler)))
-		c.privMux.Handle("/db/internal/v1/subscriptions/request_slot", c.ipFilterMiddleware(http.HandlerFunc(c.requestSubscriptionSlotHandler)))
-		c.privMux.Handle("/db/internal/v1/subscriptions/release_slot", c.ipFilterMiddleware(http.HandlerFunc(c.releaseSubscriptionSlotHandler)))
+		c.privMux.Handle("/db/internal/v1/blob/download", c.ipPrivateFilterMiddleware()(http.HandlerFunc(c.internalDownloadBlobHandler)))
+		c.privMux.Handle("/db/internal/v1/subscriptions/request_slot", c.ipPrivateFilterMiddleware()(http.HandlerFunc(c.requestSubscriptionSlotHandler)))
+		c.privMux.Handle("/db/internal/v1/subscriptions/release_slot", c.ipPrivateFilterMiddleware()(http.HandlerFunc(c.releaseSubscriptionSlotHandler)))
 
 		// Only ROOT can set limits
-		c.privMux.Handle("/db/api/v1/admin/limits/set", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/limits/set", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.setLimitsHandler), "system")))
 
 		// Admin API Key Management handlers (system category for rate limiting)
-		c.privMux.Handle("/db/api/v1/admin/api/create", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system")))
-		c.privMux.Handle("/db/api/v1/admin/api/delete", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/api/create", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyCreateHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/api/delete", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.apiKeyDeleteHandler), "system")))
 
 		// Only ROOT can get limits for specific keys
-		c.privMux.Handle("/db/api/v1/admin/limits/get", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/limits/get", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.specificLimitsHandler), "system")))
 
 		// Insight handlers
-		c.privMux.Handle("/db/api/v1/admin/insight/entity", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getEntityHandler), "system")))
-		c.privMux.Handle("/db/api/v1/admin/insight/entities", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getEntitiesHandler), "system")))
-		c.privMux.Handle("/db/api/v1/admin/insight/entity_by_alias", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.getEntityByAliasHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/insight/entity", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.getEntityHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/insight/entities", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.getEntitiesHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/insight/entity_by_alias", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.getEntityByAliasHandler), "system")))
 
-		c.privMux.Handle("/db/api/v1/admin/metrics/ops", c.ipFilterMiddleware(c.rateLimitMiddleware(http.HandlerFunc(c.opsPerSecondHandler), "system")))
+		c.privMux.Handle("/db/api/v1/admin/metrics/ops", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.opsPerSecondHandler), "system")))
 
 		return &serverInstance{
 			binding: binding,

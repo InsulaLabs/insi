@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func withRetries[R any](ctx context.Context, logger *slog.Logger, fn func() (R, error)) (R, error) {
+func WithRetries[R any](ctx context.Context, logger *slog.Logger, fn func() (R, error)) (R, error) {
 	for {
 		result, err := fn()
 		if err == nil {
@@ -34,8 +34,8 @@ func withRetries[R any](ctx context.Context, logger *slog.Logger, fn func() (R, 
 	}
 }
 
-func withRetriesVoid(ctx context.Context, logger *slog.Logger, fn func() error) error {
-	_, err := withRetries(ctx, logger, func() (any, error) {
+func WithRetriesVoid(ctx context.Context, logger *slog.Logger, fn func() error) error {
+	_, err := WithRetries(ctx, logger, func() (any, error) {
 		return nil, fn()
 	})
 	return err

@@ -212,17 +212,28 @@ type Client struct {
 func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
+	// Create copies of the URLs to prevent pointer sharing. This is crucial for
+	// leader stickiness, ensuring that a redirect for one derived client doesn't
+	// affect the base URLs of the original client or other derived clients.
+	publicURLCopy := *c.publicBaseURL
+	privateURLCopy := *c.privateBaseURL
+
 	return &Client{
-		publicBaseURL:          c.publicBaseURL,
-		privateBaseURL:         c.privateBaseURL,
+		publicBaseURL:          &publicURLCopy,
+		privateBaseURL:         &privateURLCopy,
 		httpClient:             c.httpClient,
 		objectClient:           c.objectClient,
 		apiKey:                 apiKey,
 		logger:                 c.logger.WithGroup(name),
 		redirectCoutner:        atomic.Uint64{},
-		endpoints:              c.endpoints, // Propagate endpoints
+		endpoints:              c.endpoints,
 		enableLeaderStickiness: c.enableLeaderStickiness,
 	}
+}
+
+func (c *Client) DeriveWithEntity(entity *models.Entity) *Client {
+	return c.DeriveWithApiKey(entity.DataScopeUUID, entity.RootApiKey)
 }
 
 func (c *Client) GetHttpClient() *http.Client {
@@ -1607,7 +1618,7 @@ func (c *Client) setLeader(leaderURL *url.URL) error {
 // SetAlias creates a new alias for the API key currently in use.
 func (c *Client) SetAlias() (*models.SetAliasResponse, error) {
 	var response models.SetAliasResponse
-	err := c.doRequest(http.MethodPost, "db/api/v1/alias/set", nil, nil, &response)
+	err := c.doRequest(http.MethodGet, "db/api/v1/alias/set", nil, nil, &response)
 	if err != nil {
 		return nil, err
 	}

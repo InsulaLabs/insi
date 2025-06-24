@@ -57,7 +57,7 @@ test:
 	@$(GOPRIVATE_SETTING) go test -v ./... || (echo "$(YELLOW)⚠️  Tests failed$(RESET)" && exit 1)
 	@echo "$(GREEN)✅ All tests passed!$(RESET)"
 
-prod: server-prod client-prod fwit-prod
+prod: server-prod client-prod  fwit-prod
 	@echo "$(GREEN)✅ All PRODUCTION builds complete! Binaries available at ${BUILD_DIR}/$(RESET)"
 
 server-prod: ${BUILD_DIR}
