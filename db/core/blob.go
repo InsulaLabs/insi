@@ -120,8 +120,6 @@ func (x *blobService) start(ctx context.Context) error {
 	x.logger.Info("Starting blob service subsystems")
 	go x.startEventSystem(ctx)
 	go x.startTombstoneSystem(ctx)
-	// go x.startPeerSystem(ctx)
-	// go x.startIdentitySystem(ctx)
 	return nil
 }
 
@@ -170,7 +168,7 @@ func (x *blobService) startEventSystem(ctx context.Context) {
 		var downloadErr error
 	RetryLoop:
 		for i := 0; i < MaxBlobDownloadRetries; i++ {
-			downloadErr = x.downloadBlobFromPeer(ctx, blobMeta, false)
+			downloadErr = x.downloadBlobFromPeer(ctx, blobMeta)
 			if downloadErr == nil {
 				x.logger.Debug("Successfully downloaded blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID)
 				break // Success
@@ -251,7 +249,7 @@ func (x *blobService) startEventSystem(ctx context.Context) {
 	})
 }
 
-func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.Blob, isRetry bool) error {
+func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.Blob) error {
 
 	x.core.IndBlobsOp()
 
