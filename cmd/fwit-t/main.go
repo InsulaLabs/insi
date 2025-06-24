@@ -418,26 +418,14 @@ func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 	rootApiKeyHex := hex.EncodeToString(h.Sum(nil))
 	rootApiKey := base64.StdEncoding.EncodeToString([]byte(rootApiKeyHex))
 
-	// Create a root client to initialize FWI
-	rootClient, err := client.NewClient(&client.Config{
-		ConnectionType: client.ConnectionTypeRandom,
-		Endpoints:      endpoints,
-		SkipVerify:     true,
-		ApiKey:         rootApiKey,
-		Logger:         logger.WithGroup("fwi-root-client"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create initial root client: %w", err)
-	}
-
 	return fwi.NewFWI(
 		&client.Config{
 			ConnectionType: client.ConnectionTypeRandom,
 			Endpoints:      endpoints,
+			ApiKey:         rootApiKey,
 			SkipVerify:     true,
 			Logger:         logger.WithGroup("fwi-entities"),
 		},
-		rootClient,
 		logger,
 	)
 }
