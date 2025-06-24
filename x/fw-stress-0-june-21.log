@@ -1,0 +1,64 @@
+✅ Stress test finished.
+
+--- 📊 Stress Test Summary ---
+Entity          | Sets (avg)       | Gets (avg)       | Deletes (avg)    | Caches (avg)     | Publishes (avg)  | Bumps (avg)      | Blob Sets (avg)  | Blob Gets (avg)  | Blob Dels (avg)  | Failures  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+entity-2        | 270   (12.482399ms) | 248   (535.11µs) | 236   (12.374175ms) | 237   (12.576026ms) | 265   (13.03302ms) | 268   (12.79764ms) | 256   (22.932926ms) | 243   (559.045µs) | 240   (12.334671ms) | 0         
+entity-6        | 268   (12.846962ms) | 239   (555.287µs) | 248   (12.614659ms) | 252   (13.059867ms) | 274   (12.932106ms) | 262   (13.217145ms) | 249   (22.379848ms) | 255   (553.655µs) | 232   (12.966483ms) | 0         
+entity-3        | 239   (13.266041ms) | 238   (610.47µs) | 235   (13.08707ms) | 253   (12.340273ms) | 279   (13.03423ms) | 261   (13.052388ms) | 243   (22.711459ms) | 273   (631.494µs) | 237   (13.199681ms) | 0         
+entity-5        | 262   (12.933674ms) | 237   (628.251µs) | 232   (12.963536ms) | 262   (12.541877ms) | 270   (13.181436ms) | 255   (12.573829ms) | 254   (22.829873ms) | 277   (743.656µs) | 237   (13.131519ms) | 0         
+entity-8        | 248   (13.002295ms) | 234   (668.721µs) | 237   (13.53832ms) | 242   (12.564516ms) | 249   (12.901965ms) | 258   (13.096734ms) | 270   (22.863431ms) | 263   (619.593µs) | 223   (12.584978ms) | 1         
+entity-0        | 246   (12.601202ms) | 232   (499.438µs) | 239   (12.309189ms) | 249   (12.975069ms) | 266   (12.99999ms) | 266   (13.143237ms) | 231   (21.637881ms) | 227   (759.801µs) | 231   (13.602836ms) | 0         
+entity-1        | 243   (12.634594ms) | 237   (670.117µs) | 237   (12.97289ms) | 275   (12.89333ms) | 262   (13.38832ms) | 273   (12.676879ms) | 234   (22.571463ms) | 249   (682.449µs) | 224   (13.378722ms) | 0         
+entity-4        | 272   (12.985158ms) | 232   (589.791µs) | 230   (12.954195ms) | 260   (12.962067ms) | 251   (13.277908ms) | 274   (13.042639ms) | 238   (21.895905ms) | 235   (721.122µs) | 237   (13.199855ms) | 0         
+entity-9        | 278   (12.46368ms) | 244   (610.024µs) | 256   (12.704642ms) | 253   (12.836886ms) | 264   (13.025431ms) | 220   (12.945114ms) | 254   (22.015721ms) | 229   (845.145µs) | 252   (13.106622ms) | 0         
+entity-7        | 251   (12.913417ms) | 210   (633µs   ) | 227   (13.082219ms) | 234   (12.513356ms) | 259   (13.044058ms) | 260   (13.167829ms) | 272   (22.228759ms) | 245   (490.131µs) | 247   (13.077499ms) | 0         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+TOTALS          | 2577  (12.807623ms) | 2351  (599.483µs) | 2377  (12.855832ms) | 2517  (12.730525ms) | 2639  (13.08105ms) | 2597  (12.971409ms) | 2501  (22.416523ms) | 2496  (658.599µs) | 2360  (13.057608ms) | 1         
+
+--- 📡 Subscriber Summary ---
+📡 Subscriber 0 (listening to entity-4) received 249 events
+📡 Subscriber 1 (listening to entity-4) received 249 events
+📡 Subscriber 2 (listening to entity-1) received 260 events
+📡 Subscriber 3 (listening to entity-4) received 250 events
+📡 Subscriber 4 (listening to entity-8) received 249 events
+📡 Subscriber 5 (listening to entity-6) received 274 events
+📡 Subscriber 6 (listening to entity-1) received 260 events
+📡 Subscriber 7 (listening to entity-6) received 274 events
+📡 Total Events Received by All Subscribers: 2065
+
+--- ❗ Detailed Error Log ---
+[2025-06-21T22:11:36-04:00] Entity 'entity-8': http request for blob upload failed: Post "https://localhost:8280/db/api/v1/blob/set": context deadline exceeded
+
+🛑 Shutting down local cluster...
+{"time":"2025-06-21T22:11:36.792916937-04:00","level":"INFO","msg":"Runtime stop requested.","service":"insidRuntime"}
+{"time":"2025-06-21T22:11:36.792939646-04:00","level":"INFO","msg":"Shutdown signal received or all services completed. Exiting host mode.","service":"insidRuntime"}
+{"time":"2025-06-21T22:11:36.792952411-04:00","level":"INFO","msg":"Event processing loop stopping.","service":"insidRuntime","node":"node0"}
+{"time":"2025-06-21T22:11:36.793016407-04:00","level":"INFO","msg":"Waiting for server to stop - this may take a moment","service":"insidRuntime","node":"node0"}
+{"time":"2025-06-21T22:11:36.793056826-04:00","level":"INFO","msg":"Stopping blob service","service":"insidRuntime","node":"node0"}
+{"time":"2025-06-21T22:11:36.793075288-04:00","level":"INFO","msg":"Server stopped","service":"insidRuntime","node":"node0"}
+badger 2025/06/21 22:11:36 INFO: Lifetime L0 stalled for: 0s
+badger 2025/06/21 22:11:36 INFO: 
+Level 0 [ ]: NumTables: 01. Size: 58 KiB of 0 B. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 64 MiB
+Level 1 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 2 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 3 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 4 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 5 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 6 [B]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level Done
+{"time":"2025-06-21T22:11:36.794903066-04:00","level":"INFO","msg":"cache db closed","service":"insidRuntime","node":"node0"}
+badger 2025/06/21 22:11:36 INFO: Lifetime L0 stalled for: 0s
+badger 2025/06/21 22:11:36 INFO: 
+Level 0 [ ]: NumTables: 01. Size: 809 KiB of 0 B. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 16 MiB
+Level 1 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 2 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 3 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 4 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 5 [ ]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level 6 [B]: NumTables: 00. Size: 0 B of 10 MiB. Score: 0.00->0.00 StaleData: 0 B Target FileSize: 2.0 MiB
+Level Done
+{"time":"2025-06-21T22:11:36.819212221-04:00","level":"INFO","msg":"All node instances have completed.","service":"insidRuntime"}
+✅ Local cluster shut down successfully.
+🧹 Cleaning up temporary directory: /tmp/insi-stress-test-1234044707
+➜  build git:(fwi-vfs) 

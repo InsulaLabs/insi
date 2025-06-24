@@ -15,10 +15,11 @@ const (
 )
 
 type Node struct {
-	RaftBinding  string `yaml:"raftBinding"`
-	HttpBinding  string `yaml:"httpBinding"`
-	NodeSecret   string `yaml:"nodeSecret"`
-	ClientDomain string `yaml:"clientDomain,omitempty"`
+	RaftBinding    string `yaml:"raftBinding"`
+	PrivateBinding string `yaml:"privateBinding"`
+	PublicBinding  string `yaml:"publicBinding"`
+	NodeSecret     string `yaml:"nodeSecret"`
+	ClientDomain   string `yaml:"clientDomain,omitempty"`
 }
 
 type Cache struct {
@@ -38,18 +39,25 @@ type SessionsConfig struct {
 	MaxConnections           int `yaml:"maxConnections"`
 }
 
+type LoggingConfig struct {
+	Level string `yaml:"level"`
+}
+
 type Cluster struct {
 	InstanceSecret   string          `yaml:"instanceSecret"` // on config load no two nodes should have the same instance secret
 	DefaultLeader    string          `yaml:"defaultLeader"`  // if first time launch, non-leaders will auto-follow this leader - need to set this and
 	Nodes            map[string]Node `yaml:"nodes"`
 	TLS              TLS             `yaml:"tls"`
 	ClientSkipVerify bool            `yaml:"clientSkipVerify"` // Across all nodes, if true, then their "join" clients will permit skip of TLS verification
-	InsudbDir        string          `yaml:"insudbDir"`
+	TrustedProxies   []string        `yaml:"trustedProxies,omitempty"`
+	PermittedIPs     []string        `yaml:"permittedIPs,omitempty"`
+	InsidHome        string          `yaml:"insiHome"`
 	ServerMustUseTLS bool            `yaml:"serverMustUseTLS"` // Across all nodes, if true, then their "join" clients will permit skip of TLS verification
 	Cache            Cache           `yaml:"cache"`
 	RootPrefix       string          `yaml:"rootPrefix"`
 	RateLimiters     RateLimiters    `yaml:"rateLimiters"`
 	Sessions         SessionsConfig  `yaml:"sessions"`
+	Logging          LoggingConfig   `yaml:"logging"`
 }
 
 type RateLimiterConfig struct {
@@ -63,7 +71,6 @@ type RateLimiters struct {
 	System  RateLimiterConfig `yaml:"system"`
 	Default RateLimiterConfig `yaml:"default"`
 	Events  RateLimiterConfig `yaml:"events"`
-	Queues  RateLimiterConfig `yaml:"queues"`
 }
 
 var (
@@ -73,7 +80,7 @@ var (
 	ErrInstanceSecretMissing                   = errors.New("instanceSecret is missing in config")
 	ErrDefaultLeaderMissing                    = errors.New("defaultLeader is not set in config")
 	ErrNodesMissing                            = errors.New("no nodes defined in config")
-	ErrInsudbDirMissing                        = errors.New("insudbDir is missing in config and is required for lock files and node data")
+	ErrInsidHomeMissing                        = errors.New("insidHome is missing in config and is required for lock files and node data")
 	ErrTLSMissing                              = errors.New("TLS configuration incomplete: both cert and key must be provided if one is specified")
 	ErrDuplicateNodeSecret                     = errors.New("duplicate node secret in config - each node must contain a unique nodeSecret")
 	ErrCacheKeysMissing                        = errors.New("cache.keys is missing in config")
@@ -84,7 +91,6 @@ var (
 	ErrRateLimitersSystemLimitMissing          = errors.New("rateLimiters.system.limit is missing in config")
 	ErrRateLimitersDefaultLimitMissing         = errors.New("rateLimiters.default.limit is missing in config")
 	ErrRateLimitersEventsLimitMissing          = errors.New("rateLimiters.events.limit is missing in config")
-	ErrRateLimitersQueuesLimitMissing          = errors.New("rateLimiters.queues.limit is missing in config")
 	ErrSessionsEventChannelSizeMissing         = errors.New("sessions.eventChannelSize is missing or invalid in config")
 	ErrSessionsWebSocketReadBufferSizeMissing  = errors.New("sessions.webSocketReadBufferSize is missing or invalid in config")
 	ErrSessionsWebSocketWriteBufferSizeMissing = errors.New("sessions.webSocketWriteBufferSize is missing or invalid in config")
@@ -116,8 +122,8 @@ func LoadConfig(configFile string) (*Cluster, error) {
 
 	seenNodeSecrets := make(map[string]bool)
 	for _, node := range cfg.Nodes {
-		if node.RaftBinding == "" || node.HttpBinding == "" {
-			return nil, errors.New("raftBinding and httpBinding are required for each node")
+		if node.RaftBinding == "" || node.PrivateBinding == "" || node.PublicBinding == "" {
+			return nil, errors.New("raftBinding, privateBinding and publicBinding are required for each node")
 		}
 		if seenNodeSecrets[node.NodeSecret] {
 			return nil, ErrDuplicateNodeSecret
@@ -125,8 +131,8 @@ func LoadConfig(configFile string) (*Cluster, error) {
 		seenNodeSecrets[node.NodeSecret] = true
 	}
 
-	if cfg.InsudbDir == "" {
-		return nil, ErrInsudbDirMissing
+	if cfg.InsidHome == "" {
+		return nil, ErrInsidHomeMissing
 	}
 
 	if cfg.ServerMustUseTLS && (cfg.TLS.Cert == "" || cfg.TLS.Key == "") {
@@ -165,9 +171,6 @@ func LoadConfig(configFile string) (*Cluster, error) {
 	if cfg.RateLimiters.Events.Limit == 0 {
 		return nil, ErrRateLimitersEventsLimitMissing
 	}
-	if cfg.RateLimiters.Queues.Limit == 0 {
-		return nil, ErrRateLimitersQueuesLimitMissing
-	}
 	if cfg.Sessions.EventChannelSize <= 0 {
 		return nil, ErrSessionsEventChannelSizeMissing
 	}
@@ -190,11 +193,13 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 		DefaultLeader:    "node0",
 		Nodes:            make(map[string]Node),
 		ClientSkipVerify: false,
-		InsudbDir:        "data/insudb", // Relative path for easier default setup
+		TrustedProxies:   []string{"127.0.0.1", "::1"},
+		PermittedIPs:     []string{},  // By default, no IPs are restricted. If list is empty, all are rejected
+		InsidHome:        "data/insi", // Relative path for easier default setup
 		ServerMustUseTLS: true,
 		TLS: TLS{
-			Cert: "config/tls/server.crt", // Placeholder - user needs to generate these
-			Key:  "config/tls/server.key", // Placeholder - user needs to generate these
+			Cert: "keys/server.crt", // Placeholder - user needs point these at their ~/.config/insi/keys/server.crt
+			Key:  "keys/server.key", // Placeholder - user needs point these at their ~/.config/insi/keys/server.key
 		},
 		Cache: Cache{
 			StandardTTL: 5 * time.Minute,
@@ -207,7 +212,6 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 			System:  RateLimiterConfig{Limit: 50.0, Burst: 100},
 			Default: RateLimiterConfig{Limit: 100.0, Burst: 200},
 			Events:  RateLimiterConfig{Limit: 200.0, Burst: 400},
-			Queues:  RateLimiterConfig{Limit: 1000.0, Burst: 500},
 		},
 		Sessions: SessionsConfig{
 			EventChannelSize:         1000,
@@ -218,23 +222,26 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 	}
 
 	cfg.Nodes["node0"] = Node{
-		RaftBinding:  "127.0.0.1:7000",
-		HttpBinding:  "127.0.0.1:7001",
-		NodeSecret:   "node0_secret_please_change_!!!",
-		ClientDomain: "localhost",
+		RaftBinding:    "127.0.0.1:7000",
+		PrivateBinding: "127.0.0.1:8080",
+		PublicBinding:  "127.0.0.1:7001",
+		NodeSecret:     "node0_secret_please_change_!!!",
+		ClientDomain:   "localhost",
 	}
 	// Add more nodes if desired for a default multi-node setup example
 	cfg.Nodes["node1"] = Node{
-		RaftBinding:  "127.0.0.1:7002",
-		HttpBinding:  "127.0.0.1:7003",
-		NodeSecret:   "node1_secret_please_change_!!!",
-		ClientDomain: "localhost",
+		RaftBinding:    "127.0.0.1:7002",
+		PrivateBinding: "127.0.0.1:8081",
+		PublicBinding:  "127.0.0.1:7003",
+		NodeSecret:     "node1_secret_please_change_!!!",
+		ClientDomain:   "localhost",
 	}
 	cfg.Nodes["node2"] = Node{
-		RaftBinding:  "127.0.0.1:7004",
-		HttpBinding:  "127.0.0.1:7005",
-		NodeSecret:   "node2_secret_please_change_!!!",
-		ClientDomain: "localhost",
+		RaftBinding:    "127.0.0.1:7004",
+		PrivateBinding: "127.0.0.1:8082",
+		PublicBinding:  "127.0.0.1:7005",
+		NodeSecret:     "node2_secret_please_change_!!!",
+		ClientDomain:   "localhost",
 	}
 
 	// The configFile argument is not used by this function to generate the content,

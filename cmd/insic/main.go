@@ -9,16 +9,17 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/models"
+	"github.com/InsulaLabs/insi/db/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
@@ -27,25 +28,24 @@ var (
 	logger     *slog.Logger
 	configPath string
 	clusterCfg *config.Cluster
-	targetNode string // Added for --target flag
-	useRootKey bool   // Added for --root flag
+	targetNode string // --target flag
+	useRootKey bool   // --root flag
 )
 
 func init() {
 	// Initialize logger
 	logOpts := &slog.HandlerOptions{
-		Level: slog.LevelInfo, // Default level, can be configured further
+		Level: slog.LevelInfo,
 	}
 	handler := slog.NewTextHandler(os.Stderr, logOpts)
 	logger = slog.New(handler)
 
 	flag.StringVar(&configPath, "config", "cluster.yaml", "Path to the cluster configuration file")
-	flag.StringVar(&targetNode, "target", "", "Target node ID (e.g., node0, node1). Defaults to DefaultLeader in config.") // Added target flag
+	flag.StringVar(&targetNode, "target", "", "Target node ID (e.g., node0, node1). Defaults to DefaultLeader in config.")
 	flag.BoolVar(&useRootKey, "root", false, "Use the root key for the cluster. Defaults to false.")
 }
 
 func loadConfig(path string) (*config.Cluster, error) {
-	// logger.Info("Loading configuration", "path", path) // Reduced verbosity
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
@@ -56,7 +56,6 @@ func loadConfig(path string) (*config.Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config data from %s: %w", path, err)
 	}
-	// logger.Info("Configuration loaded successfully") // Reduced verbosity
 	return &cfg, nil
 }
 
@@ -67,7 +66,7 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 			return nil, fmt.Errorf("targetNodeID is empty and no DefaultLeader is set in config")
 		}
 		nodeToConnect = cfg.DefaultLeader
-		logger.Info("No target node specified, using DefaultLeader", "node_id", color.CyanString(nodeToConnect))
+		logger.Debug("No target node specified, using DefaultLeader", "node_id", color.CyanString(nodeToConnect))
 	}
 
 	nodeDetails, ok := cfg.Nodes[nodeToConnect]
@@ -76,8 +75,6 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 	}
 
 	clientLogger := logger.WithGroup("client")
-
-	// clientLogger.Info("Client is using instanceSecret for token generation", "secret_value", cfg.InstanceSecret) // Too verbose for default
 
 	var apiKey string
 
@@ -101,8 +98,9 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 		ConnectionType: client.ConnectionTypeDirect,
 		Endpoints: []client.Endpoint{
 			{
-				HostPort:     nodeDetails.HttpBinding,
-				ClientDomain: nodeDetails.ClientDomain,
+				PublicBinding:  nodeDetails.PublicBinding,
+				PrivateBinding: nodeDetails.PrivateBinding,
+				ClientDomain:   nodeDetails.ClientDomain,
 			},
 		},
 		ApiKey:     apiKey,
@@ -110,14 +108,13 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 		Logger:     clientLogger,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.HttpBinding, err)
+		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.PublicBinding, err)
 	}
-	// logger.Info("Client created successfully", "target_node", nodeToConnect, "hostport", nodeDetails.HttpBinding) // Reduced verbosity
 	return c, nil
 }
 
 func main() {
-	flag.Parse() // Parse command-line flags first
+	flag.Parse()
 
 	var err error
 	clusterCfg, err = loadConfig(configPath)
@@ -138,7 +135,7 @@ func main() {
 	// Default client (usually to DefaultLeader)
 	// For 'join', a specific client will be created.
 	var cli *client.Client
-	if command != "join" { // 'join' command handles its client creation specifically
+	if command != "join" {
 		cli, err = getClient(clusterCfg, targetNode)
 		if err != nil {
 			logger.Error("Failed to initialize default API client", "error", err)
@@ -151,6 +148,12 @@ func main() {
 		handleGet(cli, cmdArgs)
 	case "set":
 		handleSet(cli, cmdArgs)
+	case "setnx":
+		handleSetNX(cli, cmdArgs)
+	case "cas":
+		handleCAS(cli, cmdArgs)
+	case "bump":
+		handleBump(cli, cmdArgs)
 	case "delete":
 		handleDelete(cli, cmdArgs)
 	case "iterate":
@@ -165,16 +168,14 @@ func main() {
 		handlePublish(cli, cmdArgs)
 	case "subscribe":
 		handleSubscribe(cli, cmdArgs)
-	case "batchset":
-		handleBatchSet(cli, cmdArgs)
-	case "batchdelete":
-		handleBatchDelete(cli, cmdArgs)
-	case "atomic":
-		handleAtomic(cli, cmdArgs)
-	case "queue":
-		handleQueue(cli, cmdArgs)
 	case "api":
 		handleApi(cli, cmdArgs)
+	case "blob":
+		handleBlob(cli, cmdArgs)
+	case "alias":
+		handleAlias(cli, cmdArgs)
+	case "admin":
+		handleAdmin(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -185,39 +186,51 @@ func main() {
 func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage: insic [flags] <command> [args...]\n")
 	fmt.Fprintf(os.Stderr, "Flags:\n")
-	flag.PrintDefaults() // Uses default formatting, consider customizing if needed
+	flag.PrintDefaults()
 	fmt.Fprintf(os.Stderr, "\nCommands:\n")
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("setnx"), color.CyanString("<key>"), color.CyanString("<value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cas"), color.CyanString("<key>"), color.CyanString("<old_value>"), color.CyanString("<new_value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("bump"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<value>"), color.CyanString("<ttl (e.g., 60s, 5m, 1h)>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cache"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("cache"), color.CyanString("delete"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("cache"), color.CyanString("setnx"), color.CyanString("<key>"), color.CyanString("<value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("cas"), color.CyanString("<key>"), color.CyanString("<old_value>"), color.CyanString("<new_value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("join"), color.CyanString("<leaderNodeID>"), color.CyanString("<followerNodeID>"))
 	fmt.Fprintf(os.Stderr, "  %s\n", color.GreenString("ping"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("publish"), color.CyanString("<topic>"), color.CyanString("<data>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("subscribe"), color.CyanString("<topic>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<filepath>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("object"), color.CyanString("get"), color.CyanString("<key>"), color.CyanString("<output_filepath>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("object"), color.CyanString("delete"), color.CyanString("<key>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("object"), color.CyanString("list"), color.CyanString("[prefix]"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchset"), color.CyanString("<filepath.json>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchdelete"), color.CyanString("<filepath.json>"))
-	// Atomic Commands
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("atomic"), color.CyanString("new"), color.CyanString("<key>"), color.CyanString("[overwrite (true|false)]"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("atomic"), color.CyanString("get"), color.CyanString("<key>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("atomic"), color.CyanString("add"), color.CyanString("<key>"), color.CyanString("<delta>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("atomic"), color.CyanString("delete"), color.CyanString("<key>"))
-	// Queue Commands
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("new"), color.CyanString("<key>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("queue"), color.CyanString("push"), color.CyanString("<key>"), color.CyanString("<value>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("pop"), color.CyanString("<key>"))
-	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("queue"), color.CyanString("delete"), color.CyanString("<key>"))
+
 	// API Key Commands (Note: These typically require the --root flag)
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<key_name>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.CyanString("[key_value]"), color.YellowString("Get limits. If key provided, gets for that key (--root required)."))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N"), color.YellowString("--root flag usually required"))
+
+	// Alias commands
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("alias"), color.CyanString("add"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("alias"), color.CyanString("delete"), color.CyanString("<alias_key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("alias"), color.CyanString("list"))
+
+	// Blob Commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("blob"), color.CyanString("upload"), color.CyanString("<key>"), color.CyanString("<filepath>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("blob"), color.CyanString("download"), color.CyanString("<key>"), color.CyanString("<output_path>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("blob"), color.CyanString("delete"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("blob"), color.CyanString("iterate"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+
+	// Admin commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("admin"), color.CyanString("ops"), color.YellowString("--root flag required. Get node ops/sec."))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("admin"), color.CyanString("insight"), color.CyanString("entity"), color.CyanString("<root_api_key>"), color.YellowString("--root flag required."))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("admin"), color.CyanString("insight"), color.CyanString("entities"), color.CyanString("[offset]"), color.CyanString("[limit]"), color.YellowString("--root flag required."))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("admin"), color.CyanString("insight"), color.CyanString("entity-by-alias"), color.CyanString("<alias>"), color.YellowString("--root flag required."))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -227,14 +240,22 @@ func handlePublish(c *client.Client, args []string) {
 		os.Exit(1)
 	}
 	topic := args[0]
-	data := args[1]
-	err := c.PublishEvent(topic, data)
+	dataStr := args[1]
+
+	var dataToPublish any
+	var jsonData any
+	if err := json.Unmarshal([]byte(dataStr), &jsonData); err == nil {
+		dataToPublish = jsonData
+	} else {
+		dataToPublish = dataStr
+	}
+
+	err := c.PublishEvent(topic, dataToPublish)
 	if err != nil {
 		logger.Error("Publish failed", "topic", topic, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	// logger.Info("Publish successful", "topic", topic) // Redundant with "OK"
 	color.HiGreen("OK")
 }
 
@@ -249,30 +270,41 @@ func handleSubscribe(c *client.Client, args []string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
 		sig := <-sigChan
 		logger.Info("Received signal, requesting WebSocket closure...", "signal", sig.String())
-		cancel() // Cancel the context to signal SubscribeToEvents to close
+		cancel()
 	}()
 
 	cb := func(data any) {
-		fmt.Printf("Received event on topic '%s': %+v\n", color.CyanString(topic), data)
+		payload, ok := data.(models.EventPayload)
+		if !ok {
+			// Fallback for unexpected data types
+			fmt.Printf("Received event on topic '%s': %+v\n", color.CyanString(topic), data)
+			return
+		}
+		// The topic in the payload is the prefixed one, which we don't need to show the user.
+		// We already have the user-facing topic from the command argument.
+		fmt.Printf("Received event on topic '%s': Data=%+v\n", color.CyanString(topic), payload.Data)
 	}
 
 	logger.Info("Attempting to subscribe to events", "topic", color.CyanString(topic))
 	err := c.SubscribeToEvents(topic, ctx, cb)
 	if err != nil {
-		// context.Canceled is an expected error on graceful shutdown, others are not.
-		if err == context.Canceled {
+		if errors.Is(err, context.Canceled) {
 			logger.Info("Subscription cancelled gracefully.", "topic", color.CyanString(topic))
 		} else {
 			logger.Error("Subscription failed", "topic", topic, "error", err)
-			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-			// os.Exit(1) // Exiting here might be too abrupt if there's a non-critical error during teardown.
+			var subErr *client.ErrSubscriberLimitExceeded
+			if errors.As(err, &subErr) {
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error: subscriber limit exceeded:"), subErr.Message)
+			} else {
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
+			os.Exit(1)
 		}
 	}
 	logger.Info("Subscription process finished.", "topic", color.CyanString(topic))
@@ -289,8 +321,8 @@ func handleGet(c *client.Client, args []string) {
 	value, err := c.Get(key)
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
-			// logger.Error("Get failed: Key not found", "key", key) // Already handled by specific message
 			fmt.Fprintf(os.Stderr, "%s Key '%s' not found.\n", color.RedString("Error:"), color.CyanString(key))
+			os.Exit(1)
 		} else {
 			logger.Error("Get failed", "key", key, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
@@ -313,7 +345,74 @@ func handleSet(c *client.Client, args []string) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	// logger.Info("Set successful", "key", key) // Redundant
+	color.HiGreen("OK")
+}
+
+func handleSetNX(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("setnx: requires <key> <value>")
+		printUsage()
+		os.Exit(1)
+	}
+	key, value := args[0], args[1]
+	err := c.SetNX(key, value)
+	if err != nil {
+		if errors.Is(err, client.ErrConflict) {
+			fmt.Fprintf(os.Stderr, "%s Key '%s' already exists.\n", color.RedString("Conflict:"), color.CyanString(key))
+		} else {
+			logger.Error("SetNX failed", "key", key, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleCAS(c *client.Client, args []string) {
+	if len(args) != 3 {
+		logger.Error("cas: requires <key> <old_value> <new_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	key, oldValue, newValue := args[0], args[1], args[2]
+	err := c.CompareAndSwap(key, oldValue, newValue)
+	if err != nil {
+		if errors.Is(err, client.ErrConflict) {
+			fmt.Fprintf(
+				os.Stderr,
+				"%s Compare-and-swap failed for key '%s'. The current value does not match the expected old value.\n",
+				color.RedString("Conflict:"),
+				color.CyanString(key),
+			)
+		} else {
+			logger.Error("CAS failed", "key", key, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleBump(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("bump: requires <key> <value>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	valueStr := args[1]
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		logger.Error("bump: value must be an integer", "error", err)
+		fmt.Fprintf(os.Stderr, "%s Value must be an integer: %v\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	err = c.Bump(key, value)
+	if err != nil {
+		logger.Error("Bump failed", "key", key, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
 	color.HiGreen("OK")
 }
 
@@ -326,14 +425,10 @@ func handleDelete(c *client.Client, args []string) {
 	key := args[0]
 	err := c.Delete(key)
 	if err != nil {
-		// The client.Delete method already returns nil if the key is not found (matching server behavior).
-		// So, specific client.ErrKeyNotFound check might not be triggered here unless client.Delete changes.
-		// However, maintaining consistency in error logging if other types of errors occur.
 		logger.Error("Delete failed", "key", key, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	// logger.Info("Delete successful", "key", key) // Redundant
 	color.HiGreen("OK")
 }
 
@@ -345,7 +440,7 @@ func handleIterate(c *client.Client, args []string) {
 	}
 	iterType := args[0]
 	value := args[1]
-	offset, limit := 0, 100 // Defaults
+	offset, limit := 0, 100
 
 	var err error
 	if len(args) > 2 {
@@ -386,7 +481,6 @@ func handleIterate(c *client.Client, args []string) {
 		}
 		os.Exit(1)
 	}
-	// logger.Info("Iterate successful", "type", iterType, "value", value, "offset", offset, "limit", limit, "count", len(results))
 	for _, item := range results {
 		fmt.Println(item)
 	}
@@ -403,25 +497,18 @@ func handleCache(c *client.Client, args []string) {
 
 	switch subCommand {
 	case "set":
-		if len(subArgs) != 3 {
-			logger.Error("cache set: requires <key> <value> <ttl>")
+		if len(subArgs) != 2 {
+			logger.Error("cache set: requires <key> <value>")
 			printUsage()
 			os.Exit(1)
 		}
-		key, valStr, ttlStr := subArgs[0], subArgs[1], subArgs[2]
-		ttl, err := time.ParseDuration(ttlStr)
-		if err != nil {
-			logger.Error("cache set: invalid TTL format", "ttl_str", ttlStr, "error", err)
-			fmt.Fprintf(os.Stderr, "%s Invalid TTL format. Use format like '60s', '5m', '1h'.\n", color.RedString("Error:"))
-			os.Exit(1)
-		}
-		err = c.SetCache(key, valStr, ttl)
+		key, valStr := subArgs[0], subArgs[1]
+		err := c.SetCache(key, valStr)
 		if err != nil {
 			logger.Error("Cache set failed", "key", key, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 			os.Exit(1)
 		}
-		// logger.Info("Cache set successful", "key", key, "ttl", ttl) // Redundant
 		color.HiGreen("OK")
 	case "get":
 		if len(subArgs) != 1 {
@@ -433,11 +520,15 @@ func handleCache(c *client.Client, args []string) {
 		value, err := c.GetCache(key)
 		if err != nil {
 			if errors.Is(err, client.ErrKeyNotFound) {
-				// logger.Error("Cache get failed: Key not found", "key", key) // Already handled
-				fmt.Fprintf(os.Stderr, "%s Key '%s' not found in cache.\n", color.RedString("Error:"), color.CyanString(key))
+				fmt.Fprintf(
+					os.Stderr,
+					"%s Key '%s' not found in cache.\n",
+					color.RedString("Error:"),
+					color.CyanString(key),
+				)
 			} else {
 				logger.Error("Cache get failed", "key", key, "error", err)
-				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err) // May include "not found" type errors from client
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 			}
 			os.Exit(1)
 		}
@@ -448,25 +539,122 @@ func handleCache(c *client.Client, args []string) {
 			printUsage()
 			os.Exit(1)
 		}
-		key := subArgs[0] // redefine key for this scope
+		key := subArgs[0]
 		err := c.DeleteCache(key)
 		if err != nil {
 			if errors.Is(err, client.ErrKeyNotFound) {
-				logger.Info("Cache delete: Key not found, no action taken.", "key", key) // Info level as it's not strictly an error
-				fmt.Fprintf(os.Stderr, "%s Key '%s' not found in cache. Nothing to delete.\n", color.YellowString("Warning:"), color.CyanString(key))
-				// os.Exit(0) // Or exit successfully
+				logger.Info("Cache delete: Key not found, no action taken.", "key", key)
+				fmt.Fprintf(
+					os.Stderr,
+					"%s Key '%s' not found in cache. Nothing to delete.\n",
+					color.YellowString("Warning:"),
+					color.CyanString(key),
+				)
 			} else {
 				logger.Error("Cache delete failed", "key", key, "error", err)
 				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 			}
-			os.Exit(1) // Exit with error unless it was ErrKeyNotFound and we decided to exit 0 above
+			os.Exit(1)
 		}
-		// logger.Info("Cache delete successful", "key", key) // Redundant
 		color.HiGreen("OK")
+	case "setnx":
+		if len(subArgs) != 2 {
+			logger.Error("cache setnx: requires <key> <value>")
+			printUsage()
+			os.Exit(1)
+		}
+		key, value := subArgs[0], subArgs[1]
+		err := c.SetCacheNX(key, value)
+		if err != nil {
+			if errors.Is(err, client.ErrConflict) {
+				fmt.Fprintf(os.Stderr, "%s Key '%s' already exists in cache.\n", color.RedString("Conflict:"), color.CyanString(key))
+			} else {
+				logger.Error("Cache SetNX failed", "key", key, "error", err)
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
+			os.Exit(1)
+		}
+		color.HiGreen("OK")
+	case "cas":
+		if len(subArgs) != 3 {
+			logger.Error("cache cas: requires <key> <old_value> <new_value>")
+			printUsage()
+			os.Exit(1)
+		}
+		key, oldValue, newValue := subArgs[0], subArgs[1], subArgs[2]
+		err := c.CompareAndSwapCache(key, oldValue, newValue)
+		if err != nil {
+			if errors.Is(err, client.ErrConflict) {
+				fmt.Fprintf(
+					os.Stderr,
+					"%s Cache compare-and-swap failed for key '%s'.\n",
+					color.RedString("Precondition Failed:"),
+					color.CyanString(key),
+				)
+			} else {
+				logger.Error("Cache CAS failed", "key", key, "error", err)
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
+			os.Exit(1)
+		}
+		color.HiGreen("OK")
+	case "iterate":
+		handleCacheIterate(c, subArgs)
 	default:
 		logger.Error("cache: unknown sub-command", "sub_command", subCommand)
 		printUsage()
 		os.Exit(1)
+	}
+}
+
+func handleCacheIterate(c *client.Client, args []string) {
+	if len(args) < 2 {
+		logger.Error("cache iterate: requires <type (prefix)> <value> [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	iterType := args[0]
+	value := args[1]
+	offset, limit := 0, 100
+
+	var err error
+	if len(args) > 2 {
+		offset, err = strconv.Atoi(args[2])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[2], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 3 {
+		limit, err = strconv.Atoi(args[3])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[3], err)
+			os.Exit(1)
+		}
+	}
+
+	var results []string
+	switch iterType {
+	case "prefix":
+		results, err = c.IterateCacheByPrefix(value, offset, limit)
+	default:
+		logger.Error("cache iterate: unknown type", "type", iterType)
+		printUsage()
+		os.Exit(1)
+		return
+	}
+
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) {
+			color.HiRed("No keys found in cache.")
+		} else {
+			logger.Error("Cache iterate failed", "type", iterType, "value", value, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
+	for _, item := range results {
+		fmt.Println(item)
 	}
 }
 
@@ -491,21 +679,37 @@ func handleJoin(args []string) {
 
 	followerDetails, ok := clusterCfg.Nodes[followerNodeID]
 	if !ok {
-		logger.Error("Follower node ID not found in configuration", "follower_node_id", followerNodeID)
-		fmt.Fprintf(os.Stderr, "%s Follower node ID '%s' not found in configuration.\n", color.RedString("Error:"), color.CyanString(followerNodeID))
+		logger.Error(
+			"Follower node ID not found in configuration",
+			"follower_node_id", followerNodeID,
+		)
+		fmt.Fprintf(
+			os.Stderr,
+			"%s Follower node ID '%s' not found in configuration.\n",
+			color.RedString("Error:"),
+			color.CyanString(followerNodeID),
+		)
 		os.Exit(1)
 	}
 
-	// The Join method in the client expects the Raft address of the follower
-	logger.Info("Attempting to join follower", "follower_id", color.CyanString(followerNodeID), "follower_raft_addr", followerDetails.RaftBinding, "via_leader", color.CyanString(leaderNodeID))
+	logger.Info(
+		"Attempting to join follower",
+		"follower_id", color.CyanString(followerNodeID),
+		"follower_raft_addr", followerDetails.RaftBinding,
+		"via_leader", color.CyanString(leaderNodeID),
+	)
 
-	err = leaderClient.Join(followerNodeID, followerDetails.RaftBinding)
+	err = leaderClient.Join(followerNodeID, followerDetails.PrivateBinding)
 	if err != nil {
 		logger.Error("Join failed", "leader_node", leaderNodeID, "follower_node", followerNodeID, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	logger.Info("Join successful", "leader_node", color.CyanString(leaderNodeID), "follower_node", color.CyanString(followerNodeID))
+	logger.Info(
+		"Join successful",
+		"leader_node", color.CyanString(leaderNodeID),
+		"follower_node", color.CyanString(followerNodeID),
+	)
 	color.HiGreen("OK")
 }
 
@@ -521,293 +725,10 @@ func handlePing(c *client.Client, args []string) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		os.Exit(1)
 	}
-	// logger.Info("Ping successful") // Redundant with response
-	// Pretty print the map
 	fmt.Println("Ping Response:")
 	for k, v := range resp {
 		fmt.Printf("  %s: %s\n", color.CyanString(k), v)
 	}
-}
-
-func handleBatchSet(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("batchset: requires <filepath.json>")
-		printUsage()
-		os.Exit(1)
-	}
-	filePath := args[0]
-	fileData, err := os.ReadFile(filePath)
-	if err != nil {
-		logger.Error("batchset: failed to read file", "filepath", filePath, "error", err)
-		fmt.Fprintf(os.Stderr, "%s reading file %s: %v\n", color.RedString("Error"), color.CyanString(filePath), err)
-		os.Exit(1)
-	}
-
-	var items []models.KVPayload
-	if err := json.Unmarshal(fileData, &items); err != nil {
-		logger.Error("batchset: failed to unmarshal JSON from file", "filepath", filePath, "error", err)
-		fmt.Fprintf(os.Stderr, "%s unmarshaling JSON from %s: %v\n\t\tExpected format: [ { \"key\": \"k1\", \"value\": \"v1\" }, { \"key\": \"k2\", \"value\": \"v2\" } ]\n",
-			color.RedString("Error"), color.CyanString(filePath), err)
-		os.Exit(1)
-	}
-
-	err = c.BatchSet(items)
-	if err != nil {
-		logger.Error("Batch set failed", "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	// logger.Info("Batch set successful") // Redundant
-	color.HiGreen("OK")
-}
-
-func handleBatchDelete(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("batchdelete: requires <filepath.json>")
-		printUsage()
-		os.Exit(1)
-	}
-	filePath := args[0]
-	fileData, err := os.ReadFile(filePath)
-	if err != nil {
-		logger.Error("batchdelete: failed to read file", "filepath", filePath, "error", err)
-		fmt.Fprintf(os.Stderr, "%s reading file %s: %v\n", color.RedString("Error"), color.CyanString(filePath), err)
-		os.Exit(1)
-	}
-
-	var keys []string
-	if err := json.Unmarshal(fileData, &keys); err != nil {
-		logger.Error("batchdelete: failed to unmarshal JSON from file", "filepath", filePath, "error", err)
-		fmt.Fprintf(os.Stderr, "%s unmarshaling JSON from %s: %v\n\t\tExpected format: [ \"key1\", \"key2\", \"key3\" ]\n",
-			color.RedString("Error"), color.CyanString(filePath), err)
-		os.Exit(1)
-	}
-
-	if len(keys) == 0 {
-		logger.Error("batchdelete: no keys found in JSON file", "filepath", filePath)
-		fmt.Fprintf(os.Stderr, "%s No keys to delete in %s.\n", color.RedString("Error"), color.CyanString(filePath))
-		os.Exit(1)
-	}
-
-	err = c.BatchDelete(keys)
-	if err != nil {
-		logger.Error("batchdelete: failed to delete batch", "error", err)
-		fmt.Fprintf(os.Stderr, "%s deleting batch: %v\n", color.RedString("Error"), err)
-		os.Exit(1)
-	}
-
-	color.HiGreen("OK (%d keys processed)", len(keys))
-}
-
-// --- Atomic Command Handlers ---
-
-func handleAtomic(c *client.Client, args []string) {
-	if len(args) < 1 {
-		logger.Error("atomic: requires <sub-command> [args...]")
-		printUsage()
-		os.Exit(1)
-	}
-	subCommand := args[0]
-	subArgs := args[1:]
-
-	switch subCommand {
-	case "new":
-		handleAtomicNew(c, subArgs)
-	case "get":
-		handleAtomicGet(c, subArgs)
-	case "add":
-		handleAtomicAdd(c, subArgs)
-	case "delete":
-		handleAtomicDelete(c, subArgs)
-	default:
-		logger.Error("atomic: unknown sub-command", "sub_command", subCommand)
-		printUsage()
-		os.Exit(1)
-	}
-}
-
-func handleAtomicNew(c *client.Client, args []string) {
-	if len(args) < 1 || len(args) > 2 {
-		logger.Error("atomic new: requires <key> [overwrite (true|false)]")
-		printUsage()
-		os.Exit(1)
-	}
-	key := args[0]
-	overwrite := false // Default to false
-	if len(args) == 2 {
-		var err error
-		overwrite, err = strconv.ParseBool(args[1])
-		if err != nil {
-			logger.Error("atomic new: invalid overwrite value. Must be true or false.", "value", args[1], "error", err)
-			fmt.Fprintf(os.Stderr, "%s Invalid overwrite value '%s'. Must be true or false.\n", color.RedString("Error:"), args[1])
-			os.Exit(1)
-		}
-	}
-
-	err := c.AtomicNew(key, overwrite)
-	if err != nil {
-		logger.Error("AtomicNew failed", "key", key, "overwrite", overwrite, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	color.HiGreen("OK")
-}
-
-func handleAtomicGet(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("atomic get: requires <key>")
-		printUsage()
-		os.Exit(1)
-	}
-	key := args[0]
-	value, err := c.AtomicGet(key)
-	if err != nil {
-		if errors.Is(err, client.ErrKeyNotFound) {
-			// Server should ideally return 0 value, 0 error for not found based on tkv.AtomicGet spec.
-			// However, client.AtomicGet might translate certain HTTP errors (like 404 if server doesn't adhere) to ErrKeyNotFound.
-			logger.Info("AtomicGet: Key not found, or value is 0 by definition of non-existence.", "key", key)
-			fmt.Println(0) // As per TKV spec, non-existent atomic is 0.
-		} else {
-			logger.Error("AtomicGet failed", "key", key, "error", err)
-			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-			os.Exit(1)
-		}
-		return // Exit after handling error or printing 0 for not found
-	}
-	fmt.Println(value)
-}
-
-func handleAtomicAdd(c *client.Client, args []string) {
-	if len(args) != 2 {
-		logger.Error("atomic add: requires <key> <delta>")
-		printUsage()
-		os.Exit(1)
-	}
-	key := args[0]
-	deltaStr := args[1]
-	delta, err := strconv.ParseInt(deltaStr, 10, 64)
-	if err != nil {
-		logger.Error("atomic add: invalid delta value. Must be an integer.", "value", deltaStr, "error", err)
-		fmt.Fprintf(os.Stderr, "%s Invalid delta value '%s'. Must be an integer.\n", color.RedString("Error:"), deltaStr)
-		os.Exit(1)
-	}
-
-	newValue, err := c.AtomicAdd(key, delta)
-	if err != nil {
-		logger.Error("AtomicAdd failed", "key", key, "delta", delta, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	fmt.Println(newValue) // Print the new value as per requirement
-}
-
-func handleAtomicDelete(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("atomic delete: requires <key>")
-		printUsage()
-		os.Exit(1)
-	}
-	key := args[0]
-	err := c.AtomicDelete(key)
-	if err != nil {
-		logger.Error("AtomicDelete failed", "key", key, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	color.HiGreen("OK")
-}
-
-// --- Queue Command Handlers ---
-
-func handleQueue(c *client.Client, args []string) {
-	if len(args) < 1 {
-		logger.Error("queue: requires <sub-command> [args...]")
-		printUsage()
-		os.Exit(1)
-	}
-	subCommand := args[0]
-	subArgs := args[1:]
-
-	switch subCommand {
-	case "new":
-		handleQueueNew(c, subArgs)
-	case "push":
-		handleQueuePush(c, subArgs)
-	case "pop":
-		handleQueuePop(c, subArgs)
-	case "delete":
-		handleQueueDelete(c, subArgs)
-	default:
-		logger.Error("queue: unknown sub-command", "sub_command", subCommand)
-		printUsage()
-		os.Exit(1)
-	}
-}
-
-func handleQueueNew(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("queue new: requires <key>")
-		printUsage()
-		os.Exit(1)
-	}
-	key := args[0]
-	err := c.QueueNew(key)
-	if err != nil {
-		logger.Error("QueueNew failed", "key", key, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	color.HiGreen("OK")
-}
-
-func handleQueuePush(c *client.Client, args []string) {
-	if len(args) != 2 {
-		logger.Error("queue push: requires <key> <value>")
-		printUsage()
-		os.Exit(1)
-	}
-	key := args[0]
-	value := args[1]
-	newLength, err := c.QueuePush(key, value)
-	if err != nil {
-		logger.Error("QueuePush failed", "key", key, "value", value, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	fmt.Printf("New length: %d\n", newLength)
-	color.HiGreen("OK")
-}
-
-func handleQueuePop(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("queue pop: requires <key>")
-		printUsage()
-		os.Exit(1)
-	}
-	key := args[0]
-	value, err := c.QueuePop(key)
-	if err != nil {
-		logger.Error("QueuePop failed", "key", key, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	fmt.Println(value)
-}
-
-func handleQueueDelete(c *client.Client, args []string) {
-	if len(args) != 1 {
-		logger.Error("queue delete: requires <key>")
-		printUsage()
-		os.Exit(1)
-	}
-	key := args[0]
-	err := c.QueueDelete(key)
-	if err != nil {
-		logger.Error("QueueDelete failed", "key", key, "error", err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-		os.Exit(1)
-	}
-	color.HiGreen("OK")
 }
 
 // --- API Key Command Handlers ---
@@ -841,6 +762,25 @@ func handleApi(c *client.Client, args []string) {
 	case "verify":
 		// --root is not required for verify, as we are creating a new client with the provided key
 		handleApiVerify(subArgs)
+	case "limits":
+		if len(subArgs) == 0 {
+			handleApiGetMyLimits(c, subArgs)
+		} else {
+			if !useRootKey {
+				logger.Error("api limits <key_value> requires the --root flag to be set.")
+				fmt.Fprintf(os.Stderr, "%s api limits <key_value> requires --root flag.\n", color.RedString("Error:"))
+				os.Exit(1)
+			}
+			handleApiGetLimits(c, subArgs)
+		}
+	case "set-limits":
+		// Enforce --root for set-limits
+		if !useRootKey {
+			logger.Error("api set-limits requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s api set-limits requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleApiSetLimits(c, subArgs)
 	default:
 		logger.Error("api: unknown sub-command", "sub_command", subCommand)
 		printUsage()
@@ -894,23 +834,36 @@ func handleApiVerify(args []string) {
 	}
 	apiKeyToVerify := args[0]
 
-	// We need to create a new client instance with the provided API key.
-	// Re-use logic from getClient for node details but override API key.
-	nodeToConnect := targetNode // Use the global targetNode flag
+	nodeToConnect := targetNode
 	if nodeToConnect == "" {
 		if clusterCfg.DefaultLeader == "" {
-			logger.Error("api verify: targetNode is empty and no DefaultLeader is set in config")
-			fmt.Fprintf(os.Stderr, "%s Target node must be specified via --target or DefaultLeader in config.\n", color.RedString("Error:"))
+			logger.Error(
+				"api verify: targetNode is empty and no DefaultLeader is set in config",
+			)
+			fmt.Fprintf(
+				os.Stderr,
+				"%s Target node must be specified via --target or DefaultLeader in config.\n",
+				color.RedString("Error:"),
+			)
 			os.Exit(1)
 		}
 		nodeToConnect = clusterCfg.DefaultLeader
-		logger.Info("No target node specified for verify, using DefaultLeader", "node_id", color.CyanString(nodeToConnect))
+		logger.Info(
+			"No target node specified for verify, using DefaultLeader", "node_id", color.CyanString(nodeToConnect),
+		)
 	}
 
 	nodeDetails, ok := clusterCfg.Nodes[nodeToConnect]
 	if !ok {
-		logger.Error("api verify: node ID not found in configuration", "node_id", nodeToConnect)
-		fmt.Fprintf(os.Stderr, "%s Node ID '%s' not found in configuration.\n", color.RedString("Error:"), color.CyanString(nodeToConnect))
+		logger.Error(
+			"api verify: node ID not found in configuration", "node_id", nodeToConnect,
+		)
+		fmt.Fprintf(
+			os.Stderr,
+			"%s Node ID '%s' not found in configuration.\n",
+			color.RedString("Error:"),
+			color.CyanString(nodeToConnect),
+		)
 		os.Exit(1)
 	}
 
@@ -920,17 +873,19 @@ func handleApiVerify(args []string) {
 		ConnectionType: client.ConnectionTypeDirect,
 		Endpoints: []client.Endpoint{
 			{
-				HostPort:     nodeDetails.HttpBinding,
-				ClientDomain: nodeDetails.ClientDomain,
+				PublicBinding:  nodeDetails.PublicBinding,
+				PrivateBinding: nodeDetails.PrivateBinding,
+				ClientDomain:   nodeDetails.ClientDomain,
 			},
 		},
-		ApiKey:     apiKeyToVerify, // Use the key passed as argument
+		ApiKey:     apiKeyToVerify,
 		SkipVerify: clusterCfg.ClientSkipVerify,
 		Logger:     verifyClientLogger,
 	})
 	if err != nil {
 		logger.Error("api verify: failed to create client for verification", "target_node", nodeToConnect, "error", err)
 		fmt.Fprintf(os.Stderr, "%s Failed to create client for verification: %v\n", color.RedString("Error:"), err)
+		color.HiRed("Verification FAILED")
 		os.Exit(1)
 	}
 
@@ -949,4 +904,579 @@ func handleApiVerify(args []string) {
 	for k, v := range pingResp {
 		fmt.Printf("  %s: %s\n", color.CyanString(k), v)
 	}
+}
+
+func handleApiGetMyLimits(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("api limits: does not take arguments for self")
+		printUsage()
+		os.Exit(1)
+	}
+
+	resp, err := c.GetLimits()
+	if err != nil {
+		logger.Error("Failed to get API key limits", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	fmt.Println(color.CyanString("Maximum Limits (for current key):"))
+	if resp.MaxLimits.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.MaxLimits.BytesOnDisk)
+	}
+	if resp.MaxLimits.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
+	}
+	if resp.MaxLimits.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsEmitted)
+	}
+	if resp.MaxLimits.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
+	}
+	fmt.Println(color.CyanString("\nCurrent Usage (for current key):"))
+	if resp.CurrentUsage.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.CurrentUsage.BytesOnDisk)
+	}
+	if resp.CurrentUsage.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.CurrentUsage.BytesInMemory)
+	}
+	if resp.CurrentUsage.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.CurrentUsage.EventsEmitted)
+	}
+	if resp.CurrentUsage.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.CurrentUsage.Subscribers)
+	}
+}
+
+func handleApiGetLimits(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("api get-limits: requires <key_value>")
+		printUsage()
+		os.Exit(1)
+	}
+	apiKey := args[0]
+
+	resp, err := c.GetLimitsForKey(apiKey)
+	if err != nil {
+		logger.Error("Failed to get API key limits for specific key", "key", apiKey, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	var keyIdentifier string
+	if len(apiKey) > 12 { // "insi_" prefix + some chars
+		keyIdentifier = apiKey[:8] + "..." + apiKey[len(apiKey)-4:]
+	} else {
+		keyIdentifier = apiKey
+	}
+
+	fmt.Printf("Limits for key %s\n", color.CyanString(keyIdentifier))
+
+	fmt.Println(color.CyanString("Maximum Limits:"))
+	if resp.MaxLimits.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.MaxLimits.BytesOnDisk)
+	}
+	if resp.MaxLimits.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.MaxLimits.BytesInMemory)
+	}
+	if resp.MaxLimits.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.MaxLimits.EventsEmitted)
+	}
+	if resp.MaxLimits.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
+	}
+
+	fmt.Println(color.CyanString("\nCurrent Usage:"))
+	if resp.CurrentUsage.BytesOnDisk != nil {
+		fmt.Printf("  Bytes on Disk:     %d\n", *resp.CurrentUsage.BytesOnDisk)
+	}
+	if resp.CurrentUsage.BytesInMemory != nil {
+		fmt.Printf("  Bytes in Memory:   %d\n", *resp.CurrentUsage.BytesInMemory)
+	}
+	if resp.CurrentUsage.EventsEmitted != nil {
+		fmt.Printf("  Events per Second: %d\n", *resp.CurrentUsage.EventsEmitted)
+	}
+	if resp.CurrentUsage.Subscribers != nil {
+		fmt.Printf("  Subscribers:       %d\n", *resp.CurrentUsage.Subscribers)
+	}
+}
+
+func handleApiSetLimits(c *client.Client, args []string) {
+	setLimitsCmd := flag.NewFlagSet("set-limits", flag.ExitOnError)
+	disk := setLimitsCmd.Int64("disk", -1, "Max bytes on disk")
+	mem := setLimitsCmd.Int64("mem", -1, "Max bytes in memory")
+	events := setLimitsCmd.Int64("events", -1, "Max events per second")
+	subs := setLimitsCmd.Int64("subs", -1, "Max subscribers")
+
+	if len(args) < 1 {
+		logger.Error("api set-limits: requires <key_value> and flags")
+		setLimitsCmd.Usage()
+		os.Exit(1)
+	}
+	apiKey := args[0]
+	if err := setLimitsCmd.Parse(args[1:]); err != nil {
+		logger.Error("api set-limits: error parsing flags", "error", err)
+		os.Exit(1)
+	}
+
+	if len(setLimitsCmd.Args()) > 0 {
+		logger.Error("api set-limits: unknown arguments provided", "unknown_args", setLimitsCmd.Args())
+		setLimitsCmd.Usage()
+		os.Exit(1)
+	}
+
+	limits := models.Limits{}
+	if *disk != -1 {
+		limits.BytesOnDisk = disk
+	}
+	if *mem != -1 {
+		limits.BytesInMemory = mem
+	}
+	if *events != -1 {
+		limits.EventsEmitted = events
+	}
+	if *subs != -1 {
+		limits.Subscribers = subs
+	}
+
+	err := c.SetLimits(apiKey, limits)
+	if err != nil {
+		logger.Error("Failed to set API key limits", "key", apiKey, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	color.HiGreen("OK")
+}
+
+// --- Blob Command Handlers ---
+
+func handleBlob(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("blob: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "upload":
+		handleBlobUpload(c, subArgs)
+	case "download":
+		handleBlobDownload(c, subArgs)
+	case "delete":
+		handleBlobDelete(c, subArgs)
+	case "iterate":
+		handleBlobIterate(c, subArgs)
+	default:
+		logger.Error("blob: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleBlobUpload(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("blob upload: requires <key> <filepath>")
+		printUsage()
+		os.Exit(1)
+	}
+	key, filePath := args[0], args[1]
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		logger.Error("Failed to open file for blob upload", "path", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	ctx := context.Background()
+	err = c.UploadBlob(ctx, key, file, filepath.Base(filePath))
+	if err != nil {
+		logger.Error("Blob upload failed", "key", key, "path", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleBlobDownload(c *client.Client, args []string) {
+	if len(args) != 2 {
+		logger.Error("blob download: requires <key> <output_path>")
+		printUsage()
+		os.Exit(1)
+	}
+	key, outputPath := args[0], args[1]
+
+	ctx := context.Background()
+	reader, err := c.GetBlob(ctx, key)
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) {
+			fmt.Fprintf(os.Stderr, "%s Blob '%s' not found.\n", color.RedString("Error:"), color.CyanString(key))
+			os.Exit(1)
+		} else {
+			logger.Error("GetBlob failed", "key", key, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
+	defer reader.Close()
+
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		logger.Error("Failed to create output file for blob download", "path", outputPath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	defer outFile.Close()
+
+	_, err = io.Copy(outFile, reader)
+	if err != nil {
+		logger.Error("Failed to write blob data to file", "path", outputPath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleBlobDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("blob delete: requires <key>")
+		printUsage()
+		os.Exit(1)
+	}
+	key := args[0]
+	err := c.DeleteBlob(key)
+	if err != nil {
+		logger.Error("Blob delete failed", "key", key, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleBlobIterate(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("blob iterate: requires <prefix> [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	prefix := args[0]
+	offset, limit := 0, 100
+
+	var err error
+	if len(args) > 1 {
+		offset, err = strconv.Atoi(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[1], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 2 {
+		limit, err = strconv.Atoi(args[2])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[2], err)
+			os.Exit(1)
+		}
+	}
+
+	results, err := c.IterateBlobKeysByPrefix(prefix, offset, limit)
+	if err != nil {
+		logger.Error("Blob iterate failed", "prefix", prefix, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(results) == 0 {
+		color.HiYellow("No blob keys found matching prefix.")
+		return
+	}
+
+	for _, item := range results {
+		fmt.Println(item)
+	}
+}
+
+// --- Alias Command Handlers ---
+func handleAlias(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("alias: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "add":
+		handleAliasAdd(c, subArgs)
+	case "delete":
+		handleAliasDelete(c, subArgs)
+	case "list":
+		handleAliasList(c, subArgs)
+	default:
+		logger.Error("alias: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleAliasAdd(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("alias add: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	resp, err := c.SetAlias()
+	if err != nil {
+		logger.Error("Alias creation failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	fmt.Printf("Alias Key: %s\n", color.GreenString(resp.Alias))
+	color.HiGreen("OK")
+}
+
+func handleAliasDelete(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("alias delete: requires <alias_key>")
+		printUsage()
+		os.Exit(1)
+	}
+	aliasKey := args[0]
+
+	err := c.DeleteAlias(aliasKey)
+	if err != nil {
+		logger.Error("Alias deletion failed", "alias", aliasKey, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	color.HiGreen("OK")
+}
+
+func handleAliasList(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("alias list: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	resp, err := c.ListAliases()
+	if err != nil {
+		logger.Error("Failed to list aliases", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(resp.Aliases) == 0 {
+		fmt.Println("No aliases found for the current key.")
+		return
+	}
+
+	fmt.Println(color.CyanString("Aliases:"))
+	for _, alias := range resp.Aliases {
+		fmt.Printf("  - %s\n", alias)
+	}
+}
+
+func handleAdmin(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("admin: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "ops":
+		if !useRootKey {
+			logger.Error("admin ops requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s admin ops requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleAdminOps(c, subArgs)
+	case "insight":
+		if !useRootKey {
+			logger.Error("admin insight requires the --root flag to be set.")
+			fmt.Fprintf(os.Stderr, "%s admin insight requires --root flag.\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+		handleAdminInsight(c, subArgs)
+	default:
+		logger.Error("admin: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleAdminOps(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("admin ops: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	resp, err := c.GetOpsPerSecond()
+	if err != nil {
+		logger.Error("Failed to get ops per second", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	fmt.Println(color.CyanString("Operations Per Second:"))
+	fmt.Printf("  System:       %.2f\n", resp.OP_System)
+	fmt.Printf("  Value Store:  %.2f\n", resp.OP_VS)
+	fmt.Printf("  Cache:        %.2f\n", resp.OP_Cache)
+	fmt.Printf("  Events:       %.2f\n", resp.OP_Events)
+	fmt.Printf("  Subscribers:  %.2f\n", resp.OP_Subscribers)
+	fmt.Printf("  Blobs:        %.2f\n", resp.OP_Blobs)
+}
+
+func handleAdminInsight(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("admin insight: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "entity":
+		handleAdminInsightEntity(c, subArgs)
+	case "entities":
+		handleAdminInsightEntities(c, subArgs)
+	case "entity-by-alias":
+		handleAdminInsightEntityByAlias(c, subArgs)
+	default:
+		logger.Error("admin insight: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleAdminInsightEntity(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("admin insight entity: requires <root_api_key>")
+		printUsage()
+		os.Exit(1)
+	}
+	rootApiKey := args[0]
+	entity, err := c.GetEntity(rootApiKey)
+	if err != nil {
+		logger.Error("Failed to get entity", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	printEntity(entity)
+}
+
+func handleAdminInsightEntities(c *client.Client, args []string) {
+	offset, limit := 0, 10
+	var err error
+	if len(args) > 0 {
+		offset, err = strconv.Atoi(args[0])
+		if err != nil {
+			logger.Error("admin insight entities: invalid offset", "offset_str", args[0], "error", err)
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[0], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 1 {
+		limit, err = strconv.Atoi(args[1])
+		if err != nil {
+			logger.Error("admin insight entities: invalid limit", "limit_str", args[1], "error", err)
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[1], err)
+			os.Exit(1)
+		}
+	}
+
+	entities, err := c.GetEntities(offset, limit)
+	if err != nil {
+		logger.Error("Failed to get entities", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(entities) == 0 {
+		color.HiYellow("No entities found.")
+		return
+	}
+
+	for i, entity := range entities {
+		e := entity
+		printEntity(&e)
+		if i < len(entities)-1 {
+			fmt.Println(color.GreenString("--------------------"))
+		}
+	}
+}
+
+func handleAdminInsightEntityByAlias(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("admin insight entity-by-alias: requires <alias>")
+		printUsage()
+		os.Exit(1)
+	}
+	alias := args[0]
+	entity, err := c.GetEntityByAlias(alias)
+	if err != nil {
+		logger.Error("Failed to get entity by alias", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+	printEntity(entity)
+}
+
+func printEntity(entity *models.Entity) {
+	fmt.Println(color.CyanString("Entity Details:"))
+	fmt.Printf("  Root API Key:    %s\n", entity.RootApiKey)
+	fmt.Printf("  Key UUID:        %s\n", entity.KeyUUID)
+	fmt.Printf("  Data Scope UUID: %s\n", entity.DataScopeUUID)
+
+	if len(entity.Aliases) > 0 {
+		fmt.Println("  Aliases:")
+		for _, alias := range entity.Aliases {
+			fmt.Printf("    - %s\n", alias)
+		}
+	} else {
+		fmt.Println("  Aliases:         None")
+	}
+
+	if entity.Usage.MaxLimits != nil {
+		fmt.Println(color.CyanString("\n  Maximum Limits:"))
+		if entity.Usage.MaxLimits.BytesOnDisk != nil {
+			fmt.Printf("    Bytes on Disk:     %d\n", *entity.Usage.MaxLimits.BytesOnDisk)
+		}
+		if entity.Usage.MaxLimits.BytesInMemory != nil {
+			fmt.Printf("    Bytes in Memory:   %d\n", *entity.Usage.MaxLimits.BytesInMemory)
+		}
+		if entity.Usage.MaxLimits.EventsEmitted != nil {
+			fmt.Printf("    Events Emitted:    %d\n", *entity.Usage.MaxLimits.EventsEmitted)
+		}
+		if entity.Usage.MaxLimits.Subscribers != nil {
+			fmt.Printf("    Subscribers:       %d\n", *entity.Usage.MaxLimits.Subscribers)
+		}
+	}
+
+	if entity.Usage.CurrentUsage != nil {
+		fmt.Println(color.CyanString("\n  Current Usage:"))
+		if entity.Usage.CurrentUsage.BytesOnDisk != nil {
+			fmt.Printf("    Bytes on Disk:     %d\n", *entity.Usage.CurrentUsage.BytesOnDisk)
+		}
+		if entity.Usage.CurrentUsage.BytesInMemory != nil {
+			fmt.Printf("    Bytes in Memory:   %d\n", *entity.Usage.CurrentUsage.BytesInMemory)
+		}
+		if entity.Usage.CurrentUsage.EventsEmitted != nil {
+			fmt.Printf("    Events Emitted:    %d\n", *entity.Usage.CurrentUsage.EventsEmitted)
+		}
+		if entity.Usage.CurrentUsage.Subscribers != nil {
+			fmt.Printf("    Subscribers:       %d\n", *entity.Usage.CurrentUsage.Subscribers)
+		}
+	}
+	fmt.Println()
 }

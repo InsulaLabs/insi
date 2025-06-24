@@ -7,21 +7,28 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
+	"math/big"
+	"net"
+	"time"
 
+	"github.com/InsulaLabs/insi/badge"
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/internal/service"
-	"github.com/InsulaLabs/insi/internal/tkv"
-	"github.com/InsulaLabs/insula/security/badge"
+	"github.com/InsulaLabs/insi/db/core"
+	"github.com/InsulaLabs/insi/db/tkv"
+	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
 
@@ -36,16 +43,15 @@ type Runtime struct {
 	asNodeId   string
 	hostMode   bool
 	rawArgs    []string // To allow flag parsing within New
-	service    *service.Service
+	service    *core.Core
 
 	rootApiKey string // Root API key generated from instance secret
 
 	rtClients map[string]*client.Client
 
-	plugins map[string]Plugin
+	currentLogLevel slog.Level
+	keySetupOnce    sync.Once
 }
-
-var _ PluginRuntimeIF = &Runtime{}
 
 // New creates a new Runtime instance.
 // It initializes the application context, sets up signal handling,
@@ -54,7 +60,6 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r := &Runtime{
 		rawArgs:   args,
-		plugins:   make(map[string]Plugin),
 		rtClients: make(map[string]*client.Client),
 	}
 
@@ -119,6 +124,27 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 		return nil, fmt.Errorf("failed to load configuration from %s: %w", r.configFile, err)
 	}
 
+	// Set the log level
+	if r.clusterCfg.Logging.Level != "" {
+		switch r.clusterCfg.Logging.Level {
+		case "debug":
+			r.currentLogLevel = slog.LevelDebug
+		case "info":
+			r.currentLogLevel = slog.LevelInfo
+		case "warn":
+			r.currentLogLevel = slog.LevelWarn
+		case "error":
+			r.currentLogLevel = slog.LevelError
+		default:
+			color.HiYellow("Unknown logging level: %s, defaulting to info", r.clusterCfg.Logging.Level)
+			r.currentLogLevel = slog.LevelInfo
+		}
+	}
+
+	r.logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: r.currentLogLevel,
+	})).With("service", "insidRuntime")
+
 	// Generate the root API key from the instance secret
 	// This key is used by runtime's internal clients and passed to services.
 	if r.clusterCfg.InstanceSecret == "" {
@@ -130,22 +156,6 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r.rootApiKey = base64.StdEncoding.EncodeToString([]byte(r.rootApiKey))
 
-	// Convert the cluster config into a list of endpoints
-	// for the client to use when utilizing a client for the backend
-	// of a runtime request
-	getEndpoints := func() []client.Endpoint {
-		eps := make([]client.Endpoint, 0, len(r.clusterCfg.Nodes))
-		for nodeId, node := range r.clusterCfg.Nodes {
-			ep := client.Endpoint{
-				HostPort:     node.HttpBinding,
-				ClientDomain: node.ClientDomain,
-				Logger:       r.logger.With("service", "insiClient").With("node", nodeId),
-			}
-			eps = append(eps, ep)
-		}
-		return eps
-	}
-
 	/*
 		Create a series of clients for the runtime to isolate operations
 		to single-use clients.
@@ -156,12 +166,7 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 		"setCache", "getCache", "deleteCache",
 		"publishEvent",
 	} {
-		rtClient, err := client.NewClient(&client.Config{
-			ConnectionType: client.ConnectionTypeRandom,
-			Logger:         r.logger.With("service", "insiClient").With("useCase", useCase),
-			ApiKey:         r.rootApiKey, // Use the runtime's generated root API key
-			Endpoints:      getEndpoints(),
-		})
+		rtClient, err := r.GetClientForToken(r.rootApiKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create insi client: %w", err)
 		}
@@ -171,9 +176,31 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 	return r, nil
 }
 
-func (r *Runtime) WithPlugin(plugin Plugin) *Runtime {
-	r.plugins[plugin.GetName()] = plugin
-	return r
+func (r *Runtime) GetClientForToken(token string) (*client.Client, error) {
+	getEndpoints := func() []client.Endpoint {
+		eps := make([]client.Endpoint, 0, len(r.clusterCfg.Nodes))
+		for nodeId, node := range r.clusterCfg.Nodes {
+			ep := client.Endpoint{
+				PublicBinding:  node.PublicBinding,
+				PrivateBinding: node.PrivateBinding,
+				ClientDomain:   node.ClientDomain,
+				Logger:         r.logger.With("service", "insiClient").With("node", nodeId),
+			}
+			eps = append(eps, ep)
+		}
+		return eps
+	}
+	rtClient, err := client.NewClient(&client.Config{
+		ConnectionType: client.ConnectionTypeRandom,
+		Logger:         r.logger.With("service", "insiClient"),
+		ApiKey:         token,
+		Endpoints:      getEndpoints(),
+		SkipVerify:     r.clusterCfg.ClientSkipVerify,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create insi client: %w", err)
+	}
+	return rtClient, nil
 }
 
 // Run executes the runtime based on the parsed flags,
@@ -242,12 +269,21 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	nodeLogger := r.logger.With("node", nodeId)
 	nodeLogger.Info("Starting node instance")
 
-	if err := os.MkdirAll(r.clusterCfg.InsudbDir, os.ModePerm); err != nil {
-		nodeLogger.Error("Failed to create insudbDir", "path", r.clusterCfg.InsudbDir, "error", err)
+	if err := os.MkdirAll(r.clusterCfg.InsidHome, os.ModePerm); err != nil {
+		nodeLogger.Error("Failed to create insidHome", "path", r.clusterCfg.InsidHome, "error", err)
 		os.Exit(1)
 	}
 
-	nodeDataRootPath := filepath.Join(r.clusterCfg.InsudbDir, nodeId)
+	keyPath := filepath.Join(r.clusterCfg.InsidHome, "keys")
+
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		r.keySetupOnce.Do(func() {
+			nodeLogger.Info("Creating keys directory", "path", keyPath)
+			r.setupKeys(keyPath)
+		})
+	}
+
+	nodeDataRootPath := filepath.Join(r.clusterCfg.InsidHome, nodeId)
 	if err := os.MkdirAll(nodeDataRootPath, os.ModePerm); err != nil {
 		nodeLogger.Error("Could not create node data root directory", "path", nodeDataRootPath, "error", err)
 		os.Exit(1)
@@ -266,11 +302,10 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 
 	kvm, err := tkv.New(tkv.Config{
-		Identity:  b,
-		Logger:    nodeLogger.WithGroup("tkv"),
-		Directory: nodeDir,
-		AppCtx:    r.appCtx,
-		CacheTTL:  r.clusterCfg.Cache.StandardTTL,
+		Logger:         nodeLogger.WithGroup("tkv"),
+		BadgerLogLevel: r.currentLogLevel,
+		Directory:      nodeDir,
+		AppCtx:         r.appCtx,
 	})
 	if err != nil {
 		nodeLogger.Error("Failed to create KV manager", "error", err)
@@ -278,7 +313,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	}
 	defer kvm.Close()
 
-	r.service, err = service.NewService(
+	r.service, err = core.New(
 		r.appCtx, // Use the runtime's app context
 		nodeLogger.WithGroup("service"),
 		&nodeCfg,
@@ -293,54 +328,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		os.Exit(1)
 	}
 
-	// Mount the plugins
-	nodeLogger.Info("Mounting plugins", "count", len(r.plugins))
-
-	createRoute := func(plugin Plugin, route PluginRoute) string {
-		nodeLogger.Info("Mounting plugin route", "plugin", plugin.GetName(), "path", route.Path)
-		pName := strings.Trim(plugin.GetName(), "/")
-		rPath := strings.Trim(route.Path, "/")
-		mountPath := "/" // Always start with a slash for the root
-		if pName != "" {
-			mountPath = path.Join(mountPath, pName)
-		}
-		if rPath != "" {
-			mountPath = path.Join(mountPath, rPath)
-		}
-		return mountPath
-	}
-
-	/*
-		Setup the routes for the plugin and init it so it has
-		a means to access the runtime.
-	*/
-	for _, plugin := range r.plugins {
-
-		r.logger.Info(
-			"Mounting routes for plugin",
-			"plugin", plugin.GetName(),
-			"count", len(plugin.GetRoutes()),
-		)
-
-		for _, route := range plugin.GetRoutes() {
-			r.service.WithRoute(
-				createRoute(plugin, route),
-				route.Handler,
-				route.Limit,
-				route.Burst,
-			)
-		}
-
-		plugin.Init(r)
-	}
-
-	// Run the service. This should block until the service is done or context is cancelled.
-	// We need to handle the completion of this service within the broader context
-	// of the runtime (e.g., if one node fails, does it affect others in host mode?).
-	// For now, each node runs somewhat independently until the main appCtx is cancelled.
 	r.service.Run()
-
-	nodeLogger.Info("Node instance shut down gracefully.")
 }
 
 func getMapKeys(m map[string]config.Node) []string {
@@ -397,4 +385,158 @@ func (r *Runtime) Wait() {
 func (r *Runtime) Stop() {
 	r.logger.Info("Runtime stop requested.")
 	r.appCancel()
+}
+
+func (r *Runtime) GetRootApiKey() string {
+	return r.rootApiKey
+}
+
+func (r *Runtime) GetHomeDir() string {
+	return r.clusterCfg.InsidHome
+}
+
+func (r *Runtime) setupKeys(keyPath string) {
+
+	if err := os.MkdirAll(keyPath, os.ModePerm); err != nil {
+		r.logger.Error("Failed to create keys directory", "path", keyPath, "error", err)
+		os.Exit(1)
+	}
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		r.logger.Error("Failed to generate private key", "error", err)
+		os.Exit(1)
+	}
+
+	notBefore := time.Now()
+	notAfter := notBefore.AddDate(10, 0, 0)
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"[ I N S I - L O C A L ]"},
+			CommonName:   "insid-node",
+		},
+		NotBefore: notBefore,
+		NotAfter:  notAfter,
+
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+	}
+
+	// Initialize DNSNames and IPAddresses with defaults
+	template.DNSNames = []string{"localhost"}
+	template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+
+	// Add IP addresses and DNS names from node configurations
+	// This is important for the certificate to be valid for the node's bindings.
+	for _, nodeCfg := range r.clusterCfg.Nodes {
+		if nodeCfg.PublicBinding != "" {
+			host, _, err := net.SplitHostPort(nodeCfg.PublicBinding)
+			if err == nil {
+				if ip := net.ParseIP(host); ip != nil {
+					template.IPAddresses = append(template.IPAddresses, ip)
+				} else if host != "" {
+					template.DNSNames = append(template.DNSNames, host)
+				}
+			} else {
+				if ip := net.ParseIP(nodeCfg.PublicBinding); ip != nil {
+					template.IPAddresses = append(template.IPAddresses, ip)
+				} else if nodeCfg.PublicBinding != "" {
+					template.DNSNames = append(template.DNSNames, nodeCfg.PublicBinding)
+				}
+			}
+		}
+
+		if nodeCfg.ClientDomain != "" {
+			clientHost, _, err := net.SplitHostPort(nodeCfg.ClientDomain)
+			if err == nil {
+				if ip := net.ParseIP(clientHost); ip != nil {
+					template.IPAddresses = append(template.IPAddresses, ip)
+				} else if clientHost != "" {
+					template.DNSNames = append(template.DNSNames, clientHost)
+				}
+			} else { // Was likely just host
+				if ip := net.ParseIP(nodeCfg.ClientDomain); ip != nil {
+					template.IPAddresses = append(template.IPAddresses, ip)
+				} else if nodeCfg.ClientDomain != "" {
+					template.DNSNames = append(template.DNSNames, nodeCfg.ClientDomain)
+				}
+			}
+		}
+	}
+
+	// Remove duplicates
+	template.IPAddresses = removeDuplicateIPs(template.IPAddresses)
+	template.DNSNames = removeDuplicateStrings(template.DNSNames)
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		r.logger.Error("Failed to create certificate", "error", err)
+		os.Exit(1)
+	}
+
+	// Create PEM files for cert and key
+	certOut, err := os.Create(filepath.Join(keyPath, "server.crt"))
+	if err != nil {
+		r.logger.Error("Failed to open server.crt for writing", "error", err)
+		os.Exit(1)
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		r.logger.Error("Failed to write data to insid.crt", "error", err)
+		certOut.Close()
+		os.Exit(1)
+	}
+	if err := certOut.Close(); err != nil {
+		r.logger.Error("Failed to close server.crt", "error", err)
+		os.Exit(1)
+	}
+	r.logger.Info("Generated insid.crt", "path", certOut.Name())
+
+	keyOut, err := os.OpenFile(filepath.Join(keyPath, "server.key"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		r.logger.Error("Failed to open server.key for writing", "error", err)
+		os.Exit(1)
+	}
+	privBytes := x509.MarshalPKCS1PrivateKey(priv)
+	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
+		r.logger.Error("Failed to write data to server.key", "error", err)
+		keyOut.Close()
+		os.Exit(1)
+	}
+	if err := keyOut.Close(); err != nil {
+		r.logger.Error("Failed to close server.key", "error", err)
+		os.Exit(1)
+	}
+	r.logger.Info("Generated server.key", "path", keyOut.Name())
+}
+
+func removeDuplicateIPs(ips []net.IP) []net.IP {
+	seen := make(map[string]bool)
+	result := []net.IP{}
+	for _, ip := range ips {
+		if ip == nil {
+			continue
+		}
+		ipStr := ip.String()
+		if _, ok := seen[ipStr]; !ok {
+			seen[ipStr] = true
+			result = append(result, ip)
+		}
+	}
+	return result
+}
+
+func removeDuplicateStrings(s []string) []string {
+	seen := make(map[string]bool)
+	result := []string{}
+	for _, item := range s {
+		if _, ok := seen[item]; !ok {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	return result
 }
