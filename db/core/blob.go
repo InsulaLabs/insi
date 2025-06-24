@@ -235,6 +235,7 @@ func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.
 		nil,
 	)
 	if err != nil {
+		x.logger.Error("Could not create request to download blob", "error", err, "url", downloadURL)
 		return fmt.Errorf("could not create request to download blob: %w", err)
 	}
 	req.Header.Set("Authorization", x.insiClient.GetApiKey())
