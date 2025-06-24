@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -211,13 +212,28 @@ func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.
 		return fmt.Errorf("could not find peer with node id %s", blobMeta.NodeID)
 	}
 
+	// Correctly build the download URL using the client domain for TLS verification.
+	host, port, err := net.SplitHostPort(sourcePeer.endpoint.PrivateBinding)
+	if err != nil {
+		return fmt.Errorf("could not parse private binding for peer %s: %w", sourcePeer.nodeId, err)
+	}
+
+	connectHost := host
+	if sourcePeer.endpoint.ClientDomain != "" {
+		connectHost = sourcePeer.endpoint.ClientDomain
+	}
+
+	downloadURL := fmt.Sprintf("https://%s/db/internal/v1/blob/download?key=%s&scope=%s",
+		net.JoinHostPort(connectHost, port), blobMeta.Key, blobMeta.DataScopeUUID)
+
 	// The client in the blob service is a root client, so we can use it to talk to other nodes.
 	// Use the private binding for internal communication - WE NEVER USE HTTP ONLY EVER FUCKING HTTPS
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"GET",
-		fmt.Sprintf("https://%s/db/internal/v1/blob/download?key=%s&scope=%s",
-			sourcePeer.endpoint.PrivateBinding, blobMeta.Key, blobMeta.DataScopeUUID), nil)
+		downloadURL,
+		nil,
+	)
 	if err != nil {
 		return fmt.Errorf("could not create request to download blob: %w", err)
 	}
