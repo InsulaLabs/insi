@@ -204,11 +204,12 @@ type aliasesImpl struct {
 }
 
 type fwiImpl struct {
-	insiCfg        *client.Config
-	rootInsiClient *client.Client
-	entities       map[string]Entity
-	mu             sync.RWMutex
-	logger         *slog.Logger
+	insiCfg               *client.Config
+	rootInsiClient        *client.Client
+	cleanDerivationClient *client.Client
+	entities              map[string]Entity
+	mu                    sync.RWMutex
+	logger                *slog.Logger
 }
 
 type entityRecord struct {
@@ -508,13 +509,25 @@ func (a *aliasesImpl) ListAliases(ctx context.Context) ([]string, error) {
 	})
 }
 
-func NewFWI(insiCfg *client.Config, rootInsiClient *client.Client, logger *slog.Logger) (FWI, error) {
+func NewFWI(insiCfg *client.Config, logger *slog.Logger) (FWI, error) {
 	l := logger.WithGroup("fwi")
+
+	rootInsiClient, err := client.NewClient(insiCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create root insi client: %w", err)
+	}
+
+	cleanDerivationClient, err := client.NewClient(insiCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clean derivation insi client: %w", err)
+	}
+
 	f := &fwiImpl{
-		rootInsiClient: rootInsiClient,
-		entities:       make(map[string]Entity),
-		logger:         l,
-		insiCfg:        insiCfg,
+		rootInsiClient:        rootInsiClient,
+		cleanDerivationClient: cleanDerivationClient,
+		entities:              make(map[string]Entity),
+		logger:                l,
+		insiCfg:               insiCfg,
 	}
 
 	if _, err := f.rootInsiClient.Ping(); err != nil {
@@ -610,18 +623,7 @@ func (f *fwiImpl) CreateEntity(
 		return nil, err
 	}
 
-	cfgc := client.Config{
-		ApiKey:         key.Key,
-		Endpoints:      f.insiCfg.Endpoints,
-		Logger:         f.insiCfg.Logger.WithGroup(name),
-		ConnectionType: f.insiCfg.ConnectionType,
-		SkipVerify:     f.insiCfg.SkipVerify,
-	}
-
-	entityClient, err := client.NewClient(&cfgc)
-	if err != nil {
-		return nil, err
-	}
+	entityClient := f.cleanDerivationClient.DeriveWithApiKey(name, key.Key)
 
 	entity := &entityImpl{
 		name:       name,
@@ -665,8 +667,15 @@ func (f *fwiImpl) CreateOrLoadEntity(
 		return nil, err
 	}
 
-	// Entity does not exist, so create it.
-	return f.CreateEntity(ctx, name, maxlimits)
+	entity, err = f.CreateEntity(ctx, name, maxlimits)
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			f.logger.Warn("Race condition on entity creation, reloading.", "name", name)
+			return f.GetEntity(ctx, name)
+		}
+		return nil, err
+	}
+	return entity, nil
 }
 
 func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
@@ -697,7 +706,7 @@ func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 			continue
 		}
 
-		entityClient := f.rootInsiClient.DeriveWithApiKey(er.Name, er.Key)
+		entityClient := f.cleanDerivationClient.DeriveWithApiKey(er.Name, er.Key)
 		entity := &entityImpl{
 			name:       er.Name,
 			insiClient: entityClient,
@@ -864,22 +873,7 @@ func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, er
 		}
 
 		if er.Name == name {
-			// When finding an entity, we must create a new client for it
-			// with the correct API key and configuration inherited from the FWI instance.
-			cfgc := client.Config{
-				ApiKey:         er.Key,
-				Endpoints:      f.insiCfg.Endpoints,
-				Logger:         f.insiCfg.Logger.WithGroup(er.Name),
-				ConnectionType: f.insiCfg.ConnectionType,
-				SkipVerify:     f.insiCfg.SkipVerify,
-			}
-			entityClient, err := client.NewClient(&cfgc)
-			if err != nil {
-				// Log the error but continue, as other entities might be valid.
-				f.logger.Error("Failed to create client for found entity", "name", er.Name, "error", err)
-				continue
-			}
-
+			entityClient := f.cleanDerivationClient.DeriveWithApiKey(er.Name, er.Key)
 			entity := &entityImpl{
 				name:       er.Name,
 				insiClient: entityClient,

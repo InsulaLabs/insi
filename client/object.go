@@ -253,7 +253,7 @@ func (m *ObjectManager[T]) New(ctx context.Context, data *T) (*ObjectInstance[T]
 		if creationErr != nil {
 			m.logger.Error("creation failed, cleaning up unique keys", "error", creationErr)
 			for _, key := range createdUniqueKeys {
-				err := withRetriesVoid(ctx, m.logger, func() error {
+				err := WithRetriesVoid(ctx, m.logger, func() error {
 					return m.delete(key)
 				})
 				if err != nil {
@@ -289,7 +289,7 @@ func (m *ObjectManager[T]) New(ctx context.Context, data *T) (*ObjectInstance[T]
 
 		if fi.IsUnique {
 			uniqueKey := m.GetUniqueLookupKey(fi.Key, finalValue)
-			err := withRetriesVoid(ctx, m.logger, func() error {
+			err := WithRetriesVoid(ctx, m.logger, func() error {
 				return m.setNX(uniqueKey, newUUID)
 			})
 			if err != nil {
@@ -312,7 +312,7 @@ func (m *ObjectManager[T]) New(ctx context.Context, data *T) (*ObjectInstance[T]
 	fieldsToSet[m.GetFieldKey(newUUID, "updated_at")] = now
 
 	for key, value := range fieldsToSet {
-		err := withRetriesVoid(ctx, m.logger, func() error {
+		err := WithRetriesVoid(ctx, m.logger, func() error {
 			return m.set(key, value)
 		})
 		if err != nil {
@@ -339,7 +339,7 @@ func (m *ObjectManager[T]) GetByUUID(ctx context.Context, uuid string) (*ObjectI
 			continue
 		}
 		fieldKey := m.GetFieldKey(uuid, fi.Key)
-		valueStr, err := withRetries(ctx, m.logger, func() (string, error) {
+		valueStr, err := WithRetries(ctx, m.logger, func() (string, error) {
 			return m.get(fieldKey)
 		})
 
@@ -374,7 +374,7 @@ func (m *ObjectManager[T]) GetByUniqueField(ctx context.Context, fieldName strin
 	}
 
 	uniqueKey := m.GetUniqueLookupKey(fi.Key, fieldValue)
-	uuid, err := withRetries(ctx, m.logger, func() (string, error) {
+	uuid, err := WithRetries(ctx, m.logger, func() (string, error) {
 		return m.get(uniqueKey)
 	})
 
@@ -395,7 +395,7 @@ func (m *ObjectManager[T]) SetField(ctx context.Context, uuid, fieldName, value 
 		return fmt.Errorf("field %s not defined in type info for %s", fieldName, m.typeInfo.Type.Name())
 	}
 	key := m.GetFieldKey(uuid, fi.Key)
-	return withRetriesVoid(ctx, m.logger, func() error {
+	return WithRetriesVoid(ctx, m.logger, func() error {
 		return m.set(key, value)
 	})
 }
@@ -407,7 +407,7 @@ func (m *ObjectManager[T]) GetField(ctx context.Context, uuid, fieldName string)
 		return "", fmt.Errorf("field %s not defined in type info for %s", fieldName, m.typeInfo.Type.Name())
 	}
 	key := m.GetFieldKey(uuid, fi.Key)
-	return withRetries(ctx, m.logger, func() (string, error) {
+	return WithRetries(ctx, m.logger, func() (string, error) {
 		return m.get(key)
 	})
 }
@@ -419,7 +419,7 @@ func (m *ObjectManager[T]) CompareAndSwapField(ctx context.Context, uuid, fieldN
 		return fmt.Errorf("field %s not defined in type info for %s", fieldName, m.typeInfo.Type.Name())
 	}
 	key := m.GetFieldKey(uuid, fi.Key)
-	return withRetriesVoid(ctx, m.logger, func() error {
+	return WithRetriesVoid(ctx, m.logger, func() error {
 		return m.compareAndSwap(key, oldVal, newVal)
 	})
 }
@@ -434,7 +434,7 @@ func (m *ObjectManager[T]) Delete(ctx context.Context, uuid string) error {
 		keysToDelete = append(keysToDelete, fieldKey)
 
 		if fi.IsUnique {
-			valueStr, err := withRetries(ctx, m.logger, func() (string, error) {
+			valueStr, err := WithRetries(ctx, m.logger, func() (string, error) {
 				return m.get(fieldKey)
 			})
 			if err != nil && !errors.Is(err, ErrKeyNotFound) {
@@ -453,7 +453,7 @@ func (m *ObjectManager[T]) Delete(ctx context.Context, uuid string) error {
 	keysToDelete = append(keysToDelete, m.GetFieldKey(uuid, "created_at"), m.GetFieldKey(uuid, "updated_at"))
 
 	for _, key := range keysToDelete {
-		err := withRetriesVoid(ctx, m.logger, func() error {
+		err := WithRetriesVoid(ctx, m.logger, func() error {
 			return m.delete(key)
 		})
 		if err != nil && !errors.Is(err, ErrKeyNotFound) {
@@ -475,7 +475,7 @@ func (m *ObjectManager[T]) SetUniqueNX(ctx context.Context, uuid, fieldName, fie
 	}
 
 	uniqueKey := m.GetUniqueLookupKey(fi.Key, fieldValue)
-	return withRetriesVoid(ctx, m.logger, func() error {
+	return WithRetriesVoid(ctx, m.logger, func() error {
 		return m.setNX(uniqueKey, uuid)
 	})
 }
@@ -491,7 +491,7 @@ func (m *ObjectManager[T]) DeleteUnique(ctx context.Context, fieldName, fieldVal
 	}
 
 	uniqueKey := m.GetUniqueLookupKey(fi.Key, fieldValue)
-	return withRetriesVoid(ctx, m.logger, func() error {
+	return WithRetriesVoid(ctx, m.logger, func() error {
 		// We ignore "not found" errors on delete for idempotency.
 		err := m.delete(uniqueKey)
 		if errors.Is(err, ErrKeyNotFound) {
@@ -518,7 +518,7 @@ func (m *ObjectManager[T]) List(ctx context.Context, uniqueFieldForDiscovery str
 	limit := 100 // Process in batches of 100
 
 	for {
-		keys, err := withRetries(ctx, m.logger, func() ([]string, error) {
+		keys, err := WithRetries(ctx, m.logger, func() ([]string, error) {
 			return m.iterateByPrefix(scanPrefix, offset, limit)
 		})
 
@@ -535,7 +535,7 @@ func (m *ObjectManager[T]) List(ctx context.Context, uniqueFieldForDiscovery str
 		}
 
 		for _, key := range keys {
-			uuid, getErr := withRetries(ctx, m.logger, func() (string, error) {
+			uuid, getErr := WithRetries(ctx, m.logger, func() (string, error) {
 				return m.get(key)
 			})
 			if getErr != nil {
