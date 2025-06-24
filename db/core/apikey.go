@@ -15,6 +15,8 @@ var (
 	ApiDefaultMaxDiskUsage     = 1024 * 1024 * 1024 // 1GB
 	ApiDefaultMaxEvents        = 1000
 	ApiDefaultMaxSubscriptions = 100
+	ApiDefaultRPSDataLimit     = models.DefaultRPSDataLimit
+	ApiDefaultRPSEventLimit    = models.DefaultRPSEventLimit
 )
 
 const (
@@ -28,6 +30,8 @@ const (
 	ApiTrackMaxDiskUsagePrefix     = "internal:api_key_max_disk_usage"
 	ApiTrackMaxEventsPrefix        = "internal:api_key_max_events"
 	ApiTrackMaxSubscriptionsPrefix = "internal:api_key_max_subscriptions"
+	ApiTrackRPSDataLimitPrefix     = "internal:api_key_rps_data_limit"
+	ApiTrackRPSEventLimitPrefix    = "internal:api_key_rps_event_limit"
 
 	ApiTrackEventLastResetPrefix = "internal:api_key_event_last_reset"
 
@@ -90,6 +94,14 @@ func WithApiKeyMaxEvents(key string) string {
 
 func WithApiKeyMaxSubscriptions(key string) string {
 	return fmt.Sprintf("%s:%s", ApiTrackMaxSubscriptionsPrefix, key)
+}
+
+func WithApiKeyRPSDataLimit(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTrackRPSDataLimitPrefix, key)
+}
+
+func WithApiKeyRPSEventLimit(key string) string {
+	return fmt.Sprintf("%s:%s", ApiTrackRPSEventLimitPrefix, key)
 }
 
 func WithApiKeyTombstone(key string) string {

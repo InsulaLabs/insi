@@ -64,6 +64,11 @@ const (
 	CommonStartupTaskDelayDuration = time.Second * 10
 )
 
+type endpointKeyRateLimiters struct {
+	events *rate.Limiter
+	data   *rate.Limiter
+}
+
 type Core struct {
 	appCtx    context.Context
 	cfg       *config.Cluster
@@ -104,6 +109,8 @@ type Core struct {
 	metrics Metrics
 
 	subscriptionSlotLock sync.Mutex
+
+	entityRateLimiters *ttlcache.Cache[string, *endpointKeyRateLimiters]
 }
 
 type serverInstance struct {
@@ -217,6 +224,12 @@ func New(
 	)
 	go apiCache.Start()
 
+	entityRateLimiters := ttlcache.New[string, *endpointKeyRateLimiters](
+		ttlcache.WithTTL[string, *endpointKeyRateLimiters](time.Minute*1),
+		ttlcache.WithDisableTouchOnHit[string, *endpointKeyRateLimiters](),
+	)
+	go entityRateLimiters.Start()
+
 	service := &Core{
 		appCtx:              ctx,
 		cfg:                 clusterCfg,
@@ -240,8 +253,9 @@ func New(
 				return true
 			},
 		},
-		eventCh:  serviceEventCh,
-		apiCache: apiCache,
+		eventCh:            serviceEventCh,
+		apiCache:           apiCache,
+		entityRateLimiters: entityRateLimiters, // per-key uuid rate limiters
 	}
 
 	// Set the event subsystem to the service for event logic
@@ -928,6 +942,10 @@ func (c *Core) execTombstoneDeletion() {
 			// Insight refs
 			withApiKeyRef(keyUUID),
 			withApiKeyDataScope(keyUUID),
+			// RPS limits
+			WithApiKeyRPSDataLimit(keyUUID),
+			WithApiKeyRPSEventLimit(keyUUID),
+
 			// The API key itself
 			fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, keyUUID),
 		}

@@ -1,5 +1,10 @@
 package models
 
+const (
+	DefaultRPSDataLimit  = 25
+	DefaultRPSEventLimit = 10
+)
+
 type ApiKeyCreateRequest struct {
 	KeyName string `json:"key_name"`
 }
@@ -25,6 +30,9 @@ type Limits struct {
 	BytesInMemory *int64 `json:"bytes_in_memory,omitempty"`
 	EventsEmitted *int64 `json:"events_emitted,omitempty"`
 	Subscribers   *int64 `json:"subscribers,omitempty"`
+
+	RPSDataLimit  *int64 `json:"rate_per_second_data_limit,omitempty"`  // cache blob and vs rates per second
+	RPSEventLimit *int64 `json:"rate_per_second_event_limit,omitempty"` // event pub/sub rates per second
 }
 
 type LimitsResponse struct {

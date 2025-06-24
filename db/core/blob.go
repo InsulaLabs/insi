@@ -446,6 +446,10 @@ func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+		return
+	}
+
 	if !c.fsm.IsLeader() {
 		c.redirectToLeader(w, r, r.URL.RequestURI(), rcPublic)
 		return
@@ -618,6 +622,10 @@ func (c *Core) getBlobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+		return
+	}
+
 	key := r.URL.Query().Get("key")
 	if key == "" {
 		http.Error(w, "Missing key parameter", http.StatusBadRequest)
@@ -653,6 +661,10 @@ func (c *Core) deleteBlobHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 
@@ -720,6 +732,10 @@ func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Req
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 

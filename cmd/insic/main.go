@@ -213,7 +213,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("delete"), color.CyanString("<key_value>"), color.YellowString("--root flag usually required"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("api"), color.CyanString("verify"), color.CyanString("<key_value>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("limits"), color.CyanString("[key_value]"), color.YellowString("Get limits. If key provided, gets for that key (--root required)."))
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N"), color.YellowString("--root flag usually required"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("api"), color.CyanString("set-limits"), color.CyanString("<key_value>"), color.CyanString("--disk N --mem N --events N --subs N --rps-data N --rps-event N"), color.YellowString("--root flag usually required"))
 
 	// Alias commands
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("alias"), color.CyanString("add"))
@@ -933,6 +933,12 @@ func handleApiGetMyLimits(c *client.Client, args []string) {
 	if resp.MaxLimits.Subscribers != nil {
 		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
 	}
+	if resp.MaxLimits.RPSDataLimit != nil {
+		fmt.Printf("  RPS Data Limit:    %d\n", *resp.MaxLimits.RPSDataLimit)
+	}
+	if resp.MaxLimits.RPSEventLimit != nil {
+		fmt.Printf("  RPS Event Limit:   %d\n", *resp.MaxLimits.RPSEventLimit)
+	}
 	fmt.Println(color.CyanString("\nCurrent Usage (for current key):"))
 	if resp.CurrentUsage.BytesOnDisk != nil {
 		fmt.Printf("  Bytes on Disk:     %d\n", *resp.CurrentUsage.BytesOnDisk)
@@ -985,6 +991,12 @@ func handleApiGetLimits(c *client.Client, args []string) {
 	if resp.MaxLimits.Subscribers != nil {
 		fmt.Printf("  Subscribers:       %d\n", *resp.MaxLimits.Subscribers)
 	}
+	if resp.MaxLimits.RPSDataLimit != nil {
+		fmt.Printf("  RPS Data Limit:    %d\n", *resp.MaxLimits.RPSDataLimit)
+	}
+	if resp.MaxLimits.RPSEventLimit != nil {
+		fmt.Printf("  RPS Event Limit:   %d\n", *resp.MaxLimits.RPSEventLimit)
+	}
 
 	fmt.Println(color.CyanString("\nCurrent Usage:"))
 	if resp.CurrentUsage.BytesOnDisk != nil {
@@ -1007,6 +1019,8 @@ func handleApiSetLimits(c *client.Client, args []string) {
 	mem := setLimitsCmd.Int64("mem", -1, "Max bytes in memory")
 	events := setLimitsCmd.Int64("events", -1, "Max events per second")
 	subs := setLimitsCmd.Int64("subs", -1, "Max subscribers")
+	rpsData := setLimitsCmd.Int64("rps-data", -1, "Data operations per second limit (e.g. set, get, delete)")
+	rpsEvent := setLimitsCmd.Int64("rps-event", -1, "Event operations per second limit (e.g. publish, subscribe)")
 
 	if len(args) < 1 {
 		logger.Error("api set-limits: requires <key_value> and flags")
@@ -1037,6 +1051,12 @@ func handleApiSetLimits(c *client.Client, args []string) {
 	}
 	if *subs != -1 {
 		limits.Subscribers = subs
+	}
+	if *rpsData != -1 {
+		limits.RPSDataLimit = rpsData
+	}
+	if *rpsEvent != -1 {
+		limits.RPSEventLimit = rpsEvent
 	}
 
 	err := c.SetLimits(apiKey, limits)
@@ -1460,6 +1480,12 @@ func printEntity(entity *models.Entity) {
 		}
 		if entity.Usage.MaxLimits.Subscribers != nil {
 			fmt.Printf("    Subscribers:       %d\n", *entity.Usage.MaxLimits.Subscribers)
+		}
+		if entity.Usage.MaxLimits.RPSDataLimit != nil {
+			fmt.Printf("    RPS Data Limit:    %d\n", *entity.Usage.MaxLimits.RPSDataLimit)
+		}
+		if entity.Usage.MaxLimits.RPSEventLimit != nil {
+			fmt.Printf("    RPS Event Limit:   %d\n", *entity.Usage.MaxLimits.RPSEventLimit)
 		}
 	}
 

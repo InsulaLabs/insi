@@ -26,6 +26,10 @@ func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+		return
+	}
+
 	c.logger.Debug("GetHandler", "entity", td.Entity)
 
 	key := r.URL.Query().Get("key")
@@ -61,6 +65,10 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 
@@ -133,6 +141,10 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 
@@ -230,6 +242,10 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+		return
+	}
+
 	c.logger.Debug("DeleteHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
@@ -300,6 +316,10 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 
@@ -375,6 +395,10 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 
@@ -472,6 +496,10 @@ func (c *Core) bumpHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 
