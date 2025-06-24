@@ -16,6 +16,14 @@ import (
 
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/google/uuid"
+	"golang.org/x/time/rate"
+)
+
+type limiterType string
+
+const (
+	limiterTypeData   limiterType = "data"
+	limiterTypeEvents limiterType = "events"
 )
 
 type routeClassification int
@@ -341,6 +349,15 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 		Key:   WithApiKeyMaxSubscriptions(keyUUID),
 		Value: fmt.Sprintf("%d", ApiDefaultMaxSubscriptions),
 	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyRPSDataLimit(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultRPSDataLimit),
+	})
+	c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeyRPSEventLimit(keyUUID),
+		Value: fmt.Sprintf("%d", ApiDefaultRPSEventLimit),
+	})
+
 	return actualKey, nil
 }
 
@@ -485,6 +502,74 @@ func (c *Core) decrypt(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return plaintext, nil
+}
+
+func (c *Core) CheckRateLimit(w http.ResponseWriter, r *http.Request, keyUUID string, lType limiterType) bool {
+
+	// Root key has no rate limits
+	if keyUUID == c.cfg.RootPrefix {
+		return true
+	}
+
+	item := c.entityRateLimiters.Get(keyUUID)
+	if item == nil {
+		rpse, err := c.fsm.Get(WithApiKeyRPSEventLimit(keyUUID))
+		if err != nil {
+			c.logger.Error("Could not get RPS event limit", "error", err)
+			return false
+		}
+
+		rpsd, err := c.fsm.Get(WithApiKeyRPSDataLimit(keyUUID))
+		if err != nil {
+			c.logger.Error("Could not get RPS data limit", "error", err)
+			return false
+		}
+
+		rpseInt, err := strconv.ParseInt(rpse, 10, 64)
+		if err != nil {
+			c.logger.Error("Could not parse RPS event limit", "error", err)
+			return false
+		}
+
+		rpsdInt, err := strconv.ParseInt(rpsd, 10, 64)
+		if err != nil {
+			c.logger.Error("Could not parse RPS data limit", "error", err)
+			return false
+		}
+
+		limiter := &endpointKeyRateLimiters{
+			events: rate.NewLimiter(rate.Limit(rpseInt), int(rpseInt)),
+			data:   rate.NewLimiter(rate.Limit(rpsdInt), int(rpsdInt)),
+		}
+		c.entityRateLimiters.Set(keyUUID, limiter, time.Minute*1)
+		// The first request is always allowed to create the limiter. Subsequent requests will be checked.
+		return true
+	}
+
+	limiter := item.Value()
+	var rateLimiter *rate.Limiter
+	var isAllowed bool
+
+	switch lType {
+	case limiterTypeData:
+		rateLimiter = limiter.data
+	case limiterTypeEvents:
+		rateLimiter = limiter.events
+	default:
+		c.logger.Error("Invalid limiter type specified", "type", lType)
+		return false
+	}
+
+	isAllowed = rateLimiter.Allow()
+
+	if !isAllowed {
+		retryAfter := rateLimiter.Reserve().Delay()
+		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
+		http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+		return false
+	}
+
+	return true
 }
 
 // This is still a system level operation, but it is used by all endpoints
@@ -684,12 +769,42 @@ func (c *Core) callerLimitsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rpsDataLimitForKey, err := c.fsm.Get(WithApiKeyRPSDataLimit(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current RPS data limit", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	rpsDataLimitForKeyInt, err := strconv.ParseInt(rpsDataLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current RPS data limit", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	rpsEventLimitForKey, err := c.fsm.Get(WithApiKeyRPSEventLimit(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current RPS event limit", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	rpsEventLimitForKeyInt, err := strconv.ParseInt(rpsEventLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current RPS event limit", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	limitsResponse := models.LimitsResponse{
 		MaxLimits: &models.Limits{
 			BytesOnDisk:   &diskLimitForKeyInt,
 			BytesInMemory: &memLimitForKeyInt,
 			EventsEmitted: &eventsLimitForKeyInt,
 			Subscribers:   &subscribersLimitForKeyInt,
+			RPSDataLimit:  &rpsDataLimitForKeyInt,
+			RPSEventLimit: &rpsEventLimitForKeyInt,
 		},
 		CurrentUsage: &models.Limits{
 			BytesOnDisk:   &diskUsageInt,
@@ -792,6 +907,27 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			c.logger.Error("failed to set subscribers limit", "error", err)
 			http.Error(w, "failed to set subscribers limit", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if req.Limits.RPSDataLimit != nil {
+		if err := c.fsm.Set(models.KVPayload{
+			Key:   WithApiKeyRPSDataLimit(target.KeyUUID),
+			Value: fmt.Sprintf("%d", *req.Limits.RPSDataLimit),
+		}); err != nil {
+			c.logger.Error("failed to set RPS data limit", "error", err)
+			http.Error(w, "failed to set RPS data limit", http.StatusInternalServerError)
+			return
+		}
+	}
+	if req.Limits.RPSEventLimit != nil {
+		if err := c.fsm.Set(models.KVPayload{
+			Key:   WithApiKeyRPSEventLimit(target.KeyUUID),
+			Value: fmt.Sprintf("%d", *req.Limits.RPSEventLimit),
+		}); err != nil {
+			c.logger.Error("failed to set RPS event limit", "error", err)
+			http.Error(w, "failed to set RPS event limit", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -964,18 +1100,48 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get the KEYUUID SET VALUE FROM ABOVE
+	rpsDataLimitForKey, err := c.fsm.Get(WithApiKeyRPSDataLimit(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current RPS data limit", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	rpsDataLimitForKeyInt, err := strconv.ParseInt(rpsDataLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current RPS data limit", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	rpsEventLimitForKey, err := c.fsm.Get(WithApiKeyRPSEventLimit(td.KeyUUID))
+	if err != nil {
+		c.logger.Error("Could not get current RPS event limit", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	rpsEventLimitForKeyInt, err := strconv.ParseInt(rpsEventLimitForKey, 10, 64)
+	if err != nil {
+		c.logger.Error("Could not parse current RPS event limit", "error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	limitsResponse := models.LimitsResponse{
 		MaxLimits: &models.Limits{
 			BytesOnDisk:   &diskLimitForKeyInt,
 			BytesInMemory: &memLimitForKeyInt,
 			EventsEmitted: &eventsLimitForKeyInt,
 			Subscribers:   &subscribersLimitForKeyInt,
+			RPSDataLimit:  &rpsDataLimitForKeyInt,
+			RPSEventLimit: &rpsEventLimitForKeyInt,
 		},
 		CurrentUsage: &models.Limits{
 			BytesOnDisk:   &diskUsageInt,
 			BytesInMemory: &memUsageInt,
 			EventsEmitted: &eventsUsageInt,
 			Subscribers:   &subscribersUsageInt,
+			// NOTE: Don't load current rps here, it's not correct
 		},
 	}
 

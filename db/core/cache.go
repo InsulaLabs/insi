@@ -25,6 +25,10 @@ func (c *Core) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+		return
+	}
+
 	c.logger.Debug("GetCacheHandler", "entity", td.Entity)
 
 	key := r.URL.Query().Get("key")
@@ -59,6 +63,10 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 
@@ -154,6 +162,10 @@ func (c *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+		return
+	}
+
 	c.logger.Debug("DeleteCacheHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
@@ -220,6 +232,10 @@ func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 
@@ -290,6 +306,10 @@ func (c *Core) compareAndSwapCacheHandler(w http.ResponseWriter, r *http.Request
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 
@@ -400,6 +420,10 @@ func (c *Core) iterateCacheKeysByPrefixHandler(w http.ResponseWriter, r *http.Re
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
 		return
 	}
 

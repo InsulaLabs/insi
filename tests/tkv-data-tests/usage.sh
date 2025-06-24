@@ -359,6 +359,64 @@ test_memory_usage_limit() {
     expect_success "Delete API key for cleanup" $? "$CMD_OUTPUT" "OK"
 }
 
+test_data_rate_limit() {
+    print_header "Test: Data Operations (RPS) Rate Limit"
+    local key_name="datalimit_key_$(date +%s)_$$"
+    local api_key=""
+
+    # 1. Create a key
+    echo -e "${INFO_EMOJI} Creating key for data rate limit test"
+    run_insic "api" "add" "$key_name"
+    if [ $? -ne 0 ]; then echo "Failed to create API key"; return; fi
+    api_key=$(echo "$CMD_OUTPUT" | grep "API Key:" | awk '{print $3}')
+    expect_success "Create API key for data limit test" 0 "$CMD_OUTPUT" "API Key:"
+
+    sleep 5
+
+    # 2. Set a low data RPS limit
+    local data_rps_limit=5
+    echo -e "${INFO_EMOJI} Setting data RPS limit for '$api_key' to $data_rps_limit ops/sec"
+    run_insic "api" "set-limits" "$api_key" "--rps-data" "$data_rps_limit"
+    expect_success "Set data RPS limit to $data_rps_limit/sec" $? "$CMD_OUTPUT" "OK"
+
+    sleep 10 # Allow time for limit to propagate
+
+    # Verify limit was set
+    run_insic_with_key "$api_key" "" "api" "limits"
+    expect_success "Verify data RPS limit was set" $? "$CMD_OUTPUT" "RPS Data Limit:    $data_rps_limit"
+
+    # 3. Burst 'set' commands to exceed the limit
+    echo -e "${INFO_EMOJI} Sending 'set' commands in a burst to test rate limit"
+    local success_count=0
+    local error_count=0
+    for i in {1..15}; do
+        run_insic_with_key "$api_key" "" "set" "data-rate-test-$i" "val-$i"
+        if [ $? -eq 0 ]; then
+            success_count=$((success_count + 1))
+        else
+            # Check for the specific rate limit error
+            if [[ "$CMD_OUTPUT" == *"rate limited"* ]] || [[ "$CMD_OUTPUT" == *"Too Many Requests"* ]]; then
+                error_count=$((error_count + 1))
+            fi
+        fi
+    done
+
+    # 4. Verify that some succeeded (burst allowance) and some failed
+    echo -e "${INFO_EMOJI} Burst test results: $success_count succeeded, $error_count failed with expected error."
+    if [ "$success_count" -gt 0 ] && [ "$error_count" -gt 0 ]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Data operation burst was correctly throttled (some succeeded, some failed).${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Data operation burst was not throttled as expected. Succeeded: $success_count, Failed: $error_count.${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+
+    # 5. Cleanup
+    echo -e "${INFO_EMOJI} Cleanup for data rate limit test"
+    run_insic "api" "delete" "$api_key"
+    expect_success "Delete API key for cleanup" $? "$CMD_OUTPUT" "OK"
+}
+
 test_event_rate_limit() {
     print_header "Test: Event Rate Limit"
     local key_name="eventlimit_key_$(date +%s)_$$"
@@ -376,15 +434,15 @@ test_event_rate_limit() {
     # 2. Set a low event rate limit
     # The server uses a token bucket. We set a low rate and burst.
     local event_limit=3
-    echo -e "${INFO_EMOJI} Setting event limit for '$api_key' to $event_limit events/sec"
-    run_insic "api" "set-limits" "$api_key" "--events" "$event_limit"
-    expect_success "Set event limit to $event_limit/sec" $? "$CMD_OUTPUT" "OK"
+    echo -e "${INFO_EMOJI} Setting event RPS limit for '$api_key' to $event_limit events/sec"
+    run_insic "api" "set-limits" "$api_key" "--rps-event" "$event_limit"
+    expect_success "Set event RPS limit to $event_limit/sec" $? "$CMD_OUTPUT" "OK"
 
     sleep 10 # Allow time for limit to propagate
 
     # Verify limit was set
     run_insic_with_key "$api_key" "" "api" "limits"
-    expect_success "Verify event limit was set" $? "$CMD_OUTPUT" "Events per Second: $event_limit"
+    expect_success "Verify event RPS limit was set" $? "$CMD_OUTPUT" "RPS Event Limit:   $event_limit"
 
     # 3. Burst events to exceed the limit
     echo -e "${INFO_EMOJI} Publishing events in a burst to test rate limit"
@@ -396,7 +454,7 @@ test_event_rate_limit() {
             success_count=$((success_count + 1))
         else
             # Check for the specific rate limit error
-            if [[ "$CMD_OUTPUT" == *"events limit exceeded"* ]] || [[ "$CMD_OUTPUT" == *"Too Many Requests"* ]]; then
+            if [[ "$CMD_OUTPUT" == *"rate limited"* ]] || [[ "$CMD_OUTPUT" == *"Too Many Requests"* ]]; then
                 error_count=$((error_count + 1))
             fi
         fi
@@ -508,6 +566,78 @@ test_subscriber_limit() {
     cleanup_subscribers
 }
 
+test_alias_rate_limit_sharing() {
+    print_header "Test: Alias and API Key Rate Limit Sharing"
+    local key_name="aliaslimit_key_$(date +%s)_$$"
+    local api_key=""
+    local alias_key=""
+
+    # 1. Create a key
+    echo -e "${INFO_EMOJI} Creating key for alias rate limit test"
+    run_insic "api" "add" "$key_name"
+    if [ $? -ne 0 ]; then echo "Failed to create API key"; return; fi
+    api_key=$(echo "$CMD_OUTPUT" | grep "API Key:" | awk '{print $3}')
+    expect_success "Create API key for alias limit test" 0 "$CMD_OUTPUT" "API Key:"
+
+    sleep 5
+
+    # 2. Set a low data RPS limit
+    local data_rps_limit=5
+    echo -e "${INFO_EMOJI} Setting data RPS limit for '$api_key' to $data_rps_limit ops/sec"
+    run_insic "api" "set-limits" "$api_key" "--rps-data" "$data_rps_limit"
+    expect_success "Set data RPS limit to $data_rps_limit/sec" $? "$CMD_OUTPUT" "OK"
+
+    sleep 10 # Allow time for limit to propagate
+
+    # 3. Create an alias for the key
+    echo -e "${INFO_EMOJI} Creating an alias for the key"
+    run_insic_with_key "$api_key" "" "alias" "add"
+    if [ $? -ne 0 ]; then echo "Failed to create alias"; return; fi
+    alias_key=$(echo "$CMD_OUTPUT" | grep "Alias Key:" | awk '{print $3}')
+    expect_success "Create alias for the key" 0 "$CMD_OUTPUT" "Alias Key:"
+
+    # 4. Burst 'set' commands using both the original key and the alias to test shared limit
+    echo -e "${INFO_EMOJI} Sending 'set' commands using original key and alias to test shared rate limit"
+    local success_count=0
+    local error_count=0
+    for i in {1..20}; do
+        local key_to_use=""
+        local key_type_log=""
+        if (( i % 2 == 0 )); then
+            key_to_use="$api_key"
+            key_type_log="original key"
+        else
+            key_to_use="$alias_key"
+            key_type_log="alias key"
+        fi
+
+        run_insic_with_key "$key_to_use" "" "set" "alias-rate-test-$i" "val-$i"
+        if [ $? -eq 0 ]; then
+            success_count=$((success_count + 1))
+        else
+            # Check for the specific rate limit error
+            if [[ "$CMD_OUTPUT" == *"rate limited"* ]] || [[ "$CMD_OUTPUT" == *"Too Many Requests"* ]]; then
+                error_count=$((error_count + 1))
+            fi
+        fi
+    done
+
+    # 5. Verify that the combined requests were throttled
+    echo -e "${INFO_EMOJI} Shared limit burst test results: $success_count succeeded, $error_count failed with expected error."
+    if [ "$success_count" -gt 0 ] && [ "$error_count" -gt 0 ]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: API key and alias correctly share the same rate limit bucket.${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: API key and alias did not share the rate limit bucket as expected. Succeeded: $success_count, Failed: $error_count.${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+    fi
+
+    # 6. Cleanup
+    echo -e "${INFO_EMOJI} Cleanup for alias rate limit test"
+    run_insic "api" "delete" "$api_key"
+    expect_success "Delete API key for cleanup" $? "$CMD_OUTPUT" "OK"
+}
+
 # --- Main Execution ---
 main() {
     if [ -z "$1" ]; then
@@ -566,7 +696,9 @@ main() {
     test_subscriber_limit
     test_disk_usage_limit
     test_memory_usage_limit
+    test_data_rate_limit
     test_event_rate_limit
+    test_alias_rate_limit_sharing
     
     echo -e "\n${GREEN}All TKV Usage Limit operations tests completed.${NC}"
 

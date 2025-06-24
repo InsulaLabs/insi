@@ -225,6 +225,10 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeEvents) {
+		return
+	}
+
 	// Request a subscription slot. This is an atomic operation on the leader.
 	slotGranted, err := c.requestSubscriptionSlot(td.KeyUUID)
 	if err != nil {
@@ -546,6 +550,10 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	td, ok := c.ValidateToken(r, AnyUser())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeEvents) {
 		return
 	}
 
