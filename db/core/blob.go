@@ -39,6 +39,8 @@ const (
 	KeyPrefixNodeIdentityChallenge = "_:node:identity:challenge:" // _:node:identity:challenge:node_id => UUID(random) when connecting to a peer we present our node id, they must return the UUID from the db to confirm they have access to the same level of data.
 
 	TombstoneCycleFrequency = time.Second * 30
+
+	MaxBlobDownloadRetries = 5
 )
 
 func blobMetadataKey(dataScopeUUID, key string) string {
@@ -118,8 +120,6 @@ func (x *blobService) start(ctx context.Context) error {
 	x.logger.Info("Starting blob service subsystems")
 	go x.startEventSystem(ctx)
 	go x.startTombstoneSystem(ctx)
-	// go x.startPeerSystem(ctx)
-	// go x.startIdentitySystem(ctx)
 	return nil
 }
 
@@ -131,8 +131,10 @@ func (x *blobService) stop() error {
 func (x *blobService) startEventSystem(ctx context.Context) {
 	x.logger.Debug("Starting blob event system")
 
-	// This is for replication
-	x.core.SubscribeInternally(TopicBlobUploaded, func(event models.Event) {
+	localNodeRetryTopic := fmt.Sprintf("%s:blob:retry", x.core.nodeName)
+
+	handleBlobRetrieval := func(event models.Event, isRetry bool) {
+
 		x.logger.Debug("Received blob uploaded event")
 
 		eventData, ok := event.Data.(string)
@@ -162,11 +164,63 @@ func (x *blobService) startEventSystem(ctx context.Context) {
 		}
 
 		x.logger.Debug("Downloading blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID)
-		if err := x.downloadBlobFromPeer(ctx, blobMeta); err != nil {
-			x.logger.Error("Could not download blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID, "error", err)
-		} else {
-			x.logger.Debug("Successfully downloaded blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID)
+
+		var downloadErr error
+	RetryLoop:
+		for i := 0; i < MaxBlobDownloadRetries; i++ {
+			downloadErr = x.downloadBlobFromPeer(ctx, blobMeta)
+			if downloadErr == nil {
+				x.logger.Debug("Successfully downloaded blob from peer", "blob_key", blobMeta.Key, "source_node", blobMeta.NodeID)
+				break // Success
+			}
+			x.logger.Warn("Failed to download blob from peer, will retry",
+				"attempt", i+1,
+				"max_retries", MaxBlobDownloadRetries,
+				"blob_key", blobMeta.Key,
+				"source_node", blobMeta.NodeID,
+				"error", downloadErr)
+
+			// Simple linear backoff. Check context to avoid blocking on shutdown.
+			select {
+			case <-time.After(time.Second * time.Duration(i+1)):
+				// continue to next retry
+			case <-ctx.Done():
+				x.logger.Warn("Context cancelled during blob download retry backoff", "blob_key", blobMeta.Key)
+				downloadErr = ctx.Err() // Store context error
+				break RetryLoop
+			}
 		}
+
+		if downloadErr != nil {
+			x.logger.Error("Could not download blob from peer after all retries",
+				"blob_key", blobMeta.Key,
+				"source_node", blobMeta.NodeID,
+				"error", downloadErr)
+
+			// Attempt a full retry in 10 seconds if this is not a retry already
+			if !isRetry {
+				go func() {
+					select {
+					case <-x.core.appCtx.Done():
+						x.logger.Warn("Context cancelled during blob download retry backoff", "blob_key", blobMeta.Key)
+					case <-time.After(time.Second * 10):
+						x.logger.Debug("Publishing blob download retry event", "blob_key", blobMeta.Key)
+						x.core.fsm.Publish(localNodeRetryTopic, eventData)
+					}
+				}()
+			}
+		}
+	}
+
+	// Only this node will emit this and receive this, its for local node download retries
+	x.core.SubscribeInternally(localNodeRetryTopic, func(event models.Event) {
+		x.logger.Debug("Received blob retry event")
+		handleBlobRetrieval(event, true)
+	})
+
+	// This is for replication
+	x.core.SubscribeInternally(TopicBlobUploaded, func(event models.Event) {
+		handleBlobRetrieval(event, false)
 	})
 
 	// This is for deletion
@@ -212,22 +266,23 @@ func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.
 		return fmt.Errorf("could not find peer with node id %s", blobMeta.NodeID)
 	}
 
-	// Correctly build the download URL using the client domain for TLS verification.
-	host, port, err := net.SplitHostPort(sourcePeer.endpoint.PrivateBinding)
+	// Correctly build the download URL using the client domain for TLS verification,
+	// and the port from the private binding.
+	_, port, err := net.SplitHostPort(sourcePeer.endpoint.PrivateBinding)
 	if err != nil {
 		return fmt.Errorf("could not parse private binding for peer %s: %w", sourcePeer.nodeId, err)
 	}
 
-	connectHost := host
-	if sourcePeer.endpoint.ClientDomain != "" {
-		connectHost = sourcePeer.endpoint.ClientDomain
+	connectHost := sourcePeer.endpoint.ClientDomain
+	if connectHost == "" {
+		// Fallback for safety, though ClientDomain should always be set in prod.
+		host, _, _ := net.SplitHostPort(sourcePeer.endpoint.PrivateBinding)
+		connectHost = host
 	}
 
 	downloadURL := fmt.Sprintf("https://%s/db/internal/v1/blob/download?key=%s&scope=%s",
 		net.JoinHostPort(connectHost, port), blobMeta.Key, blobMeta.DataScopeUUID)
 
-	// The client in the blob service is a root client, so we can use it to talk to other nodes.
-	// Use the private binding for internal communication - WE NEVER USE HTTP ONLY EVER FUCKING HTTPS
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"GET",
@@ -235,6 +290,7 @@ func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.
 		nil,
 	)
 	if err != nil {
+		x.logger.Error("Could not create request to download blob", "error", err, "url", downloadURL)
 		return fmt.Errorf("could not create request to download blob: %w", err)
 	}
 	req.Header.Set("Authorization", x.insiClient.GetApiKey())
