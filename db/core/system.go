@@ -505,6 +505,12 @@ func (c *Core) decrypt(data []byte) ([]byte, error) {
 }
 
 func (c *Core) CheckRateLimit(w http.ResponseWriter, r *http.Request, keyUUID string, lType limiterType) bool {
+
+	// Root key has no rate limits
+	if keyUUID == c.cfg.RootPrefix {
+		return true
+	}
+
 	item := c.entityRateLimiters.Get(keyUUID)
 	if item == nil {
 		rpse, err := c.fsm.Get(WithApiKeyRPSEventLimit(keyUUID))

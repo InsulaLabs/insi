@@ -343,8 +343,10 @@ test_api_key_limits() {
     local new_mem=987654321
     local new_events=500
     local new_subs=50
+    local new_rps_data=10000
+    local new_rps_event=10000
     echo -e "${INFO_EMOJI} Attempting to set limits for key: $generated_key"
-    run_insic "api" "set-limits" "$generated_key" "--disk" "$new_disk" "--mem" "$new_mem" "--events" "$new_events" "--subs" "$new_subs"
+    run_insic "api" "set-limits" "$generated_key" "--disk" "$new_disk" "--mem" "$new_mem" "--events" "$new_events" "--subs" "$new_subs" "--rps-data" "$new_rps_data" "--rps-event" "$new_rps_event"
     exit_code_set_limits=$?
     output_set_limits=$CMD_OUTPUT
     expect_success "Set new limits for key '$generated_key'" "$exit_code_set_limits" "$output_set_limits" "OK"
@@ -362,6 +364,8 @@ test_api_key_limits() {
     expect_success "Verify updated memory limit" "$exit_code_get_updated" "$output_get_updated" "Bytes in Memory:   $new_mem"
     expect_success "Verify updated events limit" "$exit_code_get_updated" "$output_get_updated" "Events per Second: $new_events"
     expect_success "Verify updated subscribers limit" "$exit_code_get_updated" "$output_get_updated" "Subscribers:       $new_subs"
+    expect_success "Verify updated rps data limit" "$exit_code_get_updated" "$output_get_updated" "RPS Data Limit:    $new_rps_data"
+    expect_success "Verify updated rps event limit" "$exit_code_get_updated" "$output_get_updated" "RPS Event Limit:   $new_rps_event"
 
     # 5. Delete the key
     echo -e "${INFO_EMOJI} Attempting to delete API key used for limits test: $generated_key"
@@ -398,8 +402,10 @@ test_api_get_limits_for_other_key() {
     local new_mem=111222333
     local new_events=250
     local new_subs=25
+    local new_rps_data=10000
+    local new_rps_event=10000
     echo -e "${INFO_EMOJI} Attempting to set limits for key: $generated_key"
-    run_insic "api" "set-limits" "$generated_key" "--disk" "$new_disk" "--mem" "$new_mem" "--events" "$new_events" "--subs" "$new_subs"
+    run_insic "api" "set-limits" "$generated_key" "--disk" "$new_disk" "--mem" "$new_mem" "--events" "$new_events" "--subs" "$new_subs" "--rps-data" "$new_rps_data" "--rps-event" "$new_rps_event"
     exit_code_set_limits=$?
     output_set_limits=$CMD_OUTPUT
     expect_success "Set new limits for key '$generated_key'" "$exit_code_set_limits" "$output_set_limits" "OK"
@@ -417,6 +423,8 @@ test_api_get_limits_for_other_key() {
     expect_success "Verify specific memory limit" "$exit_code_get_specific" "$output_get_specific" "Bytes in Memory:   $new_mem"
     expect_success "Verify specific events limit" "$exit_code_get_specific" "$output_get_specific" "Events per Second: $new_events"
     expect_success "Verify specific subscribers limit" "$exit_code_get_specific" "$output_get_specific" "Subscribers:       $new_subs"
+    expect_success "Verify specific rps data limit" "$exit_code_get_specific" "$output_get_specific" "RPS Data Limit:    $new_rps_data"
+    expect_success "Verify specific rps event limit" "$exit_code_get_specific" "$output_get_specific" "RPS Event Limit:   $new_rps_event"
 
     # 4. Try to get limits for that specific key without root. This should fail.
     echo -e "${INFO_EMOJI} Attempting to get specific limits for key '$generated_key' WITHOUT root"
@@ -727,8 +735,10 @@ test_alias_shared_limits() {
 
     # 2. Set a very low disk limit on the primary key
     local disk_limit=50 # bytes
+    local rps_data_limit=10000
+    local rps_event_limit=10000
     echo -e "${INFO_EMOJI} Setting disk limit for '$primary_key' to $disk_limit bytes"
-    run_insic "api" "set-limits" "$primary_key" "--disk" "$disk_limit"
+    run_insic "api" "set-limits" "$primary_key" "--disk" "$disk_limit" "--rps-data" "$rps_data_limit" "--rps-event" "$rps_event_limit"
     if [ $? -ne 0 ]; then echo "Failed to set limits"; run_insic "api" "delete" "$primary_key"; return; fi
 
     # 3. Create an alias for the key
