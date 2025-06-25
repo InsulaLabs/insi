@@ -32,8 +32,6 @@ func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
 		return db.View(func(txn *badger.Txn) error {
 			opts := badger.DefaultIteratorOptions
 			opts.PrefetchSize = 10
-			// TODO: We might have to do this need tests first:
-			// 		opts.PrefetchValues = true
 			it := txn.NewIterator(opts)
 			defer it.Close()
 
@@ -71,7 +69,6 @@ func (b *badgerFSMSnapshot) Persist(sink raft.SnapshotSink) error {
 		})
 	}
 
-	// Persist valuesDb
 	if err := persistDb(b.valuesDb, dbTypeValues); err != nil {
 		sink.Cancel()
 		return fmt.Errorf("failed to persist snapshot for valuesDb: %w", err)

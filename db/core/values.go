@@ -113,7 +113,6 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// All keys come back with the api key unique prefix so we need to remove it
 	for i, key := range value {
 		value[i] = strings.TrimPrefix(key, fmt.Sprintf("%s:", td.DataScopeUUID))
 	}
@@ -173,7 +172,6 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Value) {
@@ -190,7 +188,6 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 	existingValue, err := c.fsm.Get(p.Key)
 	if err != nil {
 		var nfErr *tkv.ErrKeyNotFound
-		// We only care about key not found, other errors should be returned.
 		if !errors.As(err, &nfErr) {
 			c.logger.Error("Could not get existing value for value", "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -210,7 +207,6 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 
 	ok, current, limit := c.CheckDiskUsage(td, delta)
 	if !ok {
-		// Add headers to show them their current disk usage and the limit
 		w.Header().Set("X-Current-Disk-Usage", current)
 		w.Header().Set("X-Disk-Usage-Limit", limit)
 		http.Error(w, "Disk usage limit exceeded", http.StatusBadRequest)
@@ -226,7 +222,6 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := c.AssignBytesToTD(td, StorageTargetDisk, delta); err != nil {
 		c.logger.Error("could not assign bytes to td for disk", "error", err)
-		// continue on, we don't want to block the request on this
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -271,7 +266,6 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Key) {
@@ -283,7 +277,6 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var nfErr *tkv.ErrKeyNotFound
 		if errors.As(err, &nfErr) {
-			// Key doesn't exist, so the delete is a no-op.
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -299,11 +292,9 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decrement memory usage
 	size := len(p.Key) + len(existingValue)
 	if err := c.AssignBytesToTD(td, StorageTargetDisk, -int64(size)); err != nil {
 		c.logger.Error("Could not bump integer via FSM for disk usage on delete", "error", err)
-		// Don't fail the whole request, but log it.
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -348,7 +339,6 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Value) {
@@ -382,7 +372,6 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := c.AssignBytesToTD(td, StorageTargetDisk, int64(p.TotalLength())); err != nil {
 		c.logger.Error("could not assign bytes to td for disk on setnx", "error", err)
-		// continue on, we don't want to block the request on this
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -427,7 +416,6 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.NewValue) {
@@ -439,12 +427,10 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// First, check if the old value matches.
 	existingValue, err := c.fsm.Get(p.Key)
 	if err != nil {
 		var nfErr *tkv.ErrKeyNotFound
 		if errors.As(err, &nfErr) {
-			// Key doesn't exist, so CAS fails.
 			http.Error(w, "key does not exist", http.StatusPreconditionFailed)
 			return
 		}
@@ -458,7 +444,6 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If old values match, calculate the delta and check disk usage.
 	delta := int64(len(p.NewValue) - len(existingValue))
 	ok, current, limit := c.CheckDiskUsage(td, delta)
 	if !ok {
@@ -480,10 +465,8 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If CAS was successful, assign the new bytes.
 	if err := c.AssignBytesToTD(td, StorageTargetDisk, delta); err != nil {
 		c.logger.Error("could not assign bytes to td for disk on cas", "error", err)
-		// Don't fail the request, but log it.
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -528,7 +511,6 @@ func (c *Core) bumpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// prefix to lock to the api key holding entity
 	p.Key = fmt.Sprintf("%s:%s", td.DataScopeUUID, p.Key)
 
 	if sizeTooLargeForStorage(p.Value) {
@@ -544,7 +526,6 @@ func (c *Core) bumpHandler(w http.ResponseWriter, r *http.Request) {
 	existingValue, err := c.fsm.Get(p.Key)
 	if err != nil {
 		var nfErr *tkv.ErrKeyNotFound
-		// We only care about key not found, other errors should be returned.
 		if !errors.As(err, &nfErr) {
 			c.logger.Error("Could not get existing value for value", "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -572,7 +553,6 @@ func (c *Core) bumpHandler(w http.ResponseWriter, r *http.Request) {
 
 	ok, current, limit := c.CheckDiskUsage(td, delta)
 	if !ok {
-		// Add headers to show them their current disk usage and the limit
 		w.Header().Set("X-Current-Disk-Usage", current)
 		w.Header().Set("X-Disk-Usage-Limit", limit)
 		http.Error(w, "Disk usage limit exceeded", http.StatusBadRequest)
@@ -588,7 +568,6 @@ func (c *Core) bumpHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := c.AssignBytesToTD(td, StorageTargetDisk, delta); err != nil {
 		c.logger.Error("could not assign bytes to td for disk", "error", err)
-		// continue on, we don't want to block the request on this
 	}
 
 	w.WriteHeader(http.StatusOK)
