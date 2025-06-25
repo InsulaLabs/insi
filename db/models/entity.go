@@ -1,11 +1,11 @@
 package models
 
 type Entity struct {
-	RootApiKey    string   // the key we issue known as "their root" (of which aliases are made)
-	Aliases       []string // the aliases they have made
-	DataScopeUUID string   // the data scope they have created
-	KeyUUID       string   // the key they have created
-	Usage         LimitsResponse
+	RootApiKey    string         `json:"root_api_key"`    // the key we issue known as "their root" (of which aliases are made)
+	Aliases       []string       `json:"aliases"`         // the aliases they have made
+	DataScopeUUID string         `json:"data_scope_uuid"` // the data scope they have created
+	KeyUUID       string         `json:"key_uuid"`        // the key they have created
+	Usage         LimitsResponse `json:"usage"`
 }
 
 type InsightRequestEntity struct {

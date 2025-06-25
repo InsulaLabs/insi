@@ -8,20 +8,28 @@ The InsiDB API key system provides secure access to the database. It includes fe
 
 Every API key is subject to resource limits to ensure fair usage and prevent abuse. The system tracks the following for each key:
 
-*   **Memory Usage**: The total size of key-value pairs stored in the in-memory cache.
-*   **Disk Usage**: The total size of key-value pairs and blobs stored on disk.
-*   **Events**: The number of events a key can publish within a certain time window.
-*   **Subscriptions**: The number of concurrent event stream subscriptions a key can have.
-*   **Data RPS**: The number of data-plane requests per second a key can make.
-*   **Events RPS**: The number of event-plane requests per second a key can make.
+*   **Bytes in Memory** (`bytes_in_memory`): The total size of key-value pairs stored in the in-memory cache.
+*   **Bytes on Disk** (`bytes_on_disk`): The total size of key-value pairs and blobs stored on disk.
+*   **Events Emitted** (`events_emitted`): The number of events published by this key within a 24-hour period. This counter automatically resets every 24 hours.
+*   **Subscribers** (`subscribers`): The number of concurrent event stream subscriptions a key currently has.
+*   **Data RPS Limit** (`rate_per_second_data_limit`): The number of data-plane requests per second a key can make (e.g., set, get, delete operations).
+*   **Event RPS Limit** (`rate_per_second_event_limit`): The number of event-plane requests per second a key can make (e.g., publish, subscribe operations).
 
 These are tracked using specific internal key prefixes (e.g., `internal:api_key_memory_usage:<key_uuid>`).
 
 Limits for each of these resources are also stored and can be configured on a per-key basis by an administrator. When a rate limit is exceeded, the API will respond with a `429 Too Many Requests` status code, including a `Retry-After` header to indicate when the client may retry the request.
 
+**Default Resource Limits:**
+- Memory Usage: 250 MB
+- Disk Usage: 1 GB
+- Events Emitted: 1,000 per 24-hour period
+- Subscribers: 100 concurrent connections
+- Data RPS Limit: 25 requests per second
+- Event RPS Limit: 10 requests per second
+
 ### Key Lifecycle Management (Admin Only)
 
-The creation and deletion of primary API keys are administrative tasks that can only be performed by a client using the system's root API key.
+The creation and deletion of primary API keys are administrative tasks that can only be performed by a client using the system's root API key (derived from the cluster's instance secret).
 
 #### Key Creation
 
@@ -63,25 +71,25 @@ There are two ways to view limits: for the calling key, or for a specific key (a
 *   **Endpoint (Caller)**: `GET /db/api/v1/limits`
 *   **Authentication**: Any User Key
 
-This endpoint returns an object showing the maximum configured limits and the current resource usage for the key making the request.
+This endpoint returns an object showing the maximum configured limits and the current resource usage for the key making the request. **Note**: Current usage for RPS limits is not included in the response as it represents instantaneous rate data.
 
 *   **Endpoint (Admin)**: `POST /db/api/v1/admin/limits/get`
 *   **Authentication**: System Root Key
 
-This allows an administrator to view the limits and usage for any key by specifying it in the request body.
+This allows an administrator to view the limits and usage for any key by specifying it in the request body. **Note**: Like the caller endpoint, current RPS usage is not included in the response.
 
 ## API Key Aliases
 
-Aliases allow a primary API key to generate disposable, subordinate keys. These aliases share the exact same identity, permissions, and resource limits as their "root" key.
+Aliases allow a primary API key (entity root key) to generate disposable, subordinate keys. These aliases share the exact same identity, permissions, and resource limits as their parent key.
 
 **Purpose**: The primary use case is to create keys that can be safely used in less secure environments (e.g., client-side applications, third-party integrations). If an alias is compromised, it can be revoked without affecting the primary key or the services that depend on it.
 
 ### Creating an Alias
 
 *   **Endpoint**: `POST /db/api/v1/alias/set`
-*   **Authentication**: Any User Key (The key creating the alias)
+*   **Authentication**: Any User Key (The entity root key creating the alias)
 
-Any valid API key (except the system root key) can create an alias for itself.
+Any valid API key (except the system root key) can create an alias for itself. **Important**: Only entity root keys can create aliases; alias keys cannot create further aliases.
 
 1.  The system generates a brand new, unique API key to serve as the alias.
 2.  It creates two mappings in the database:
@@ -94,9 +102,9 @@ A single key can have a maximum of **16** aliases.
 ### Deleting an Alias
 
 *   **Endpoint**: `POST /db/api/v1/alias/delete`
-*   **Authentication**: The **Root Key** of the alias.
+*   **Authentication**: The **Entity Root Key** of the alias.
 
-To delete an alias, the request must be authenticated with the original key that created the alias, not the alias itself. This prevents a compromised alias from deleting itself. The process removes the mappings and the alias key from the system.
+To delete an alias, the request must be authenticated with the original entity root key that created the alias, not the alias itself. This prevents a compromised alias from deleting itself. The process removes the mappings and the alias key from the system.
 
 ### Listing Aliases
 
@@ -104,3 +112,11 @@ To delete an alias, the request must be authenticated with the original key that
 *   **Authentication**: Any User Key
 
 A key can retrieve a list of all its active aliases.
+
+## Key Terminology
+
+**System Root Key**: The cluster-wide administrative key derived from the instance secret. This key has administrative privileges and can create/delete other API keys and modify limits.
+
+**Entity Root Key**: A user's primary API key created via the admin API. This is the "parent" key from which aliases can be created. Also referred to as a "root API key" in the context of a specific user entity.
+
+**Alias Key**: A subordinate key created from an entity root key. Aliases inherit all permissions and limits from their parent but can be revoked independently.
