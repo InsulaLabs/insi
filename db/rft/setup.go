@@ -26,9 +26,7 @@ type SetupConfig struct {
 	ClusterConfig        *config.Cluster
 }
 
-// setupRaft is modified to take clusterConfig and isDefaultLeader flag
 func setupRaft(cfg *SetupConfig) (*raft.Raft, error) {
-
 	raftDataPath := filepath.Join(cfg.NodeDir, config.RaftDataDirName)
 
 	if err := os.MkdirAll(raftDataPath, os.ModePerm); err != nil {
@@ -118,7 +116,7 @@ func setupRaft(cfg *SetupConfig) (*raft.Raft, error) {
 			cfg.Logger.Info(
 				"Node has no existing Raft state. Will attempt to join leader",
 				"node_id", cfg.NodeId, "leader", cfg.ClusterConfig.DefaultLeader)
-			// Auto-join logic in main() will handle the joining process for non-default-leaders on first launch.
+			// Auto-join logic will handle the joining process for non-default-leaders on first launch.
 		}
 	} else {
 		cfg.Logger.Info(

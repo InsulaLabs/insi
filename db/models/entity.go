@@ -32,5 +32,3 @@ type InsightRequestEntityByAlias struct {
 type InsightResponseEntityByAlias struct {
 	Entity Entity `json:"entity"`
 }
-
-// this is all we are exposing of the insight api into core (for security reasons)

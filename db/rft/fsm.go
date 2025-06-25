@@ -862,7 +862,6 @@ func (kf *kvFsm) SetNX(kvp models.KVPayload) error {
 
 	response := future.Response()
 	if responseErr, ok := response.(error); ok && responseErr != nil {
-		// This is where we'd get tkv.ErrKeyExists
 		kf.logger.Info("FSM application error for SetNX", "key", kvp.Key, "error", responseErr)
 		return responseErr
 	}
@@ -897,7 +896,6 @@ func (kf *kvFsm) CompareAndSwap(p models.CASPayload) error {
 
 	response := future.Response()
 	if responseErr, ok := response.(error); ok && responseErr != nil {
-		// This is where we'd get tkv.ErrCASFailed
 		kf.logger.Info("FSM application error for CompareAndSwap", "key", p.Key, "error", responseErr)
 		return responseErr
 	}
