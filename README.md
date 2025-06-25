@@ -19,7 +19,7 @@ Perfect for web applications, microservices, IoT systems, and any project needin
 ### 1. Build Insi
 
 ```bash
-git clone https://github.com/your-org/insi
+git clone https://github.com/InsulaLabs/insi
 cd insi
 make all
 ```
@@ -119,7 +119,7 @@ Every Entity automatically gets:
 package main
 
 import (
-    "github.com/your-org/insi/fwi"
+    "github.com/InsulaLabs/insi/fwi"
     "log"
 )
 
