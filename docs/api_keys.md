@@ -12,10 +12,12 @@ Every API key is subject to resource limits to ensure fair usage and prevent abu
 *   **Disk Usage**: The total size of key-value pairs and blobs stored on disk.
 *   **Events**: The number of events a key can publish within a certain time window.
 *   **Subscriptions**: The number of concurrent event stream subscriptions a key can have.
+*   **Data RPS**: The number of data-plane requests per second a key can make.
+*   **Events RPS**: The number of event-plane requests per second a key can make.
 
 These are tracked using specific internal key prefixes (e.g., `internal:api_key_memory_usage:<key_uuid>`).
 
-Limits for each of these resources are also stored and can be configured on a per-key basis by an administrator.
+Limits for each of these resources are also stored and can be configured on a per-key basis by an administrator. When a rate limit is exceeded, the API will respond with a `429 Too Many Requests` status code, including a `Retry-After` header to indicate when the client may retry the request.
 
 ### Key Lifecycle Management (Admin Only)
 
@@ -42,6 +44,31 @@ When an API key is deleted, it is not immediately purged from the system. Instea
 5.  Finally, the tombstone record is removed.
 
 This asynchronous process ensures that deleting a key with a large amount of data does not block the system. This cleanup also includes the automatic deletion of any aliases created by the key.
+
+### Resource Limit Management
+
+While resource limits are set by default upon key creation, they can be viewed and modified via specific API endpoints.
+
+#### Setting Resource Limits (Admin Only)
+
+*   **Endpoint**: `POST /db/api/v1/admin/limits/set`
+*   **Authentication**: System Root Key
+
+An administrator can set or update any resource limit for a specific API key. The request body must include the target `api_key` and a `limits` object containing the values to be changed. Any fields omitted from the `limits` object will remain unchanged.
+
+#### Viewing Resource Limits
+
+There are two ways to view limits: for the calling key, or for a specific key (admin only).
+
+*   **Endpoint (Caller)**: `GET /db/api/v1/limits`
+*   **Authentication**: Any User Key
+
+This endpoint returns an object showing the maximum configured limits and the current resource usage for the key making the request.
+
+*   **Endpoint (Admin)**: `POST /db/api/v1/admin/limits/get`
+*   **Authentication**: System Root Key
+
+This allows an administrator to view the limits and usage for any key by specifying it in the request body.
 
 ## API Key Aliases
 

@@ -63,3 +63,20 @@ Deletion is a two-phase process that uses a "tombstone" pattern to gracefully ha
         iii. After publishing the event, the leader commits a `Delete` command to Raft to remove the original blob metadata.
         iv. Finally, the leader commits another `Delete` command to Raft to remove the tombstone record itself.
     d. This two-step process, using a combination of a leader-driven garbage collection task and a distributed event, ensures that both the physical blob files and their associated metadata are consistently and cleanly removed from all nodes across the cluster.
+
+
+# Blob Clone Failure
+
+In the event of a replication failure immediatly following an upload, the system will retry 5 times (internal routes.)
+If it fails 5 times, a "back burner" event will be fired in a parellel thread after 10 seconds to perform the 5xRetry one
+more time before logging failure.
+
+## TODO:
+
+Create a watchdog thread similar to the tombstone execs that kick-off to ensure these are fully replicated.
+The hard-ish part will be the fact that writing to fsm requires being the leader so depending on the failure
+or replication requirements in a particular failure route, it may require coordination on a back-channel (like
+the internal events, etc) to ensure completeness.
+
+Note: I haven't take the time to do this yet because post-discovery of potential no stress test has caused a failure
+that the current system has not been able to handle.
