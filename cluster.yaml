@@ -23,6 +23,7 @@ trustedProxies:
 permittedIPs:
   - "127.0.0.1"
   - "::1"
+  - "*"  # Permitting `*` is permitted, but internally IGNORED on "private" routes (admin/ internal/ etc)
 
 cache:
   standard-ttl: 60m
