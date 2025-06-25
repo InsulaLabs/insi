@@ -17,20 +17,7 @@ import (
 )
 
 /*
-	The FWI interface abstsracts the client. I want the VFS to abastract a file system
-	over-top of the BLOB interface of an entity. This way we can:
-
-	Entity.GetFS() FS
-
-	And then have reads and writes be directed to a blob on the cluster.
-
-	We can acheive this by emulating a unix fs where the paths to the files
-	are keys `/some/dir/file.txt` and an empty dir can be `/some/dir/` mapped
-	to a meta struct in the KV value store describing when the dir
-	was made (no other info is needed)
-
-	I want this interface compatible such that when a user "opens"
-	a file, they can treeat it just as if its a file in go.
+	NOTE: This is an idea that is partially fleshed out - it is not considered "ready for use"
 */
 
 // FS represents a virtual file system interface.

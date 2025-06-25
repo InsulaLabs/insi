@@ -21,7 +21,6 @@ func TestBadge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Add debug info
 	fmt.Printf("Original data: %s\n", some_data)
 	fmt.Printf("Signed data: %+v\n", signed)
 
@@ -33,7 +32,6 @@ func TestBadge(t *testing.T) {
 	if !verified {
 		t.Fatal("verified is false")
 	}
-
 }
 
 func TestBadgeEncrypt(t *testing.T) {
@@ -61,7 +59,6 @@ func TestBadgeEncrypt(t *testing.T) {
 }
 
 func randomString(length int) string {
-	// rand reader faggot
 	b := make([]byte, length)
 	_, err := rand.Read(b)
 	if err != nil {
@@ -115,7 +112,6 @@ func TestBadgeEncryptAndDecrypt(t *testing.T) {
 			t.Fatal("verificationOne is false")
 		}
 
-		// This should fail with an error, as it's a different badge
 		failedVerification, err := badge2.Verify(signed)
 		if err == nil {
 			t.Fatal("expected error from different badge verification")
@@ -124,7 +120,6 @@ func TestBadgeEncryptAndDecrypt(t *testing.T) {
 			t.Fatal("failedVerification is true")
 		}
 
-		// Now we transmute the badges
 		encrypted, err := badge.EncryptBadge(testCase.Secret)
 		if err != nil {
 			t.Fatal(err)

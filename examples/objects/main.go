@@ -26,7 +26,7 @@ const (
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelWarn, // Keep logger quiet for CLI tool unless there's a warning/error
+		Level: slog.LevelWarn,
 	}))
 	slog.SetDefault(logger)
 
@@ -123,7 +123,7 @@ func addUser(ctx context.Context, uc UserController, email string) {
 		return
 	}
 	password := string(bytePassword)
-	fmt.Println() // Newline after password input
+	fmt.Println()
 
 	user, err := uc.NewUser(ctx, email, password, displayName)
 	if err != nil {

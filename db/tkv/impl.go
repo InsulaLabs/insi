@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 )
@@ -29,44 +28,6 @@ type ErrInvalidState struct {
 
 func (e *ErrInvalidState) Error() string {
 	return fmt.Sprintf("invalid state for key '%s': %s", e.Key, e.Reason)
-}
-
-// ErrQueueNotFound is returned when a queue operation is attempted on a non-existent queue.
-type ErrQueueNotFound struct {
-	Key string
-}
-
-func (e *ErrQueueNotFound) Error() string {
-	return fmt.Sprintf("queue '%s' not found", e.Key)
-}
-
-// ErrQueueEmpty is returned when trying to pop from an empty queue.
-type ErrQueueEmpty struct {
-	Key string
-}
-
-func (e *ErrQueueEmpty) Error() string {
-	return fmt.Sprintf("queue '%s' is empty", e.Key)
-}
-
-func normalizeDBName(dbName string) string {
-	// Replace any characters that are invalid in directory names across platforms
-	sanitized := strings.Map(func(r rune) rune {
-		switch {
-		case r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' ||
-			r == '"' || r == '<' || r == '>' || r == '|':
-			return '_'
-		default:
-			return r
-		}
-	}, dbName)
-
-	// Ensure name doesn't start with . or - which can cause issues
-	if len(sanitized) > 0 && (sanitized[0] == '.' || sanitized[0] == '-') {
-		sanitized = "_" + sanitized[1:]
-	}
-
-	return sanitized
 }
 
 func New(config Config) (TKV, error) {
@@ -362,27 +323,22 @@ func (t *tkv) GetCache() *badger.DB {
 
 func (t *tkv) BatchSet(entries []TKVBatchEntry) error {
 	if len(entries) == 0 {
-		return nil // Nothing to do
+		return nil
 	}
 
 	wb := t.db.store.NewWriteBatch()
-	defer wb.Cancel() // Cancel if not committed
+	defer wb.Cancel()
 
 	for _, entry := range entries {
 		if entry.Key == "" {
-			// Or return an error, depending on desired behavior for invalid entries within a batch
 			t.logger.Warn("BatchSet encountered an entry with an empty key, skipping.")
 			continue
 		}
-		// Consider adding validation for value size if necessary, similar to single Set.
 		if err := wb.Set([]byte(entry.Key), []byte(entry.Value)); err != nil {
-			// This error is typically for when the batch is too large for badger's buffer.
-			// It might be better to return it and let the caller handle (e.g., retry with smaller batches).
 			return &ErrInternal{Err: fmt.Errorf("failed to add set operation for key '%s' to batch: %w", entry.Key, err)}
 		}
 	}
-
-	if err := wb.Flush(); err != nil { // Flush commits the batch
+	if err := wb.Flush(); err != nil {
 		return &ErrInternal{Err: fmt.Errorf("failed to flush batch set: %w", err)}
 	}
 	return nil
@@ -390,7 +346,7 @@ func (t *tkv) BatchSet(entries []TKVBatchEntry) error {
 
 func (t *tkv) BatchDelete(keys []string) error {
 	if len(keys) == 0 {
-		return nil // Nothing to do
+		return nil
 	}
 
 	wb := t.db.store.NewWriteBatch()
@@ -422,7 +378,6 @@ func (t *tkv) SetNX(key string, value string) error {
 			return &ErrInternal{Err: err}
 		}
 
-		// Key does not exist, safe to set
 		if err := txn.Set([]byte(key), []byte(value)); err != nil {
 			return &ErrInternal{Err: err}
 		}
@@ -455,7 +410,6 @@ func (t *tkv) CompareAndSwap(key string, oldValue, newValue string) error {
 			return &ErrCASFailed{Key: key}
 		}
 
-		// Value matches, proceed with setting the new value.
 		if err := txn.Set([]byte(key), []byte(newValue)); err != nil {
 			return &ErrInternal{Err: err}
 		}

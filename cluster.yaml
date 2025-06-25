@@ -23,14 +23,13 @@ trustedProxies:
 permittedIPs:
   - "127.0.0.1"
   - "::1"
-  - "157.230.226.214" # insula.dev
 
 cache:
   standard-ttl: 60m
-  keys: 1m # We dont bumb ttl here - its to avoid the db hit for 1 minute after an auth
+  keys: 1m
 
 rateLimiters:
-  default:    # If an internal error occurs and we need to "default" to a limiter (cosmic edge case)
+  default: 
     limit: 5
     burst: 10
   values:

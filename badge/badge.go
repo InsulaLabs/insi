@@ -210,7 +210,6 @@ func encrypt(key, data []byte) ([]byte, error) {
 }
 
 func decrypt(key, data []byte) ([]byte, error) {
-	// Derive a 32-byte key using SHA-256
 	hash := sha256.Sum256(key)
 	aesKey := hash[:]
 

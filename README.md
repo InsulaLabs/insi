@@ -59,15 +59,25 @@ Insi includes a real-time eventing system that allows for powerful publish/subsc
 
 Insi provides a robust system for controlling resource consumption. Limits are managed at two levels:
 
-1.  **Rate Limiting**: Configured in `cluster.yaml`, rate limits control the number of requests a client can make per second to each service category (`values`, `cache`, `events`, `system`). This prevents abuse and ensures fair usage.
+1.  **Global Rate Limiting**: Configured in `cluster.yaml`, these serve as a baseline to control the overall number of requests per second for major service categories (`values`, `cache`, `events`, `system`).
 
-2.  **Usage Quotas**: These are hard limits on the total resources an Entity can consume. When you create an Entity, you can assign it specific quotas. The root user can also set limits on any API key. These quotas are defined in `db/models/apikey.go` and include:
+2.  **Per-Key Quotas & Rate Limits**: These are granular limits applied to each individual API key, allowing for fine-grained control. When a rate limit is exceeded, the API will respond with a `429 Too Many Requests` status code, including a `Retry-After` header. These quotas can be managed by an administrator and include:
     - `BytesOnDisk`: The total size of data the Entity can store in the persistent Value Store.
     - `BytesInMemory`: The total size of data the Entity can store in the volatile Cache Store.
     - `EventsEmitted`: The total number of events an Entity can publish.
     - `Subscribers`: The maximum number of concurrent event subscribers an Entity can have.
+    - `RPSDataLimit`: The number of data-plane requests per second the key can make.
+    - `RPSEventLimit`: The number of event-plane requests per second the key can make.
 
-    The usage against these quotas is tracked in real-time. The `EventsEmitted` quota is designed to reset on a periodic basis, typically every 24 hours.
+    The usage against these quotas is tracked in real-time. The `EventsEmitted` quota is designed to reset on a periodic basis.
+
+#### Managing Limits via API
+
+Resource limits for individual keys can be managed through the following endpoints:
+
+-   **Set Limits**: `POST /db/api/v1/admin/limits/set` (Admin only)
+-   **View Your Limits**: `GET /db/api/v1/limits` (Any key)
+-   **View Specific Key's Limits**: `POST /db/api/v1/admin/limits/get` (Admin only)
 
 ## Getting Started
 

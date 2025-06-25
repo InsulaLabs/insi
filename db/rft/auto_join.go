@@ -114,10 +114,7 @@ func attemptAutoJoin(
 					"leader_id", leaderNodeId,
 				)
 			}
-
-			// This assumes certificates are signed by a public CA or a CA in the system's trust store.
 			cfg.Logger.Info("Auto-join client TLS will use system default CAs for verifying the leader's certificate.")
-
 		}
 		httpClient.Transport = &http.Transport{TLSClientConfig: tlsConfig}
 	}
@@ -151,14 +148,13 @@ func attemptAutoJoin(
 			}
 		}
 
-		// Add Authorization header
 		if cfg.ClusterCfg.InstanceSecret != "" {
 			hasher := sha256.New()
 			hasher.Write([]byte(cfg.ClusterCfg.InstanceSecret))
 			hexEncodedSecret := hex.EncodeToString(hasher.Sum(nil))
-			// Base64 encode the hex-encoded secret, similar to runtime/runtime.go
+			// Base64 encode the hex-encoded secret
 			b64AuthToken := base64.StdEncoding.EncodeToString([]byte(hexEncodedSecret))
-			req.Header.Set("Authorization", "Bearer "+b64AuthToken) // Added "Bearer " prefix
+			req.Header.Set("Authorization", "Bearer "+b64AuthToken)
 			cfg.Logger.Info("Added Authorization header for auto-join.", "node_id", cfg.NodeId)
 		} else {
 			cfg.Logger.Warn(

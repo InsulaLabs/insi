@@ -41,7 +41,6 @@ func withApiKeyRef(keyUUID string) string {
 }
 
 func (c *Core) getEntity(keyUUID, apiKey, dataScopeUUID string) (models.Entity, error) {
-	// get aliases
 	prefix := WithRootToAliasPrefix(keyUUID)
 	aliasValues, err := c.fsm.Iterate(prefix, 0, MaxAliasesPerKey)
 	if err != nil {
@@ -49,7 +48,6 @@ func (c *Core) getEntity(keyUUID, apiKey, dataScopeUUID string) (models.Entity, 
 		if !errors.As(err, &nfErr) {
 			c.logger.Warn("could not iterate aliases for entity", "key_uuid", keyUUID, "error", err)
 		}
-		// Non-fatal, continue with no aliases
 	}
 	aliases := make([]string, len(aliasValues))
 	for i, val := range aliasValues {
@@ -57,7 +55,6 @@ func (c *Core) getEntity(keyUUID, apiKey, dataScopeUUID string) (models.Entity, 
 		aliases[i] = strings.TrimPrefix(fullKey, prefix+":")
 	}
 
-	// get usage
 	var usage models.LimitsResponse
 	usage.CurrentUsage = &models.Limits{}
 	usage.MaxLimits = &models.Limits{}
@@ -109,8 +106,6 @@ func (c *Core) GetEntity(rootApiKey string) (models.Entity, error) {
 }
 
 func (c *Core) GetEntities(offset, limit int) ([]models.Entity, error) {
-	// We can iterate over any of the tracking prefixes since they all use the key's UUID.
-	// We use the memory tracking prefix here.
 	keys, err := c.fsm.Iterate(ApiTrackMemoryPrefix, offset, limit)
 	if err != nil {
 		return nil, err
@@ -140,7 +135,6 @@ func (c *Core) GetEntityByAlias(alias string) (models.Entity, error) {
 }
 
 func (c *Core) GetEntityByDataScopeUUID(dataScopeUUID string) (models.Entity, error) {
-	// This is inefficient and should be used sparingly. It requires iterating through all keys.
 	keys, err := c.fsm.Iterate(apiKeyDataScopePrefix, 0, 1_000_000) // A reasonable limit
 	if err != nil {
 		return models.Entity{}, err

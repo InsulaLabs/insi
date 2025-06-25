@@ -181,13 +181,22 @@ type Endpoint struct {
 }
 
 type Config struct {
-	ConnectionType         ConnectionType // Direct will use Endpoints[0] always
-	Endpoints              []Endpoint
-	ApiKey                 string
-	SkipVerify             bool
-	Timeout                time.Duration
-	Logger                 *slog.Logger
-	EnableLeaderStickiness bool // Set to true to enable the client to "stick" to a leader upon redirect. Defaults to false (stickiness disabled).
+
+	// If Direct, then the 0th Endpoint will always be used. Note: this has a resiliance trade-off.
+	// If this is set, then in the event of a node failure it is up to the user of the client to then
+	// retry the request on a different node (client will work as long as there is a quorum of nodes
+	// and its directed at an "active" node.)
+	ConnectionType ConnectionType
+	Endpoints      []Endpoint
+	ApiKey         string
+	SkipVerify     bool
+	Timeout        time.Duration
+	Logger         *slog.Logger
+
+	// Set to true to enable the client to "stick" to a leader upon redirect.
+	// Defaults to false (stickiness disabled).
+	// Note - This has some performance trade-offs. Read the docs for more info.
+	EnableLeaderStickiness bool
 }
 
 type ErrorResponse struct {
@@ -197,7 +206,6 @@ type ErrorResponse struct {
 
 // Client is the API client for the insi service.
 type Client struct {
-	mu                     sync.RWMutex // To protect endpoint URLs
 	publicBaseURL          *url.URL
 	privateBaseURL         *url.URL
 	httpClient             *http.Client
@@ -205,13 +213,17 @@ type Client struct {
 	apiKey                 string
 	logger                 *slog.Logger
 	redirectCoutner        atomic.Uint64
-	endpoints              []Endpoint // Store all potential endpoints
+	endpoints              []Endpoint
+	endpointMu             sync.RWMutex
 	enableLeaderStickiness bool
 }
 
+/*
+Clone the client configuration but use a different api key.
+*/
 func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.endpointMu.RLock()
+	defer c.endpointMu.RUnlock()
 
 	// Create copies of the URLs to prevent pointer sharing. This is crucial for
 	// leader stickiness, ensuring that a redirect for one derived client doesn't
@@ -232,6 +244,9 @@ func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 	}
 }
 
+/*
+Clone the client configuration but use a different api key.
+*/
 func (c *Client) DeriveWithEntity(entity *models.Entity) *Client {
 	return c.DeriveWithApiKey(entity.DataScopeUUID, entity.RootApiKey)
 }
@@ -244,7 +259,18 @@ func (c *Client) GetObjectHttpClient() *http.Client {
 	return c.objectClient
 }
 
-// NewClient creates a new insi API client.
+func (c *Client) GetApiKey() string {
+	return c.apiKey
+}
+
+func (c *Client) GetBaseURL() *url.URL {
+	return c.publicBaseURL
+}
+
+func (c *Client) GetAccumulatedRedirects() uint64 {
+	return c.redirectCoutner.Load()
+}
+
 func NewClient(cfg *Config) (*Client, error) {
 
 	for _, endpoint := range cfg.Endpoints {
@@ -353,19 +379,6 @@ func NewClient(cfg *Config) (*Client, error) {
 	}, nil
 }
 
-// GetApiKey returns the API key used by the client.
-func (c *Client) GetApiKey() string {
-	return c.apiKey
-}
-
-func (c *Client) GetBaseURL() *url.URL {
-	return c.publicBaseURL
-}
-
-func (c *Client) GetAccumulatedRedirects() uint64 {
-	return c.redirectCoutner.Load()
-}
-
 func (c *Client) ResetAccumulatedRedirects() {
 	c.redirectCoutner.Store(0)
 }
@@ -374,18 +387,19 @@ func isPrivatePath(path string) bool {
 	return strings.HasPrefix(path, "db/api/v1/join") || strings.HasPrefix(path, "db/api/v1/admin/")
 }
 
-// internal request helper
 func (c *Client) doRequest(method, path string, queryParams map[string]string, body interface{}, target interface{}) error {
-	originalMethod := method // Save original method to preserve it across redirects
 
-	c.mu.RLock()
+	// Save original method to preserve it across redirects
+	originalMethod := method
+
+	c.endpointMu.RLock()
 	var baseURL *url.URL
 	if isPrivatePath(path) {
-		baseURL = c.privateBaseURL
+		baseURL = c.privateBaseURL // Administration route or internal data route
 	} else {
-		baseURL = c.publicBaseURL
+		baseURL = c.publicBaseURL // Public route (authorized actors)
 	}
-	c.mu.RUnlock()
+	c.endpointMu.RUnlock()
 
 	// Construct the initial URL
 	initialPathURL := &url.URL{Path: path}
@@ -418,10 +432,10 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 		}
 	}
 
-	var lastResp *http.Response // To store the response if loop finishes due to too many redirects
+	var lastResp *http.Response
 
-	for redirects := 0; redirects < MaximumRedirects; redirects++ { // Max 10 redirects
-		reqBodyReader := bytes.NewBuffer(reqBodyBytes) // Can be re-read
+	for redirects := 0; redirects < MaximumRedirects; redirects++ {
+		reqBodyReader := bytes.NewBuffer(reqBodyBytes)
 
 		req, err := http.NewRequest(originalMethod, currentReqURL.String(), reqBodyReader)
 		if err != nil {
@@ -460,10 +474,10 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 			}
 			return fmt.Errorf("http request %s %s failed: %w", originalMethod, currentReqURL.String(), err)
 		}
-		if lastResp != nil && lastResp.Body != nil { // Clean up body from previous iteration if any
+		if lastResp != nil && lastResp.Body != nil {
 			lastResp.Body.Close()
 		}
-		lastResp = resp // Store current response
+		lastResp = resp
 
 		// Check for redirect status codes
 		switch resp.StatusCode {
@@ -472,14 +486,15 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 			loc := resp.Header.Get("Location")
 			if loc == "" {
-				resp.Body.Close() // Close current redirect response body
+				resp.Body.Close()
 				c.logger.Error("Redirect response missing Location header", "status_code", resp.StatusCode, "url", currentReqURL.String())
 				return fmt.Errorf("redirect (status %d) missing Location header from %s", resp.StatusCode, currentReqURL.String())
 			}
 
-			redirectURL, err := currentReqURL.Parse(loc) // Resolve Location relative to currentReqURL
+			// Resolve Location relative to currentReqURL
+			redirectURL, err := currentReqURL.Parse(loc)
 			if err != nil {
-				resp.Body.Close() // Close current redirect response body
+				resp.Body.Close()
 				c.logger.Error("Failed to parse redirect Location header", "location", loc, "error", err)
 				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
 			}
@@ -1137,14 +1152,14 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 		wsScheme = "wss"
 	}
 
-	c.mu.RLock()
+	c.endpointMu.RLock()
 	// Initial URL construction
 	currentWsURL := &url.URL{
 		Scheme: wsScheme,
 		Host:   c.publicBaseURL.Host,
 		Path:   "/db/api/v1/events/subscribe",
 	}
-	c.mu.RUnlock()
+	c.endpointMu.RUnlock()
 
 	query := currentWsURL.Query()
 	query.Set("topic", topic)
@@ -1214,18 +1229,11 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 			continue
 
 		default:
-			errMsg := fmt.Sprintf("failed to dial websocket %s", currentWsURL.String())
 			if resp.StatusCode == http.StatusServiceUnavailable {
 				bodyBytes, _ := io.ReadAll(resp.Body)
 				return &ErrSubscriberLimitExceeded{Message: strings.TrimSpace(string(bodyBytes))}
 			}
 
-			errMsg = fmt.Sprintf(
-				"%s: (status: %s), error: %v",
-				errMsg,
-				resp.Status,
-				err,
-			)
 			c.logger.Error(
 				"WebSocket dial error with response",
 				"url", currentWsURL.String(),
@@ -1567,8 +1575,8 @@ func (c *Client) IterateBlobKeysByPrefix(prefix string, offset, limit int) ([]st
 // setLeader updates the client's public and private base URLs to point to the new leader.
 // It finds the correct endpoint configuration by matching the host of the leader's URL.
 func (c *Client) setLeader(leaderURL *url.URL) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
 
 	// Check if we are already pointing to the correct leader to avoid unnecessary work.
 	if c.publicBaseURL.Host == leaderURL.Host || c.privateBaseURL.Host == leaderURL.Host {
