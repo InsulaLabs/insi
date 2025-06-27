@@ -178,6 +178,20 @@ func New(ctx context.Context, args []string, defaultConfigFile string) (*Runtime
 	return r, nil
 }
 
+func (r *Runtime) GetPublicMux() *http.ServeMux {
+	return r.service.GetPublicMux()
+}
+
+func (r *Runtime) WithRouteProvider(rp core.RouteProvider) *Runtime {
+	r.service.WithRouteProvider(rp)
+	return r
+}
+
+func (r *Runtime) WithRouteProviders(rps ...core.RouteProvider) *Runtime {
+	r.service.WithRouteProviders(rps...)
+	return r
+}
+
 func (r *Runtime) GetClientForToken(token string) (*client.Client, error) {
 	getEndpoints := func() []client.Endpoint {
 		eps := make([]client.Endpoint, 0, len(r.clusterCfg.Nodes))
@@ -541,8 +555,4 @@ func removeDuplicateStrings(s []string) []string {
 		}
 	}
 	return result
-}
-
-func (r *Runtime) GetPublicMux() *http.ServeMux {
-	return r.service.GetPublicMux()
 }

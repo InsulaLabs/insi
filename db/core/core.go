@@ -26,6 +26,11 @@ import (
 	"golang.org/x/time/rate"
 )
 
+type RouteProvider interface {
+	BindPublicRoutes(mux *http.ServeMux)
+	BindPrivateRoutes(mux *http.ServeMux)
+}
+
 type AccessEntity bool
 
 const (
@@ -111,6 +116,8 @@ type Core struct {
 	subscriptionSlotLock sync.Mutex
 
 	entityRateLimiters *ttlcache.Cache[string, *endpointKeyRateLimiters]
+
+	routeProviders []RouteProvider
 }
 
 type serverInstance struct {
@@ -441,6 +448,16 @@ func (c *Core) ipPrivateFilterMiddleware() func(next http.Handler) http.Handler 
 	return c.getIpFilterMiddleware(true)
 }
 
+func (c *Core) WithRouteProvider(rp RouteProvider) *Core {
+	c.routeProviders = append(c.routeProviders, rp)
+	return c
+}
+
+func (c *Core) WithRouteProviders(rps ...RouteProvider) *Core {
+	c.routeProviders = append(c.routeProviders, rps...)
+	return c
+}
+
 // Run forever until the context is cancelled
 func (c *Core) Run() {
 
@@ -485,6 +502,10 @@ func (c *Core) Run() {
 		// List is so they can get a list of all the aliases they have set for the purpose of deleting or debugging
 		c.pubMux.Handle("/db/api/v1/alias/list", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.listAliasesHandler), "system")))
 
+		for _, rp := range c.routeProviders {
+			rp.BindPublicRoutes(c.pubMux)
+		}
+
 		return &serverInstance{
 			binding: binding,
 			mux:     c.pubMux,
@@ -518,6 +539,10 @@ func (c *Core) Run() {
 		c.privMux.Handle("/db/api/v1/admin/insight/entity_by_alias", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.getEntityByAliasHandler), "system")))
 
 		c.privMux.Handle("/db/api/v1/admin/metrics/ops", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.opsPerSecondHandler), "system")))
+
+		for _, rp := range c.routeProviders {
+			rp.BindPrivateRoutes(c.privMux)
+		}
 
 		return &serverInstance{
 			binding: binding,
