@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"log/slog"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/InsulaLabs/insi/runtime"
 )
+
+var ctx = context.Background()
 
 func main() {
 	// misconfigured logger in raft bbolt backend
@@ -19,7 +22,7 @@ func main() {
 
 	// The default config file path can be set here
 	// It's passed to the runtime, which handles flag parsing for --config override.
-	rt, err := runtime.New(remainingArgs, "cluster.yaml")
+	rt, err := runtime.New(ctx, remainingArgs, "cluster.yaml")
 	if err != nil {
 		slog.Error("Failed to initialize runtime", "error", err)
 		os.Exit(1)

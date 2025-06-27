@@ -56,14 +56,15 @@ type Runtime struct {
 // New creates a new Runtime instance.
 // It initializes the application context, sets up signal handling,
 // parses command-line flags, and loads the cluster configuration.
-func New(args []string, defaultConfigFile string) (*Runtime, error) {
+func New(ctx context.Context, args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r := &Runtime{
+		appCtx:    ctx,
 		rawArgs:   args,
 		rtClients: make(map[string]*client.Client),
 	}
 
-	r.appCtx, r.appCancel = context.WithCancel(context.Background())
+	r.appCtx, r.appCancel = context.WithCancel(ctx)
 	r.logger = slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("service", "insidRuntime")
 
 	// Setup signal handling

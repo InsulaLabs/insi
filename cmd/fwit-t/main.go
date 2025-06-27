@@ -79,6 +79,8 @@ type SafeEntityPool struct {
 	entities []fwi.Entity
 }
 
+var ctx = context.Background()
+
 func main() {
 
 	// misconfigured logger in raft bbolt backend
@@ -156,7 +158,7 @@ func main() {
 		cyan.Printf("📜 Generated cluster configuration: %s\n", configPath)
 
 		// Setup and run the cluster runtime
-		rt, err = runtime.New([]string{"--config", configPath, "--host"}, configPath)
+		rt, err = runtime.New(ctx, []string{"--config", configPath, "--host"}, configPath)
 		if err != nil {
 			red.Printf("❌ Failed to create runtime: %v\n", err)
 			os.Exit(1)

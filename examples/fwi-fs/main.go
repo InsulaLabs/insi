@@ -25,6 +25,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var ctx = context.Background()
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	logger.Info("starting FWI VFS example")
@@ -54,7 +56,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	rt, err := runtime.New([]string{"--config", configPath, "--host"}, configPath)
+	rt, err := runtime.New(ctx, []string{"--config", configPath, "--host"}, configPath)
 	if err != nil {
 		logger.Error("failed to create runtime", "error", err)
 		os.Exit(1)
