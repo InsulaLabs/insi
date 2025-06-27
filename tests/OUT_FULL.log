@@ -862,3 +862,254 @@ Publishing: 'Test_Data_3_2633426'
 OK
 All messages published.
 Waiting for messages to be processed (10 seconds)...
+Stopping subscriber (PID: 2633428)...
+Subscriber stopped.
+Verifying received messages in /tmp/insic_events_test_pSlDnD/output.txt...
+OK: Found message 'Hello_World_1_2633426'
+OK: Found message 'Another_Message_2_2633426'
+OK: Found message 'Test_Data_3_2633426'
+--- Test Summary ---
+SUCCESS: All 3 messages were received!
+See /tmp/insic_events_test_pSlDnD/output.txt for details.
+--------------------
+--- Cleaning up ---
+Subscriber process (PID: 2633428) already exited.
+Removing temporary directory: /tmp/insic_events_test_pSlDnD
+---------------------
+✅ Success: events.sh completed.
+🚀 Running get-set-delete.sh...
+insid pid: 2633925
+2025-06-27T01:44:26.139-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:26.139-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:44:26.299-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:26.299-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:26.300-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:26.300-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:27.676-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:44:27.676-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:44:27.676-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:44:27.685-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:44:27.685-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:44:27.865-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:44:28.165-0400 [WARN]  no known peers, aborting election
+set root tracker key internal:api_key_memory_usage: value 0
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+2025-06-27T01:44:36.306-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:44:36.311-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:44:36.311-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:44:36.313-0400 [INFO]  added peer, starting replication: peer=node2
+2025-06-27T01:44:36.314-0400 [WARN]  failed to get previous log: previous-index=11 last-index=0 error="log not found"
+2025-06-27T01:44:36.315-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+2025-06-27T01:44:36.317-0400 [WARN]  failed to get previous log: previous-index=12 last-index=0 error="log not found"
+2025-06-27T01:44:36.317-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:44:36.321-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+2025-06-27T01:44:36.327-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+ℹ️ Using config: /tmp/insi-test-cluster/cluster.yaml
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mServer is online. Proceeding with tests.[0m
+ℹ️ Starting TKV cache tests with insic: /tmp/insi-test-cluster/insic
+
+[0;34m==== Test: Cache Set and Get Basic ====[0m
+✅ [0;32mSUCCESS: Cache set key 'cachekey_sg_1751003081' to 'cachevalue_sg_1751003081', received 'OK'.[0m
+ℹ️ Brief pause after set...
+✅ [0;32mSUCCESS: Cache get key 'cachekey_sg_1751003081' returned correct value.[0m
+
+[0;34m==== Test: Cache Delete ====[0m
+✅ [0;32mSUCCESS: Cache set key 'cachekey_del_1751003081' for delete test, received 'OK'.[0m
+✅ [0;32mSUCCESS: Cache delete key 'cachekey_del_1751003081', received 'OK'.[0m
+ℹ️ Brief pause after delete...
+✅ [0;32mSUCCESS (Received Expected Error): Cache get deleted key 'cachekey_del_1751003081' (should fail after delete)[0m
+
+[0;34m==== Test: Cache Get Non-Existent Key ====[0m
+✅ [0;32mSUCCESS (Received Expected Error): Cache get non-existent key 'nonexistentcachekey_1751003081'[0m
+
+[0;34m==== Test: Cache CLI Argument Validation ====[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache set: missing value argument[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache set: too many arguments[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache get: missing key argument[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache get: too many arguments[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache delete: missing key argument[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache delete: too many arguments[0m
+
+[0;34m==== Test: Cache Iterate by Prefix ====[0m
+✅ [0;32mSUCCESS: Cache set key 'c_iter_prefix_1751003082_key1' for iteration[0m
+✅ [0;32mSUCCESS: Cache set key 'c_iter_prefix_1751003082_key2' for iteration[0m
+✅ [0;32mSUCCESS: Cache set key 'c_iter_prefix_1751003082_key3' for iteration[0m
+✅ [0;32mSUCCESS: Cache iterate by prefix 'c_iter_prefix_1751003082_'[0m
+✅ [0;32mCache iterate by prefix 'c_iter_prefix_1751003082_' successfully retrieved all expected keys and no extras.[0m
+
+[0;32mAll TKV cache tests completed.[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 17
+[0;32mAll tests passed successfully![0m
+✅ Success: get-set-delete.sh completed.
+🚀 Running cache-cas-setnx.sh...
+insid pid: 2634686
+2025-06-27T01:44:43.027-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:43.027-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:43.030-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:43.030-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:43.031-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:43.031-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:44:44.254-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:44:44.431-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:44:44.986-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:44:44.986-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:44:44.986-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:44:44.994-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:44:44.994-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:44:53.041-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+set root tracker key internal:api_key_memory_usage: value 0
+2025-06-27T01:44:53.044-0400 [INFO]  added peer, starting replication: peer=node2
+2025-06-27T01:44:53.047-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:44:53.048-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+2025-06-27T01:44:53.048-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+2025-06-27T01:44:53.052-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:44:53.053-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+2025-06-27T01:44:53.055-0400 [WARN]  failed to get previous log: previous-index=6 last-index=0 error="log not found"
+2025-06-27T01:44:53.055-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+set root tracker key internal:api_key_disk_usage: value 0
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:44:53.069-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mServer is online. Proceeding with atomic cache op tests.[0m
+
+[0;34m==== Test: cache setnx ====[0m
+✅ [0;32mSUCCESS: cache setnx on new key 'test_cache_setnx_1751003097'[0m
+✅ [0;32mValue for 'test_cache_setnx_1751003097' correctly set to 'value1'[0m
+✅ [0;32mSUCCESS (Received Expected Conflict/Precondition): cache setnx on existing key 'test_cache_setnx_1751003097'[0m
+✅ [0;32mValue for 'test_cache_setnx_1751003097' remained 'value1' after failed setnx[0m
+
+[0;34m==== Test: cache cas (Compare-And-Swap) ====[0m
+✅ [0;32mSUCCESS (Received Expected Conflict/Precondition): cas on non-existent key[0m
+✅ [0;32mSUCCESS (Received Expected Conflict/Precondition): cas with incorrect old value for key 'test_cache_cas_1751003097'[0m
+✅ [0;32mValue for 'test_cache_cas_1751003097' remained 'initial_cas_value' after failed cas[0m
+✅ [0;32mSUCCESS: cas with correct old value for key 'test_cache_cas_1751003097'[0m
+✅ [0;32mValue for 'test_cache_cas_1751003097' correctly updated to 'new_cas_value'[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 5
+[0;32mAll atomic cache op tests passed successfully![0m
+✅ Success: cache-cas-setnx.sh completed.
+🚀 Running blob.sh...
+insid pid: 2634947
+2025-06-27T01:44:59.273-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:59.273-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:59.372-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:59.372-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:59.373-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:59.373-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:45:00.674-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:45:00.674-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:45:00.674-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:45:00.682-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:45:00.682-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:45:00.921-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:45:01.094-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:45:09.279-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+2025-06-27T01:45:09.284-0400 [INFO]  added peer, starting replication: peer=node2
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+2025-06-27T01:45:09.286-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-27T01:45:09.287-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:45:09.289-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+2025-06-27T01:45:09.378-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:45:09.380-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:45:09.385-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:45:09.385-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+set root tracker key internal:api_key_memory_usage: value 0
+2025-06-27T01:45:09.388-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+ℹ️ Test directory prepared at /tmp/insic-blob-tests
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mServer is online. Proceeding with blob tests.[0m
+
+[0;34m==== Test: Blob Lifecycle ====[0m
+ℹ️ Created test file '/tmp/insic-blob-tests/upload.txt' with SHA256 hash: e5f1dae104445fafb2376cff15b67671c83c67781e51df6d11b7a0baf20d3d90
+✅ [0;32mSUCCESS: Upload blob with key 'test_blob_1751003114_file1.txt'[0m
+✅ [0;32mIterate found blob key 'test_blob_1751003114_file1.txt'[0m
+✅ [0;32mSUCCESS: Download blob with key 'test_blob_1751003114_file1.txt'[0m
+ℹ️ Downloaded file hash: e5f1dae104445fafb2376cff15b67671c83c67781e51df6d11b7a0baf20d3d90
+✅ [0;32mDownloaded file content matches original[0m
+
+ℹ️[1;33m Verifying physical blob existence on ALL nodes...[0m
+ℹ️[1;33m > Key: 'test_blob_1751003114_file1.txt', Hash: '715893f0ae4d3f1df0ec851911de20d1d5ccff9dbf691e690622dc127be3b3e7', Scope: 'test-cluster-prefix'[0m
+ℹ️[1;33m > Waiting up to 10s for replication to all nodes...[0m
+✅ [0;32mVerified blob file exists on all 3 nodes.[0m
+✅ [0;32mSUCCESS: Delete blob with key 'test_blob_1751003114_file1.txt'[0m
+✅ [0;32mSUCCESS (Received Expected Failure): Attempt to download deleted blob 'test_blob_1751003114_file1.txt'[0m
+
+ℹ️[1;33m Verifying API no longer lists the deleted blob...[0m
+✅ [0;32mIterate no longer finds deleted blob key 'test_blob_1751003114_file1.txt'[0m
+
+ℹ️[1;33m Verifying physical blob deletion on ALL nodes...[0m
+⚠️ The application's blob garbage collector runs every 30 seconds.
+ℹ️[1;33m > WAITING 35 SECONDS for the garbage collector and replication...[0m
+✅ [0;32mVerified blob file was physically deleted from all 3 nodes.[0m
+
+[0;34m==== Test: Blob Iteration ====[0m
+ℹ️ Uploading test blobs...
+✅ [0;32mSUCCESS: Upload blob 1 ('iteration_test_1751003150/file1.txt')[0m
+✅ [0;32mSUCCESS: Upload blob 2 ('iteration_test_1751003150/file2.txt')[0m
+✅ [0;32mSUCCESS: Upload blob 3 ('iteration_test_1751003150/subdir/file3.txt')[0m
+✅ [0;32mSUCCESS: Upload blob 4 ('other_prefix/file4.txt')[0m
+
+ℹ️ Iterating with prefix 'iteration_test_1751003150'...
+✅ [0;32mSUCCESS: Iterate found all 3 expected blobs.[0m
+✅ [0;32mSUCCESS: Iterate did not find unexpected blob 'other_prefix/file4.txt'.[0m
+
+ℹ️ Testing iteration with limit...
+✅ [0;32mSUCCESS: Iterate with limit=2 returned 2 keys.[0m
+
+ℹ️ Testing iteration with offset...
+✅ [0;32mSUCCESS: Iterate with offset=2, limit=2 returned 1 key.[0m
+
+ℹ️ Testing iteration with a non-existent prefix...
+✅ [0;32mSUCCESS: Iterate with non-existent prefix correctly reported no keys.[0m
+
+ℹ️ Cleaning up uploaded blobs...
+ℹ️ Cleanup complete.
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 18
+[0;32mAll blob tests passed successfully![0m
+ℹ️ Test directory cleaned up.
+✅ Success: blob.sh completed.
+🎉 All tests passed successfully!

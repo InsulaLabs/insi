@@ -143,6 +143,10 @@ func (s *Core) AddHandler(path string, handler http.Handler) error {
 	return nil
 }
 
+func (s *Core) GetPublicMux() *http.ServeMux {
+	return s.pubMux
+}
+
 func New(
 	ctx context.Context,
 	logger *slog.Logger,

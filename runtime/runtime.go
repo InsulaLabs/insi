@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -540,4 +541,8 @@ func removeDuplicateStrings(s []string) []string {
 		}
 	}
 	return result
+}
+
+func (r *Runtime) GetPublicMux() *http.ServeMux {
+	return r.service.GetPublicMux()
 }
