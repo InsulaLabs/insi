@@ -27,3 +27,13 @@ go.work.sum
 build
 
 deployment.yaml
+
+_data/app/node_modules
+_data/app/dist
+_data/app/build
+_data/app/coverage
+_data/app/logs
+_data/app/tmp
+_data/app/cache
+_data/app/tmp
+_data/app/tmp

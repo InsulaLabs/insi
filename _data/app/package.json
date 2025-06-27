@@ -1,0 +1,24 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "esbuild src/index.ts --bundle --outfile=dist/index.js --platform=browser --sourcemap --minify && npm run obfuscate",
+    "obfuscate": "javascript-obfuscator dist/index.js --output dist/index.js --compact true --self-defending true"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "cpx2": "^8.0.0",
+    "esbuild": "^0.25.5",
+    "javascript-obfuscator": "^4.1.1",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@types/marked": "^5.0.2",
+    "marked": "^15.0.12"
+  }
+}
