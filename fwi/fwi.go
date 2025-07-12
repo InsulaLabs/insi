@@ -36,6 +36,12 @@ func withRetries[R any](ctx context.Context, logger *slog.Logger, fn func() (R, 
 		var rateLimitErr *client.ErrRateLimited
 		if errors.As(err, &rateLimitErr) {
 			logger.Warn("FWI operation rate limited, sleeping", "duration", rateLimitErr.RetryAfter)
+
+			delay := rateLimitErr.RetryAfter
+			if delay < 100*time.Millisecond {
+				delay = 100 * time.Millisecond
+			}
+
 			select {
 			case <-time.After(rateLimitErr.RetryAfter):
 				logger.Debug("Finished rate limit sleep, retrying operation.")
