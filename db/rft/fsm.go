@@ -71,7 +71,7 @@ type ValueStoreIF interface {
 	CompareAndSwap(p models.CASPayload) error
 	Get(key string) (string, error)
 	Delete(key string) error
-	Iterate(prefix string, offset int, limit int) ([]string, error)
+	Iterate(prefix string, offset int, limit int, trimPrefix string) ([]string, error)
 
 	BumpInteger(key string, delta int) error
 }
@@ -82,7 +82,7 @@ type CacheStoreIF interface {
 	DeleteCache(key string) error
 	SetCacheNX(kvp models.KVPayload) error
 	CompareAndSwapCache(p models.CASPayload) error
-	IterateCache(prefix string, offset int, limit int) ([]string, error)
+	IterateCache(prefix string, offset int, limit int, trimPrefix string) ([]string, error)
 }
 
 type EventIF interface {
@@ -658,10 +658,10 @@ func (kf *kvFsm) Get(key string) (string, error) {
 	return value, nil
 }
 
-func (kf *kvFsm) Iterate(prefix string, offset int, limit int) ([]string, error) {
+func (kf *kvFsm) Iterate(prefix string, offset int, limit int, trimPrefix string) ([]string, error) {
 	kf.logger.Debug("Iterate called", "prefix", prefix, "offset", offset, "limit", limit)
 	var value []string
-	value, err := kf.tkv.Iterate(prefix, offset, limit)
+	value, err := kf.tkv.Iterate(prefix, offset, limit, trimPrefix)
 	if err != nil {
 		kf.logger.Error("Failed to iterate", "prefix", prefix, "offset", offset, "limit", limit, "error", err)
 		return nil, err
@@ -969,9 +969,9 @@ func (kf *kvFsm) CompareAndSwapCache(p models.CASPayload) error {
 	return nil
 }
 
-func (kf *kvFsm) IterateCache(prefix string, offset int, limit int) ([]string, error) {
+func (kf *kvFsm) IterateCache(prefix string, offset int, limit int, trimPrefix string) ([]string, error) {
 	kf.logger.Debug("IterateCache called", "prefix", prefix, "offset", offset, "limit", limit)
-	keys, err := kf.tkv.CacheIterate(prefix, offset, limit)
+	keys, err := kf.tkv.CacheIterate(prefix, offset, limit, trimPrefix)
 	if err != nil {
 		kf.logger.Error("Failed to iterate cache", "prefix", prefix, "offset", offset, "limit", limit, "error", err)
 		return nil, err

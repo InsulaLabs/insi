@@ -853,7 +853,7 @@ func (c *Core) execTombstoneDeletion() {
 	c.logger.Info("Tombstone runner executing deletion cycle")
 
 	// 1. Iterate over all tombstone keys
-	tombstoneKeys, err := c.fsm.Iterate(ApiTombstonePrefix, 0, 100)
+	tombstoneKeys, err := c.fsm.Iterate(ApiTombstonePrefix, 0, 100, "")
 	if err != nil {
 		c.logger.Error("Could not get tombstone keys", "error", err)
 		return
@@ -882,7 +882,7 @@ func (c *Core) execTombstoneDeletion() {
 
 		// 2. Iteratively delete all data associated with the dataScopeUUID
 		// We use the dataScopeUUID as the prefix for all user data.
-		keysToDelete, err := c.fsm.Iterate(dataScopeUUID, 0, 100)
+		keysToDelete, err := c.fsm.Iterate(dataScopeUUID, 0, 100, "")
 		if err != nil {
 			c.logger.Error("Could not iterate over keys for data scope", "data_scope_uuid", dataScopeUUID, "error", err)
 			continue
@@ -923,7 +923,7 @@ func (c *Core) execTombstoneDeletion() {
 		// Clean up aliases associated with this key
 		aliasPrefix := WithRootToAliasPrefix(keyUUID)
 		// We can use a large limit here as the number of aliases is capped.
-		aliasMappingKeys, err := c.fsm.Iterate(aliasPrefix, 0, MaxAliasesPerKey*2)
+		aliasMappingKeys, err := c.fsm.Iterate(aliasPrefix, 0, MaxAliasesPerKey*2, "")
 		if err != nil {
 			c.logger.Error("Could not iterate over alias mappings for cleanup", "parent_key_uuid", keyUUID, "error", err)
 			// Don't return, still try to clean up the primary key

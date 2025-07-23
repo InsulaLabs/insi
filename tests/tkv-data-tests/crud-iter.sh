@@ -216,6 +216,7 @@ test_iterate_prefix() {
 
     if [[ "$found_key1" == true && "$found_key2" == true && "$found_key3" == true && "$extra_items" == false && $count -eq 3 ]]; then
         echo -e "${SUCCESS_EMOJI} ${GREEN}Iterate by prefix '$prefix' successfully retrieved all expected keys and no extras.${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
     else
         echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Iterate by prefix '$prefix' did not retrieve the expected set of keys.${NC}"
         echo -e "  Found key1 ($key1): $found_key1"
@@ -223,6 +224,7 @@ test_iterate_prefix() {
         echo -e "  Found key3 ($key3): $found_key3"
         echo -e "  Extra items found: $extra_items"
         echo -e "  Total items found: $count (Expected 3)"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
     fi
 
     # Cleanup iteration keys

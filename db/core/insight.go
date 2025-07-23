@@ -42,7 +42,7 @@ func withApiKeyRef(keyUUID string) string {
 
 func (c *Core) getEntity(keyUUID, apiKey, dataScopeUUID string) (models.Entity, error) {
 	prefix := WithRootToAliasPrefix(keyUUID)
-	aliasValues, err := c.fsm.Iterate(prefix, 0, MaxAliasesPerKey)
+	aliasValues, err := c.fsm.Iterate(prefix, 0, MaxAliasesPerKey, "")
 	if err != nil {
 		var nfErr *tkv.ErrKeyNotFound
 		if !errors.As(err, &nfErr) {
@@ -106,7 +106,7 @@ func (c *Core) GetEntity(rootApiKey string) (models.Entity, error) {
 }
 
 func (c *Core) GetEntities(offset, limit int) ([]models.Entity, error) {
-	keys, err := c.fsm.Iterate(ApiTrackMemoryPrefix, offset, limit)
+	keys, err := c.fsm.Iterate(ApiTrackMemoryPrefix, offset, limit, "")
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (c *Core) GetEntityByAlias(alias string) (models.Entity, error) {
 }
 
 func (c *Core) GetEntityByDataScopeUUID(dataScopeUUID string) (models.Entity, error) {
-	keys, err := c.fsm.Iterate(apiKeyDataScopePrefix, 0, 1_000_000) // A reasonable limit
+	keys, err := c.fsm.Iterate(apiKeyDataScopePrefix, 0, 1_000_000, "") // A reasonable limit
 	if err != nil {
 		return models.Entity{}, err
 	}

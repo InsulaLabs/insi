@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 type testTKV struct {
@@ -134,10 +136,8 @@ func TestTKV_Iterate(t *testing.T) {
 	t.Run("Iterate with prefix", func(t *testing.T) {
 		prefix := "prefix_"
 		expectedKeys := []string{"prefix_key1", "prefix_key2", "prefix_key3"}
-		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, 0, 0)
-		if err != nil {
-			t.Errorf("Iterate() error = %v, wantErr nil", err)
-		}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, 0, 0, "")
+		require.NoError(t, err)
 		sort.Strings(retrievedKeys)
 		sort.Strings(expectedKeys)
 		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
@@ -149,10 +149,8 @@ func TestTKV_Iterate(t *testing.T) {
 		prefix := "prefix_"
 		offset := 1
 		expectedKeys := []string{"prefix_key2", "prefix_key3"}
-		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, offset, 0)
-		if err != nil {
-			t.Errorf("Iterate() error = %v, wantErr nil", err)
-		}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, offset, 0, "")
+		require.NoError(t, err)
 		sort.Strings(retrievedKeys)
 		sort.Strings(expectedKeys)
 		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
@@ -164,10 +162,8 @@ func TestTKV_Iterate(t *testing.T) {
 		prefix := "prefix_"
 		limit := 2
 		expectedKeys := []string{"prefix_key1", "prefix_key2"}
-		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, 0, limit)
-		if err != nil {
-			t.Errorf("Iterate() error = %v, wantErr nil", err)
-		}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, 0, limit, "")
+		require.NoError(t, err)
 		sort.Strings(retrievedKeys)
 		sort.Strings(expectedKeys)
 		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
@@ -180,10 +176,8 @@ func TestTKV_Iterate(t *testing.T) {
 		offset := 1
 		limit := 1
 		expectedKeys := []string{"prefix_key2"}
-		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, offset, limit)
-		if err != nil {
-			t.Errorf("Iterate() error = %v, wantErr nil", err)
-		}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, offset, limit, "")
+		require.NoError(t, err)
 		sort.Strings(retrievedKeys)
 		sort.Strings(expectedKeys)
 		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
@@ -194,10 +188,8 @@ func TestTKV_Iterate(t *testing.T) {
 	t.Run("Iterate with non-matching prefix", func(t *testing.T) {
 		prefix := "non_matching_prefix_"
 		expectedKeys := []string{}
-		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, 0, 0)
-		if err != nil {
-			t.Errorf("Iterate() error = %v, wantErr nil", err)
-		}
+		retrievedKeys, err := tkvTest.tkv.Iterate(prefix, 0, 0, "")
+		require.NoError(t, err)
 		if len(retrievedKeys) != 0 {
 			t.Errorf("Iterate() got = %v, want %v", retrievedKeys, expectedKeys)
 		}
@@ -297,10 +289,8 @@ func TestTKV_Cache_Advanced(t *testing.T) {
 
 		prefix := "c_prefix_"
 		expectedKeys := []string{"c_prefix_key1", "c_prefix_key2", "c_prefix_key3"}
-		retrievedKeys, err := tkvCache.CacheIterate(prefix, 0, 0)
-		if err != nil {
-			t.Errorf("CacheIterate() error = %v, wantErr nil", err)
-		}
+		retrievedKeys, err := tkvCache.CacheIterate(prefix, 0, 0, "")
+		require.NoError(t, err)
 		sort.Strings(retrievedKeys)
 		sort.Strings(expectedKeys)
 		if !reflect.DeepEqual(retrievedKeys, expectedKeys) {
@@ -598,5 +588,98 @@ func TestTKV_CompareAndSwap(t *testing.T) {
 		if !errors.As(err, &casFailedErr) {
 			t.Errorf("CompareAndSwap() on non-existent key expected ErrCASFailed, got %T", err)
 		}
+	})
+}
+
+func TestTKVIterateWithTrimPrefix(t *testing.T) {
+	ctx := context.Background()
+	tkvTest, err := createTestTKV(ctx)
+	require.NoError(t, err)
+	defer func() {
+		err := tkvTest.tkv.Close()
+		require.NoError(t, err)
+		err = tkvTest.Cleanup()
+		require.NoError(t, err)
+	}()
+
+	// Set up test data with a common prefix
+	keys := []string{
+		"user123:data:key1",
+		"user123:data:key2",
+		"user123:data:key3",
+		"user123:cache:key1",
+	}
+
+	for _, key := range keys {
+		err := tkvTest.tkv.Set(key, "value")
+		require.NoError(t, err)
+	}
+
+	t.Run("iterate with trimPrefix", func(t *testing.T) {
+		// Search for data keys and trim the user prefix
+		searchPrefix := "user123:data:"
+		trimPrefix := "user123:"
+
+		retrievedKeys, err := tkvTest.tkv.Iterate(searchPrefix, 0, 0, trimPrefix)
+		require.NoError(t, err)
+
+		expectedKeys := []string{"data:key1", "data:key2", "data:key3"}
+		sort.Strings(retrievedKeys)
+		sort.Strings(expectedKeys)
+
+		require.Equal(t, expectedKeys, retrievedKeys)
+	})
+
+	t.Run("iterate without trimPrefix", func(t *testing.T) {
+		// Same search but without trimming
+		searchPrefix := "user123:data:"
+
+		retrievedKeys, err := tkvTest.tkv.Iterate(searchPrefix, 0, 0, "")
+		require.NoError(t, err)
+
+		expectedKeys := []string{"user123:data:key1", "user123:data:key2", "user123:data:key3"}
+		sort.Strings(retrievedKeys)
+		sort.Strings(expectedKeys)
+
+		require.Equal(t, expectedKeys, retrievedKeys)
+	})
+}
+
+func TestTKVCacheIterateWithTrimPrefix(t *testing.T) {
+	ctx := context.Background()
+	tkvTest, err := createTestTKV(ctx)
+	require.NoError(t, err)
+	defer func() {
+		err := tkvTest.tkv.Close()
+		require.NoError(t, err)
+		err = tkvTest.Cleanup()
+		require.NoError(t, err)
+	}()
+
+	// Set up test data in cache with a common prefix
+	keys := []string{
+		"session123:auth:token",
+		"session123:auth:user",
+		"session123:cache:data1",
+	}
+
+	for _, key := range keys {
+		err := tkvTest.tkv.CacheSet(key, "value")
+		require.NoError(t, err)
+	}
+
+	t.Run("cache iterate with trimPrefix", func(t *testing.T) {
+		// Search for auth keys and trim the session prefix
+		searchPrefix := "session123:auth:"
+		trimPrefix := "session123:"
+
+		retrievedKeys, err := tkvTest.tkv.CacheIterate(searchPrefix, 0, 0, trimPrefix)
+		require.NoError(t, err)
+
+		expectedKeys := []string{"auth:token", "auth:user"}
+		sort.Strings(retrievedKeys)
+		sort.Strings(expectedKeys)
+
+		require.Equal(t, expectedKeys, retrievedKeys)
 	})
 }

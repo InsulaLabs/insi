@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/tkv"
@@ -103,7 +102,8 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 		offsetInt = 0
 	}
 
-	value, err := c.fsm.Iterate(fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix), offsetInt, limitInt)
+	// Pass the trimPrefix to remove it during iteration
+	value, err := c.fsm.Iterate(fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix), offsetInt, limitInt, fmt.Sprintf("%s:", td.DataScopeUUID))
 	if err == badger.ErrKeyNotFound {
 		http.NotFound(w, r)
 		return
@@ -111,10 +111,6 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 		c.logger.Error("Could not iterate keys by prefix via FSM", "prefix", prefix, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
-	}
-
-	for i, key := range value {
-		value[i] = strings.TrimPrefix(key, fmt.Sprintf("%s:", td.DataScopeUUID))
 	}
 
 	w.Header().Set("Content-Type", "application/json")

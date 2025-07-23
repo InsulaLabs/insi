@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/tkv"
@@ -432,21 +431,15 @@ func (c *Core) iterateCacheKeysByPrefixHandler(w http.ResponseWriter, r *http.Re
 
 	fullPrefix := fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix)
 
-	keys, err := c.fsm.IterateCache(fullPrefix, offset, limit)
+	// Pass the data scope UUID prefix to be trimmed during iteration
+	keys, err := c.fsm.IterateCache(fullPrefix, offset, limit, fmt.Sprintf("%s:", td.DataScopeUUID))
 	if err != nil {
 		http.Error(w, "Failed to iterate cache keys", http.StatusInternalServerError)
 		return
 	}
 
-	// Trim the internal prefix from the keys before returning them
-	prefixToTrim := td.DataScopeUUID + ":"
-	trimmedKeys := make([]string, len(keys))
-	for i, key := range keys {
-		trimmedKeys[i] = strings.TrimPrefix(key, prefixToTrim)
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(trimmedKeys); err != nil {
+	if err := json.NewEncoder(w).Encode(keys); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
 }
