@@ -488,6 +488,7 @@ func (c *Core) Run() {
 		// Events handlers
 		c.pubMux.Handle("/db/api/v1/events", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events")))
 		c.pubMux.Handle("/db/api/v1/events/subscribe", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events")))
+		c.pubMux.Handle("/db/api/v1/events/purge", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.eventPurgeHandler), "events")))
 
 		c.pubMux.Handle("/db/api/v1/ping", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system")))
 

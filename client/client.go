@@ -1325,6 +1325,27 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 	}
 }
 
+// PurgeEventSubscriptions disconnects all event subscriptions for the current API key.
+// Returns the number of disconnected sessions.
+func (c *Client) PurgeEventSubscriptions() (int, error) {
+	var response struct {
+		Success              bool   `json:"success"`
+		DisconnectedSessions int    `json:"disconnected_sessions"`
+		KeyUUID              string `json:"key_uuid"`
+	}
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/events/purge", nil, nil, &response)
+	if err != nil {
+		return 0, err
+	}
+
+	if !response.Success {
+		return 0, fmt.Errorf("purge operation reported failure")
+	}
+
+	return response.DisconnectedSessions, nil
+}
+
 // --- Blob Operations ---
 
 // UploadBlob uploads a blob from an io.Reader. The caller is responsible for the reader.

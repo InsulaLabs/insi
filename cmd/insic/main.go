@@ -168,6 +168,8 @@ func main() {
 		handlePublish(cli, cmdArgs)
 	case "subscribe":
 		handleSubscribe(cli, cmdArgs)
+	case "purge":
+		handlePurge(cli, cmdArgs)
 	case "api":
 		handleApi(cli, cmdArgs)
 	case "blob":
@@ -205,6 +207,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s\n", color.GreenString("ping"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("publish"), color.CyanString("<topic>"), color.CyanString("<data>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("subscribe"), color.CyanString("<topic>"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("purge"), color.YellowString("Disconnect all event subscriptions for current API key"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchset"), color.CyanString("<filepath.json>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("batchdelete"), color.CyanString("<filepath.json>"))
 
@@ -308,6 +311,29 @@ func handleSubscribe(c *client.Client, args []string) {
 		}
 	}
 	logger.Info("Subscription process finished.", "topic", color.CyanString(topic))
+}
+
+func handlePurge(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("purge: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	logger.Info("Attempting to purge all event subscriptions for current API key")
+
+	disconnectedCount, err := c.PurgeEventSubscriptions()
+	if err != nil {
+		logger.Error("Purge failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if disconnectedCount == 0 {
+		color.HiYellow("No active event subscriptions found to purge.")
+	} else {
+		color.HiGreen("Successfully purged %d event subscription(s).", disconnectedCount)
+	}
 }
 
 // Placeholder for command handlers - to be implemented next
