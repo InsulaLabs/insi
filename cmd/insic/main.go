@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/InsulaLabs/insi/client"
@@ -25,11 +27,13 @@ import (
 )
 
 var (
-	logger     *slog.Logger
-	configPath string
-	clusterCfg *config.Cluster
-	targetNode string // --target flag
-	useRootKey bool   // --root flag
+	logger         *slog.Logger
+	configPath     string
+	clusterCfg     *config.Cluster
+	targetNode     string // --target flag
+	useRootKey     bool   // --root flag
+	publicAddress  string // --public flag
+	privateAddress string // --private flag
 )
 
 func init() {
@@ -43,6 +47,11 @@ func init() {
 	flag.StringVar(&configPath, "config", "cluster.yaml", "Path to the cluster configuration file")
 	flag.StringVar(&targetNode, "target", "", "Target node ID (e.g., node0, node1). Defaults to DefaultLeader in config.")
 	flag.BoolVar(&useRootKey, "root", false, "Use the root key for the cluster. Defaults to false.")
+
+	// if either are present, use them, otherwise use the config
+	flag.StringVar(&publicAddress, "public", "", "Public address of the node to connect to. Defaults to INSI_PUBLIC_ADDRESS environment variable.")
+	flag.StringVar(&privateAddress, "private", "", "Private address of the node to connect to. Defaults to INSI_PRIVATE_ADDRESS environment variable.")
+
 }
 
 func loadConfig(path string) (*config.Cluster, error) {
@@ -57,6 +66,109 @@ func loadConfig(path string) (*config.Cluster, error) {
 		return nil, fmt.Errorf("failed to unmarshal config data from %s: %w", path, err)
 	}
 	return &cfg, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// processAddress strips scheme and ensures port is present
+func processAddress(addr string) string {
+	// Strip https:// or http:// prefix if present
+	if strings.HasPrefix(addr, "https://") {
+		addr = strings.TrimPrefix(addr, "https://")
+	} else if strings.HasPrefix(addr, "http://") {
+		addr = strings.TrimPrefix(addr, "http://")
+	}
+
+	// If no port is specified, add default HTTPS port
+	if !strings.Contains(addr, ":") {
+		addr = addr + ":443"
+	}
+
+	return addr
+}
+
+func getClientNoConfig() (*client.Client, error) {
+	// Get addresses from flags or environment variables
+	pubAddr := publicAddress
+	if pubAddr == "" {
+		pubAddr = os.Getenv("INSI_PUBLIC_ADDRESS")
+	}
+
+	privAddr := privateAddress
+	if privAddr == "" {
+		privAddr = os.Getenv("INSI_PRIVATE_ADDRESS")
+	}
+
+	// If only one address is provided, use it for both
+	if pubAddr != "" && privAddr == "" {
+		privAddr = pubAddr
+	} else if privAddr != "" && pubAddr == "" {
+		pubAddr = privAddr
+	} else if pubAddr == "" && privAddr == "" {
+		return nil, fmt.Errorf("no address provided: use --public, --private, or set INSI_PUBLIC_ADDRESS/INSI_PRIVATE_ADDRESS environment variables")
+	}
+
+	pubAddr = processAddress(pubAddr)
+	privAddr = processAddress(privAddr)
+
+	// Get API key
+	apiKey := os.Getenv("INSI_API_KEY")
+	if apiKey == "" && !useRootKey {
+		return nil, fmt.Errorf("INSI_API_KEY environment variable is not set and --root flag is not provided")
+	}
+
+	// For root key without config, we need the instance secret
+	if useRootKey {
+		instanceSecret := os.Getenv("INSI_INSTANCE_SECRET")
+		if instanceSecret == "" {
+			return nil, fmt.Errorf("INSI_INSTANCE_SECRET environment variable is required when using --root without config")
+		}
+		secretHash := sha256.New()
+		secretHash.Write([]byte(instanceSecret))
+		apiKey = hex.EncodeToString(secretHash.Sum(nil))
+		apiKey = base64.StdEncoding.EncodeToString([]byte(apiKey))
+	}
+
+	// Extract domain from address if present (format: domain:port or ip:port)
+	extractDomain := func(addr string) string {
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			// If splitting fails, the whole thing might be the host
+			return addr
+		}
+		return host
+	}
+
+	clientDomain := extractDomain(pubAddr)
+
+	// Check if TLS verification should be skipped (default to false for security)
+	skipVerify := false
+	if skipVerifyEnv := os.Getenv("INSI_SKIP_VERIFY"); skipVerifyEnv == "true" {
+		skipVerify = true
+	}
+
+	clientLogger := logger.WithGroup("client")
+
+	c, err := client.NewClient(&client.Config{
+		ConnectionType: client.ConnectionTypeDirect,
+		Endpoints: []client.Endpoint{
+			{
+				PublicBinding:  pubAddr,
+				PrivateBinding: privAddr,
+				ClientDomain:   clientDomain,
+			},
+		},
+		ApiKey:     apiKey,
+		SkipVerify: skipVerify,
+		Logger:     clientLogger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create client: %w", err)
+	}
+	return c, nil
 }
 
 func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error) {
@@ -116,11 +228,31 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 func main() {
 	flag.Parse()
 
-	var err error
-	clusterCfg, err = loadConfig(configPath)
-	if err != nil {
-		logger.Error("Failed to load cluster configuration", "error", err)
+	// Config is explicitly provided if:
+	// 1. User specified a non-default config path via --config
+	// 2. The default config file exists and user provided address flags
+	configExplicitlyProvided := configPath != "cluster.yaml"
+	addressProvided := publicAddress != "" || privateAddress != "" ||
+		os.Getenv("INSI_PUBLIC_ADDRESS") != "" || os.Getenv("INSI_PRIVATE_ADDRESS") != ""
+	if configExplicitlyProvided && addressProvided {
+		logger.Error("Cannot use both --config flag and address flags/env vars simultaneously")
+		fmt.Fprintf(os.Stderr, "%s Cannot use --config flag with --public/--private or INSI_PUBLIC_ADDRESS/INSI_PRIVATE_ADDRESS\n", color.RedString("Error:"))
 		os.Exit(1)
+	}
+
+	var err error
+	var cli *client.Client
+	var useConfigMode bool
+
+	if addressProvided {
+		useConfigMode = false
+	} else {
+		useConfigMode = true
+		clusterCfg, err = loadConfig(configPath)
+		if err != nil {
+			logger.Error("Failed to load cluster configuration", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	args := flag.Args() // Get non-flag arguments
@@ -132,14 +264,19 @@ func main() {
 	command := args[0]
 	cmdArgs := args[1:]
 
-	// Default client (usually to DefaultLeader)
-	// For 'join', a specific client will be created.
-	var cli *client.Client
 	if command != "join" {
-		cli, err = getClient(clusterCfg, targetNode)
-		if err != nil {
-			logger.Error("Failed to initialize default API client", "error", err)
-			os.Exit(1)
+		if useConfigMode {
+			cli, err = getClient(clusterCfg, targetNode)
+			if err != nil {
+				logger.Error("Failed to initialize API client from config", "error", err)
+				os.Exit(1)
+			}
+		} else {
+			cli, err = getClientNoConfig()
+			if err != nil {
+				logger.Error("Failed to initialize API client without config", "error", err)
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -187,8 +324,18 @@ func main() {
 
 func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage: insic [flags] <command> [args...]\n")
-	fmt.Fprintf(os.Stderr, "Flags:\n")
+	fmt.Fprintf(os.Stderr, "\nConnection Modes:\n")
+	fmt.Fprintf(os.Stderr, "  Config mode:   Use --config with a cluster.yaml file (default)\n")
+	fmt.Fprintf(os.Stderr, "  Direct mode:   Use --public/--private or env vars (no config file)\n")
+	fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+	fmt.Fprintf(os.Stderr, "  INSI_API_KEY          API key for authentication\n")
+	fmt.Fprintf(os.Stderr, "  INSI_PUBLIC_ADDRESS   Public address (e.g., db-0.insula.dev or https://db-0.insula.dev:443)\n")
+	fmt.Fprintf(os.Stderr, "  INSI_PRIVATE_ADDRESS  Private address (defaults to public if not set)\n")
+	fmt.Fprintf(os.Stderr, "  INSI_INSTANCE_SECRET  Instance secret (required for --root without config)\n")
+	fmt.Fprintf(os.Stderr, "  INSI_SKIP_VERIFY      Set to 'true' to skip TLS verification\n")
+	fmt.Fprintf(os.Stderr, "\nFlags:\n")
 	flag.PrintDefaults()
+	fmt.Fprintf(os.Stderr, "\n%s: Cannot use --config together with --public/--private\n", color.YellowString("Note"))
 	fmt.Fprintf(os.Stderr, "\nCommands:\n")
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("get"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
@@ -693,6 +840,13 @@ func handleJoin(args []string) {
 	leaderNodeID := args[0]
 	followerNodeID := args[1]
 
+	// Join command requires config file
+	if clusterCfg == nil {
+		logger.Error("join command requires a config file")
+		fmt.Fprintf(os.Stderr, "%s join command requires --config with a valid cluster configuration file\n", color.RedString("Error:"))
+		os.Exit(1)
+	}
+
 	logger.Info("Join command initiated", "leader_node", leaderNodeID, "follower_node", followerNodeID)
 
 	// Create a client specifically for the leader node
@@ -860,62 +1014,121 @@ func handleApiVerify(args []string) {
 	}
 	apiKeyToVerify := args[0]
 
-	nodeToConnect := targetNode
-	if nodeToConnect == "" {
-		if clusterCfg.DefaultLeader == "" {
+	var verifyCli *client.Client
+	var err error
+	verifyClientLogger := logger.WithGroup("verify_client")
+
+	if clusterCfg != nil {
+		// Config mode
+		nodeToConnect := targetNode
+		if nodeToConnect == "" {
+			if clusterCfg.DefaultLeader == "" {
+				logger.Error(
+					"api verify: targetNode is empty and no DefaultLeader is set in config",
+				)
+				fmt.Fprintf(
+					os.Stderr,
+					"%s Target node must be specified via --target or DefaultLeader in config.\n",
+					color.RedString("Error:"),
+				)
+				os.Exit(1)
+			}
+			nodeToConnect = clusterCfg.DefaultLeader
+			logger.Info(
+				"No target node specified for verify, using DefaultLeader", "node_id", color.CyanString(nodeToConnect),
+			)
+		}
+
+		nodeDetails, ok := clusterCfg.Nodes[nodeToConnect]
+		if !ok {
 			logger.Error(
-				"api verify: targetNode is empty and no DefaultLeader is set in config",
+				"api verify: node ID not found in configuration", "node_id", nodeToConnect,
 			)
 			fmt.Fprintf(
 				os.Stderr,
-				"%s Target node must be specified via --target or DefaultLeader in config.\n",
+				"%s Node ID '%s' not found in configuration.\n",
 				color.RedString("Error:"),
+				color.CyanString(nodeToConnect),
 			)
 			os.Exit(1)
 		}
-		nodeToConnect = clusterCfg.DefaultLeader
-		logger.Info(
-			"No target node specified for verify, using DefaultLeader", "node_id", color.CyanString(nodeToConnect),
-		)
-	}
 
-	nodeDetails, ok := clusterCfg.Nodes[nodeToConnect]
-	if !ok {
-		logger.Error(
-			"api verify: node ID not found in configuration", "node_id", nodeToConnect,
-		)
-		fmt.Fprintf(
-			os.Stderr,
-			"%s Node ID '%s' not found in configuration.\n",
-			color.RedString("Error:"),
-			color.CyanString(nodeToConnect),
-		)
-		os.Exit(1)
-	}
-
-	verifyClientLogger := logger.WithGroup("verify_client")
-
-	verifyCli, err := client.NewClient(&client.Config{
-		ConnectionType: client.ConnectionTypeDirect,
-		Endpoints: []client.Endpoint{
-			{
-				PublicBinding:  nodeDetails.PublicBinding,
-				PrivateBinding: nodeDetails.PrivateBinding,
-				ClientDomain:   nodeDetails.ClientDomain,
+		verifyCli, err = client.NewClient(&client.Config{
+			ConnectionType: client.ConnectionTypeDirect,
+			Endpoints: []client.Endpoint{
+				{
+					PublicBinding:  nodeDetails.PublicBinding,
+					PrivateBinding: nodeDetails.PrivateBinding,
+					ClientDomain:   nodeDetails.ClientDomain,
+				},
 			},
-		},
-		ApiKey:     apiKeyToVerify,
-		SkipVerify: clusterCfg.ClientSkipVerify,
-		Logger:     verifyClientLogger,
-	})
+			ApiKey:     apiKeyToVerify,
+			SkipVerify: clusterCfg.ClientSkipVerify,
+			Logger:     verifyClientLogger,
+		})
+	} else {
+		pubAddr := publicAddress
+		if pubAddr == "" {
+			pubAddr = os.Getenv("INSI_PUBLIC_ADDRESS")
+		}
+
+		privAddr := privateAddress
+		if privAddr == "" {
+			privAddr = os.Getenv("INSI_PRIVATE_ADDRESS")
+		}
+
+		// If only one address is provided, use it for both
+		if pubAddr != "" && privAddr == "" {
+			privAddr = pubAddr
+		} else if privAddr != "" && pubAddr == "" {
+			pubAddr = privAddr
+		} else if pubAddr == "" && privAddr == "" {
+			logger.Error("api verify: no address provided in non-config mode")
+			fmt.Fprintf(os.Stderr, "%s No address provided: use --public, --private, or set INSI_PUBLIC_ADDRESS/INSI_PRIVATE_ADDRESS\n", color.RedString("Error:"))
+			os.Exit(1)
+		}
+
+		pubAddr = processAddress(pubAddr)
+		privAddr = processAddress(privAddr)
+
+		// Extract domain from address
+		extractDomain := func(addr string) string {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return addr
+			}
+			return host
+		}
+
+		clientDomain := extractDomain(pubAddr)
+		skipVerify := false
+		if skipVerifyEnv := os.Getenv("INSI_SKIP_VERIFY"); skipVerifyEnv == "true" {
+			skipVerify = true
+		}
+
+		verifyCli, err = client.NewClient(&client.Config{
+			ConnectionType: client.ConnectionTypeDirect,
+			Endpoints: []client.Endpoint{
+				{
+					PublicBinding:  pubAddr,
+					PrivateBinding: privAddr,
+					ClientDomain:   clientDomain,
+				},
+			},
+			ApiKey:     apiKeyToVerify,
+			SkipVerify: skipVerify,
+			Logger:     verifyClientLogger,
+		})
+	}
+
 	if err != nil {
-		logger.Error("api verify: failed to create client for verification", "target_node", nodeToConnect, "error", err)
+		logger.Error("api verify: failed to create client for verification", "error", err)
 		fmt.Fprintf(os.Stderr, "%s Failed to create client for verification: %v\n", color.RedString("Error:"), err)
 		color.HiRed("Verification FAILED")
 		os.Exit(1)
 	}
 
-	logger.Info("Attempting to verify API key with a ping...", "target_node", nodeToConnect)
+	logger.Info("Attempting to verify API key with a ping...")
 	pingResp, err := verifyCli.Ping()
 	if err != nil {
 		logger.Error("API key verification failed: Ping request failed", "key_value", apiKeyToVerify, "error", err)
