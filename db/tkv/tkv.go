@@ -30,7 +30,7 @@ type TKVBatchHandler interface {
 
 type TKVDataHandler interface {
 	Get(key string) (string, error)
-	Iterate(prefix string, offset int, limit int) ([]string, error)
+	Iterate(prefix string, offset int, limit int, trimPrefix string) ([]string, error)
 	Set(key string, value string) error
 	Delete(key string) error
 	SetNX(key string, value string) error
@@ -46,7 +46,7 @@ type TKVCacheHandler interface {
 
 	CacheSetNX(key string, value string) error
 	CacheCompareAndSwap(key string, oldValue, newValue string) error
-	CacheIterate(prefix string, offset int, limit int) ([]string, error)
+	CacheIterate(prefix string, offset int, limit int, trimPrefix string) ([]string, error)
 }
 
 type TKV interface {

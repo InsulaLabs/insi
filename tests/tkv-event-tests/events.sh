@@ -36,6 +36,8 @@ NUM_MESSAGES=${#MESSAGES[@]}
 # --- Helper Functions ---
 cleanup() {
     echo "--- Cleaning up ---"
+    
+    # Clean up the main test subscriber
     if [ -f "$SUBSCRIBER_PID_FILE" ]; then
         SUB_PID=$(cat "$SUBSCRIBER_PID_FILE")
         if ps -p "$SUB_PID" > /dev/null; then
@@ -51,6 +53,22 @@ cleanup() {
             echo "Subscriber process (PID: $SUB_PID) already exited."
         fi
     fi
+    
+    # Clean up any purge test subscribers if they exist
+    for PID_VAR in SUB1_PID SUB2_PID SUB3_PID; do
+        if [ -n "${!PID_VAR}" ]; then
+            PID="${!PID_VAR}"
+            if ps -p "$PID" > /dev/null; then
+                echo "Killing purge test subscriber (PID: $PID)..."
+                kill "$PID" 2>/dev/null || true
+                sleep 1
+                if ps -p "$PID" > /dev/null; then
+                    kill -9 "$PID" 2>/dev/null || true
+                fi
+            fi
+        fi
+    done
+    
     if [ -d "$TEST_DIR" ]; then
         echo "Removing temporary directory: $TEST_DIR"
         rm -rf "$TEST_DIR"
@@ -153,5 +171,162 @@ else
     exit 1
 fi
 echo "--------------------"
+
+# --- Additional Test: Purge Functionality ---
+echo ""
+echo "--- Testing Purge Functionality ---"
+
+# Start multiple subscribers
+echo "Starting 3 subscribers for purge test..."
+PURGE_OUTPUT_DIR="$TEST_DIR/purge_test"
+mkdir -p "$PURGE_OUTPUT_DIR"
+
+# Start subscriber 1
+"$INSIC_EXE" --config "$CONFIG_FILE" --target "$TARGET_NODE" --root subscribe "purge-topic-1" > "$PURGE_OUTPUT_DIR/sub1.txt" 2>&1 &
+SUB1_PID=$!
+echo "Subscriber 1 started with PID: $SUB1_PID"
+
+# Start subscriber 2
+"$INSIC_EXE" --config "$CONFIG_FILE" --target "$TARGET_NODE" --root subscribe "purge-topic-2" > "$PURGE_OUTPUT_DIR/sub2.txt" 2>&1 &
+SUB2_PID=$!
+echo "Subscriber 2 started with PID: $SUB2_PID"
+
+# Start subscriber 3 (same topic as subscriber 1)
+"$INSIC_EXE" --config "$CONFIG_FILE" --target "$TARGET_NODE" --root subscribe "purge-topic-1" > "$PURGE_OUTPUT_DIR/sub3.txt" 2>&1 &
+SUB3_PID=$!
+echo "Subscriber 3 started with PID: $SUB3_PID"
+
+# Wait for all subscribers to connect
+echo "Waiting for all subscribers to connect..."
+sleep 5
+
+# Check subscriber outputs for successful connection
+echo "Checking subscriber connection status..."
+for i in 1 2 3; do
+    SUB_FILE="$PURGE_OUTPUT_DIR/sub$i.txt"
+    if grep -q "Successfully connected" "$SUB_FILE"; then
+        echo "Subscriber $i connected successfully"
+    else
+        echo "WARNING: Subscriber $i may not have connected. Output:"
+        cat "$SUB_FILE"
+        echo "---"
+    fi
+done
+
+# Check that all subscribers are running
+ALL_RUNNING=true
+RUNNING_COUNT=0
+for PID in $SUB1_PID $SUB2_PID $SUB3_PID; do
+    if ps -p "$PID" > /dev/null; then
+        RUNNING_COUNT=$((RUNNING_COUNT + 1))
+    else
+        echo "ERROR: Subscriber PID $PID is not running"
+        ALL_RUNNING=false
+    fi
+done
+
+echo "Running subscribers: $RUNNING_COUNT out of 3"
+
+if [ "$RUNNING_COUNT" -eq 0 ]; then
+    echo "ERROR: No subscribers are running. Check subscriber outputs:"
+    for i in 1 2 3; do
+        echo "--- Subscriber $i output ---"
+        cat "$PURGE_OUTPUT_DIR/sub$i.txt"
+        echo "---"
+    done
+    exit 1
+fi
+
+# Run purge command even if not all subscribers started (to test partial purge)
+echo "Running purge command..."
+PURGE_OUTPUT="$PURGE_OUTPUT_DIR/purge_result.txt"
+# Use || true to prevent set -e from exiting on non-zero exit code
+"$INSIC_EXE" --config "$CONFIG_FILE" --target "$TARGET_NODE" --root purge > "$PURGE_OUTPUT" 2>&1 || PURGE_EXIT_CODE=$?
+# If the command succeeded, PURGE_EXIT_CODE will be unset, so set it to 0
+PURGE_EXIT_CODE=${PURGE_EXIT_CODE:-0}
+
+# Check purge output
+echo "Purge command output:"
+if [ -f "$PURGE_OUTPUT" ]; then
+    cat "$PURGE_OUTPUT"
+else
+    echo "ERROR: Purge output file not found at $PURGE_OUTPUT"
+    echo "Directory contents:"
+    ls -la "$PURGE_OUTPUT_DIR" || echo "Directory does not exist"
+    exit 1
+fi
+echo "Purge exit code: $PURGE_EXIT_CODE"
+
+if [ $PURGE_EXIT_CODE -ne 0 ]; then
+    echo "ERROR: Purge command failed with exit code $PURGE_EXIT_CODE"
+    # Show more diagnostic info
+    echo "--- Diagnostic Information ---"
+    echo "Current running subscribers:"
+    for PID in $SUB1_PID $SUB2_PID $SUB3_PID; do
+        if ps -p "$PID" > /dev/null; then
+            echo "  PID $PID is still running"
+        else
+            echo "  PID $PID has exited"
+        fi
+    done
+    # Clean up
+    for PID in $SUB1_PID $SUB2_PID $SUB3_PID; do
+        if ps -p "$PID" > /dev/null; then
+            kill "$PID" 2>/dev/null || true
+        fi
+    done
+    exit 1
+fi
+
+# Extract disconnected count from output
+DISCONNECTED_COUNT=$(grep -oE "Successfully purged ([0-9]+) event subscription" "$PURGE_OUTPUT" | grep -oE "[0-9]+" | head -1)
+if [ -z "$DISCONNECTED_COUNT" ]; then
+    # Check for "No active event subscriptions" message
+    if grep -q "No active event subscriptions found to purge" "$PURGE_OUTPUT"; then
+        DISCONNECTED_COUNT=0
+    else
+        echo "ERROR: Could not parse purge output"
+        exit 1
+    fi
+fi
+
+
+echo "Purge reported $DISCONNECTED_COUNT disconnected sessions"
+
+# Wait a moment for processes to actually die
+sleep 2
+
+# Check that subscriber processes have terminated
+STILL_RUNNING=0
+TERMINATED=0
+for PID in $SUB1_PID $SUB2_PID $SUB3_PID; do
+    if ps -p "$PID" > /dev/null; then
+        echo "WARNING: Subscriber PID $PID is still running after purge"
+        STILL_RUNNING=$((STILL_RUNNING + 1))
+        # Force kill it for cleanup
+        kill -9 "$PID" 2>/dev/null || true
+    else
+        echo "OK: Subscriber PID $PID has terminated"
+        TERMINATED=$((TERMINATED + 1))
+    fi
+done
+
+echo "--- Purge Test Summary ---"
+echo "- Started with $RUNNING_COUNT running subscribers"
+echo "- Purge reported $DISCONNECTED_COUNT disconnected sessions"
+echo "- $TERMINATED subscribers terminated after purge"
+echo "- $STILL_RUNNING subscribers still running after purge"
+
+# Success if purge count matches what was running and all have terminated
+if [ "$DISCONNECTED_COUNT" -eq "$RUNNING_COUNT" ] && [ "$STILL_RUNNING" -eq 0 ] && [ "$RUNNING_COUNT" -gt 0 ]; then
+    echo "SUCCESS: Purge functionality working correctly!"
+else
+    echo "FAILURE: Purge test failed"
+    echo "- Expected to disconnect $RUNNING_COUNT sessions"
+    echo "- Purge reported $DISCONNECTED_COUNT disconnected"
+    echo "- $STILL_RUNNING processes still running after purge"
+    exit 1
+fi
+echo "--------------------------"
 
 exit 0

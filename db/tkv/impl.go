@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 )
@@ -150,7 +151,7 @@ func (t *tkv) Delete(key string) error {
 	return err
 }
 
-func (t *tkv) Iterate(prefix string, offset int, limit int) ([]string, error) {
+func (t *tkv) Iterate(prefix string, offset int, limit int, trimPrefix string) ([]string, error) {
 	var keys []string
 	err := t.db.store.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -169,7 +170,12 @@ func (t *tkv) Iterate(prefix string, offset int, limit int) ([]string, error) {
 				break
 			}
 			item := it.Item()
-			keys = append(keys, string(item.Key()))
+			key := string(item.Key())
+			// Trim the prefix if specified
+			if trimPrefix != "" {
+				key = strings.TrimPrefix(key, trimPrefix)
+			}
+			keys = append(keys, key)
 			collected++
 		}
 		return nil
@@ -231,7 +237,7 @@ func (t *tkv) CacheDelete(key string) error {
 	return err
 }
 
-func (t *tkv) CacheIterate(prefix string, offset int, limit int) ([]string, error) {
+func (t *tkv) CacheIterate(prefix string, offset int, limit int, trimPrefix string) ([]string, error) {
 	var keys []string
 	err := t.db.cache.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -250,7 +256,12 @@ func (t *tkv) CacheIterate(prefix string, offset int, limit int) ([]string, erro
 				break
 			}
 			item := it.Item()
-			keys = append(keys, string(item.Key()))
+			key := string(item.Key())
+			// Trim the prefix if specified
+			if trimPrefix != "" {
+				key = strings.TrimPrefix(key, trimPrefix)
+			}
+			keys = append(keys, key)
 			collected++
 		}
 		return nil

@@ -26,6 +26,11 @@ import (
 	"golang.org/x/time/rate"
 )
 
+type RouteProvider interface {
+	BindPublicRoutes(mux *http.ServeMux)
+	BindPrivateRoutes(mux *http.ServeMux)
+}
+
 type AccessEntity bool
 
 const (
@@ -111,6 +116,8 @@ type Core struct {
 	subscriptionSlotLock sync.Mutex
 
 	entityRateLimiters *ttlcache.Cache[string, *endpointKeyRateLimiters]
+
+	routeProviders []RouteProvider
 }
 
 type serverInstance struct {
@@ -141,6 +148,10 @@ func (s *Core) AddHandler(path string, handler http.Handler) error {
 	}
 	s.pubMux.Handle(path, handler)
 	return nil
+}
+
+func (s *Core) GetPublicMux() *http.ServeMux {
+	return s.pubMux
 }
 
 func New(
@@ -437,6 +448,16 @@ func (c *Core) ipPrivateFilterMiddleware() func(next http.Handler) http.Handler 
 	return c.getIpFilterMiddleware(true)
 }
 
+func (c *Core) WithRouteProvider(rp RouteProvider) *Core {
+	c.routeProviders = append(c.routeProviders, rp)
+	return c
+}
+
+func (c *Core) WithRouteProviders(rps ...RouteProvider) *Core {
+	c.routeProviders = append(c.routeProviders, rps...)
+	return c
+}
+
 // Run forever until the context is cancelled
 func (c *Core) Run() {
 
@@ -467,6 +488,7 @@ func (c *Core) Run() {
 		// Events handlers
 		c.pubMux.Handle("/db/api/v1/events", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.eventsHandler), "events")))
 		c.pubMux.Handle("/db/api/v1/events/subscribe", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.eventSubscribeHandler), "events")))
+		c.pubMux.Handle("/db/api/v1/events/purge", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.eventPurgeHandler), "events")))
 
 		c.pubMux.Handle("/db/api/v1/ping", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.authedPing), "system")))
 
@@ -480,6 +502,10 @@ func (c *Core) Run() {
 		c.pubMux.Handle("/db/api/v1/alias/delete", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.deleteAliasHandler), "system")))
 		// List is so they can get a list of all the aliases they have set for the purpose of deleting or debugging
 		c.pubMux.Handle("/db/api/v1/alias/list", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.listAliasesHandler), "system")))
+
+		for _, rp := range c.routeProviders {
+			rp.BindPublicRoutes(c.pubMux)
+		}
 
 		return &serverInstance{
 			binding: binding,
@@ -514,6 +540,10 @@ func (c *Core) Run() {
 		c.privMux.Handle("/db/api/v1/admin/insight/entity_by_alias", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.getEntityByAliasHandler), "system")))
 
 		c.privMux.Handle("/db/api/v1/admin/metrics/ops", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.opsPerSecondHandler), "system")))
+
+		for _, rp := range c.routeProviders {
+			rp.BindPrivateRoutes(c.privMux)
+		}
 
 		return &serverInstance{
 			binding: binding,
@@ -823,7 +853,7 @@ func (c *Core) execTombstoneDeletion() {
 	c.logger.Info("Tombstone runner executing deletion cycle")
 
 	// 1. Iterate over all tombstone keys
-	tombstoneKeys, err := c.fsm.Iterate(ApiTombstonePrefix, 0, 100)
+	tombstoneKeys, err := c.fsm.Iterate(ApiTombstonePrefix, 0, 100, "")
 	if err != nil {
 		c.logger.Error("Could not get tombstone keys", "error", err)
 		return
@@ -852,7 +882,7 @@ func (c *Core) execTombstoneDeletion() {
 
 		// 2. Iteratively delete all data associated with the dataScopeUUID
 		// We use the dataScopeUUID as the prefix for all user data.
-		keysToDelete, err := c.fsm.Iterate(dataScopeUUID, 0, 100)
+		keysToDelete, err := c.fsm.Iterate(dataScopeUUID, 0, 100, "")
 		if err != nil {
 			c.logger.Error("Could not iterate over keys for data scope", "data_scope_uuid", dataScopeUUID, "error", err)
 			continue
@@ -893,7 +923,7 @@ func (c *Core) execTombstoneDeletion() {
 		// Clean up aliases associated with this key
 		aliasPrefix := WithRootToAliasPrefix(keyUUID)
 		// We can use a large limit here as the number of aliases is capped.
-		aliasMappingKeys, err := c.fsm.Iterate(aliasPrefix, 0, MaxAliasesPerKey*2)
+		aliasMappingKeys, err := c.fsm.Iterate(aliasPrefix, 0, MaxAliasesPerKey*2, "")
 		if err != nil {
 			c.logger.Error("Could not iterate over alias mappings for cleanup", "parent_key_uuid", keyUUID, "error", err)
 			// Don't return, still try to clean up the primary key

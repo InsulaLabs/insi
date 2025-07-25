@@ -24,6 +24,8 @@
 	Event Emitter
 	  - PublishEvent
 	  - SubscribeToEvents
+	  - PurgeEventSubscriptions 			[removes the subscribers attached to the connected node]
+	  - PurgeEventSubscriptionsAllNodes 	[removes all subscribers across all nodes]
 
 	[Heavily Rate Limited]
 	  All operations below this are usually, and preferably, heavily rate limited
@@ -1323,6 +1325,84 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 		}
 		return ctx.Err() // Return context error
 	}
+}
+
+// PurgeEventSubscriptions disconnects all event subscriptions for the current API key.
+// Returns the number of disconnected sessions.
+func (c *Client) PurgeEventSubscriptions() (int, error) {
+	var response struct {
+		Success              bool   `json:"success"`
+		DisconnectedSessions int    `json:"disconnected_sessions"`
+		KeyUUID              string `json:"key_uuid"`
+	}
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/events/purge", nil, nil, &response)
+	if err != nil {
+		return 0, err
+	}
+
+	if !response.Success {
+		return 0, fmt.Errorf("purge operation reported failure")
+	}
+
+	return response.DisconnectedSessions, nil
+}
+
+// PurgeEventSubscriptionsAllNodes disconnects all event subscriptions for the current API key across ALL nodes.
+// Returns the total number of disconnected sessions from all nodes.
+func (c *Client) PurgeEventSubscriptionsAllNodes() (int, error) {
+	totalDisconnected := 0
+	errors := []error{}
+
+	c.endpointMu.RLock()
+	endpoints := make([]Endpoint, len(c.endpoints))
+	copy(endpoints, c.endpoints)
+	currentAPIKey := c.apiKey
+	c.endpointMu.RUnlock()
+
+	// Create a temporary client for each endpoint and purge
+	for _, endpoint := range endpoints {
+		// Create a new client config for this specific endpoint
+		cfg := &Config{
+			ConnectionType:         ConnectionTypeDirect,
+			Endpoints:              []Endpoint{endpoint},
+			ApiKey:                 currentAPIKey,
+			SkipVerify:             c.httpClient.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify,
+			Timeout:                c.httpClient.Timeout,
+			Logger:                 c.logger,
+			EnableLeaderStickiness: false, // Don't need stickiness for this operation
+		}
+
+		tempClient, err := NewClient(cfg)
+		if err != nil {
+			c.logger.Warn("Failed to create client for endpoint during purge",
+				"endpoint", endpoint.PublicBinding,
+				"error", err)
+			errors = append(errors, fmt.Errorf("endpoint %s: %w", endpoint.PublicBinding, err))
+			continue
+		}
+
+		disconnected, err := tempClient.PurgeEventSubscriptions()
+		if err != nil {
+			c.logger.Warn("Failed to purge on endpoint",
+				"endpoint", endpoint.PublicBinding,
+				"error", err)
+			errors = append(errors, fmt.Errorf("endpoint %s: %w", endpoint.PublicBinding, err))
+			continue
+		}
+
+		totalDisconnected += disconnected
+		c.logger.Info("Purged subscriptions on endpoint",
+			"endpoint", endpoint.PublicBinding,
+			"disconnected", disconnected)
+	}
+
+	// If we had errors on some nodes but succeeded on others, return the count with a combined error
+	if len(errors) > 0 {
+		return totalDisconnected, fmt.Errorf("purged %d subscriptions total, but encountered errors: %v", totalDisconnected, errors)
+	}
+
+	return totalDisconnected, nil
 }
 
 // --- Blob Operations ---

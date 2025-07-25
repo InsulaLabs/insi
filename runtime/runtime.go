@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -51,19 +52,22 @@ type Runtime struct {
 
 	currentLogLevel slog.Level
 	keySetupOnce    sync.Once
+
+	routeProviders []core.RouteProvider
 }
 
 // New creates a new Runtime instance.
 // It initializes the application context, sets up signal handling,
 // parses command-line flags, and loads the cluster configuration.
-func New(args []string, defaultConfigFile string) (*Runtime, error) {
+func New(ctx context.Context, args []string, defaultConfigFile string) (*Runtime, error) {
 
 	r := &Runtime{
+		appCtx:    ctx,
 		rawArgs:   args,
 		rtClients: make(map[string]*client.Client),
 	}
 
-	r.appCtx, r.appCancel = context.WithCancel(context.Background())
+	r.appCtx, r.appCancel = context.WithCancel(ctx)
 	r.logger = slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("service", "insidRuntime")
 
 	// Setup signal handling
@@ -174,6 +178,20 @@ func New(args []string, defaultConfigFile string) (*Runtime, error) {
 	}
 
 	return r, nil
+}
+
+func (r *Runtime) GetPublicMux() *http.ServeMux {
+	return r.service.GetPublicMux()
+}
+
+func (r *Runtime) WithRouteProvider(rp core.RouteProvider) *Runtime {
+	r.routeProviders = append(r.routeProviders, rp)
+	return r
+}
+
+func (r *Runtime) WithRouteProviders(rps ...core.RouteProvider) *Runtime {
+	r.routeProviders = append(r.routeProviders, rps...)
+	return r
 }
 
 func (r *Runtime) GetClientForToken(token string) (*client.Client, error) {
@@ -327,6 +345,8 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		nodeLogger.Error("Failed to create service", "error", err)
 		os.Exit(1)
 	}
+
+	r.service.WithRouteProviders(r.routeProviders...)
 
 	r.service.Run()
 }

@@ -37,6 +37,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var ctx = context.Background()
+
 func main() {
 	// Use Go's structured logger for clear, leveled logging.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -76,7 +78,7 @@ func main() {
 
 	// The `runtime` package is used to host an insi node (or a full cluster).
 	// We run it in a background goroutine so our main application logic can proceed.
-	rt, err := runtime.New([]string{"--config", configPath, "--host"}, configPath)
+	rt, err := runtime.New(ctx, []string{"--config", configPath, "--host"}, configPath)
 	if err != nil {
 		logger.Error("failed to create runtime", "error", err)
 		os.Exit(1)

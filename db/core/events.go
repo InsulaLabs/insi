@@ -709,3 +709,66 @@ func (c *Core) getSubscriptionUsage(keyUUID string) (limit, current int64, err e
 
 	return limit, current, nil
 }
+
+func (c *Core) eventPurgeHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndEventsOp()
+
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	td, ok := c.ValidateToken(r, AnyUser())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeEvents) {
+		return
+	}
+
+	// Collect all sessions to disconnect
+	sessionsToDisconnect := make([]*eventSession, 0)
+
+	c.eventSubscribersLock.Lock()
+	for topic, subscribers := range c.eventSubscribers {
+		for session := range subscribers {
+			if session.keyUUID == td.KeyUUID {
+				sessionsToDisconnect = append(sessionsToDisconnect, session)
+				c.logger.Info("Found subscriber to purge",
+					"topic", topic,
+					"key_uuid", td.KeyUUID,
+					"remote_addr", session.conn.RemoteAddr().String())
+			}
+		}
+	}
+	c.eventSubscribersLock.Unlock()
+
+	// Now disconnect all collected sessions
+	// We only close the WebSocket connections, which will trigger readPump to exit
+	// and call unregisterSubscriber in its defer, ensuring proper cleanup
+	disconnectedCount := len(sessionsToDisconnect)
+
+	for _, session := range sessionsToDisconnect {
+		// Close the WebSocket connection - this will cause readPump to exit
+		// and trigger proper cleanup via its defer function
+		if err := session.conn.Close(); err != nil {
+			c.logger.Error("Error closing WebSocket connection during purge",
+				"error", err,
+				"remote_addr", session.conn.RemoteAddr().String())
+		}
+	}
+
+	c.logger.Info("Purged event subscriptions",
+		"key_uuid", td.KeyUUID,
+		"disconnected_count", disconnectedCount)
+
+	// Return success with count of disconnected sessions
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":               true,
+		"key_uuid":              td.KeyUUID,
+		"disconnected_sessions": disconnectedCount,
+	})
+}

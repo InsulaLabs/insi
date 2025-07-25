@@ -28,8 +28,26 @@ function stop_insid() {
 function run_test_script() {
 
     start_insid
-    $1 /tmp/insi-test-cluster/insic
-    local exit_code=$?
+    
+    # Capture both stdout and stderr, and save to temp file for analysis
+    local temp_output="/tmp/test_output_$$.txt"
+    $1 /tmp/insi-test-cluster/insic 2>&1 | tee "$temp_output"
+    local exit_code=${PIPESTATUS[0]}
+    
+    # Check for failure patterns in output even if exit code is 0
+    # Only look for test framework failures, not expected output from the tests
+    if grep -E "(❌ FAILURE:|Failed tests:.*[1-9])" "$temp_output" > /dev/null; then
+        echo "❌ Error: Test script $1 detected failures in output despite exit code $exit_code"
+        echo "Failed output lines:"
+        grep -E "(❌ FAILURE:|Failed tests:.*[1-9])" "$temp_output"
+        rm -f "$temp_output"
+        stop_insid
+        cd $cwd
+        exit 1
+    fi
+    
+    rm -f "$temp_output"
+    
     if [ $exit_code -ne 0 ]; then
         echo "❌ Error: Test script $1 failed with exit code $exit_code"
         stop_insid # Ensure cleanup even on failure
@@ -66,6 +84,10 @@ echo "✅ Success: cas-setnx.sh completed."
 echo "🚀 Running events.sh..."
 run_test_script /tmp/insi-test-cluster/events.sh
 echo "✅ Success: events.sh completed."
+
+echo "🚀 Running events-purge-advanced.sh..."
+run_test_script /tmp/insi-test-cluster/events-purge-advanced.sh
+echo "✅ Success: events-purge-advanced.sh completed."
 
 echo "🚀 Running get-set-delete.sh..."
 run_test_script /tmp/insi-test-cluster/get-set-delete.sh

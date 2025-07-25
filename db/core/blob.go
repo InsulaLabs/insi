@@ -365,7 +365,7 @@ func (x *blobService) startTombstoneSystem(ctx context.Context) {
 
 func (x *blobService) execTombstoneDeletion() {
 	// 1. Iterate over all tombstone keys
-	tombstoneKeys, err := x.core.fsm.Iterate(KeyPrimitiveBlobTombstone, 0, 100)
+	tombstoneKeys, err := x.core.fsm.Iterate(KeyPrimitiveBlobTombstone, 0, 100, "")
 	if err != nil {
 		x.logger.Error("Could not get blob tombstone keys", "error", err)
 		return
@@ -760,7 +760,7 @@ func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	searchPrefix := fmt.Sprintf("%s:blob:%s", td.DataScopeUUID, prefix)
-	keys, err := c.fsm.Iterate(searchPrefix, offset, limit)
+	keys, err := c.fsm.Iterate(searchPrefix, offset, limit, "")
 	if err != nil {
 		var nfErr *tkv.ErrKeyNotFound
 		if errors.As(err, &nfErr) || errors.Is(err, badger.ErrKeyNotFound) {

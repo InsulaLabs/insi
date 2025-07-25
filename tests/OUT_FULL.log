@@ -1,0 +1,1115 @@
+🚀 Running usage.sh...
+insid pid: 2622660
+2025-06-27T01:36:45.223-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:36:45.223-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:36:45.224-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:36:45.224-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:36:45.226-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:36:45.226-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:36:46.512-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:36:46.746-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:36:46.843-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:36:46.843-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:36:46.843-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:36:46.849-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:36:46.849-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:36:55.230-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:36:55.232-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:36:55.232-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:36:55.234-0400 [INFO]  added peer, starting replication: peer=node2
+2025-06-27T01:36:55.235-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-27T01:36:55.235-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+2025-06-27T01:36:55.237-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+2025-06-27T01:36:55.237-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:36:55.239-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+2025-06-27T01:36:55.240-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+set root tracker key internal:api_key_memory_usage: value 0
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+ℹ️ Using insic executable: /tmp/insi-test-cluster/insic
+ℹ️ Using config: /tmp/insi-test-cluster/cluster.yaml
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+ℹ️ Attempting to ping server... (will retry up to 15 times)
+✅ Server is responsive.
+✅ [0;32mSUCCESS: Server Ping (and output contains 'Ping Response:')[0m
+ℹ️ Starting TKV Usage Limit operations tests...
+
+[0;34m==== Test: Subscriber Limit ====[0m
+ℹ️ Creating key for subscriber limit test
+✅ [0;32mSUCCESS: Create API key for subscriber limit test (and output contains 'API Key:')[0m
+ℹ️ Setting subscriber limit for 'insi_MVGuHtBJRkhGBMOu6gj15wWp1jWIBfjfjGpRF3Q3u39KrJax6Rq1BZ2AVjgxwcQQj0c8aj5kRTLqe+Sj//s2vXyyo+DEOrBA6PVa2HjpsvwbQpAjRyCMy5GWg54zSayuhpBCAnVflNak9ktJhErbe5rOD+A=' to a total of 3
+✅ [0;32mSUCCESS: Set subscriber limit to 3 (and output contains 'OK')[0m
+✅ [0;32mSUCCESS: Verify subscriber limit was set (and output contains 'Subscribers:       3')[0m
+ℹ️ Launching 3 subscribers, one on each node (should succeed)
+Launching subscriber #1 on node0...
+Launching subscriber #2 on node1...
+Launching subscriber #3 on node2...
+✅ [0;32mSUCCESS: All 3 background subscribers connected successfully.[0m
+ℹ️ Attempting to launch one more subscriber on node0 (should fail as global limit of 3 is reached)
+✅ [0;32mSUCCESS (Received Expected Error): Subscriber connection over limit on node0 (and output contains 'subscriber limit exceeded')[0m
+ℹ️ Cleaning up subscriber processes...
+Killing subscriber process 2622882
+Killing subscriber process 2622883
+Killing subscriber process 2622884
+✅ [0;32mSUCCESS: Delete API key for subscriber test cleanup (and output contains 'OK')[0m
+
+[0;34m==== Test: Disk Usage Limit ====[0m
+ℹ️ Creating key for disk limit test
+✅ [0;32mSUCCESS: Create API key for disk limit test (and output contains 'API Key:')[0m
+ℹ️ Setting disk limit for 'insi_wV+IO3Qz2+3Ne1m5TlSYbZq4NxheK3PhN1AYQtixLe8G+s8WRtYHZzvNy/kAdelriMo4TgMVTRpOcUQANbTYXf1hBW5wwYjDyBrS5CbehxSQjIu3pfecd+T7Ufx0K5G5cg2mZ2k7JFojeWIcJ9opZnkOx2g=' to 100 bytes
+✅ [0;32mSUCCESS: Set disk limit to 100 bytes (and output contains 'OK')[0m
+✅ [0;32mSUCCESS: Get initial limits (and output contains 'Current Usage')[0m
+✅ [0;32mSUCCESS: Check initial disk usage is zero (and output contains 'Bytes on Disk:     0')[0m
+✅ [0;32mSUCCESS: Verify disk limit was set (and output contains 'Bytes on Disk:     100')[0m
+ℹ️ Attempting to upload blob of size 150 (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Blob upload exceeds disk limit (and output contains 'disk limit exceeded')[0m
+✅ [0;32mSUCCESS: Get limits after failed upload (and output contains 'Current Usage')[0m
+✅ [0;32mSUCCESS: Check disk usage is still zero (and output contains 'Bytes on Disk:     0')[0m
+ℹ️ Attempting to upload blob of size 80 (should succeed)
+✅ [0;32mSUCCESS: Blob upload under disk limit[0m
+✅ [0;32mSUCCESS: Get limits after successful upload (and output contains 'Current Usage')[0m
+✅ [0;32mSUCCESS: Check disk usage is now 80 (and output contains 'Bytes on Disk:     80')[0m
+ℹ️ Attempting to upload another blob of size 80 (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Second blob upload exceeds remaining disk space (and output contains 'disk limit exceeded')[0m
+✅ [0;32mSUCCESS: Get limits after second failed upload (and output contains 'Current Usage')[0m
+✅ [0;32mSUCCESS: Check disk usage is still 80 (and output contains 'Bytes on Disk:     80')[0m
+ℹ️ Cleanup for disk usage limit test
+✅ [0;32mSUCCESS: Delete API key for cleanup (and output contains 'OK')[0m
+
+[0;34m==== Test: Memory (Cache) Usage Limit ====[0m
+ℹ️ Creating key for memory limit test
+✅ [0;32mSUCCESS: Create API key for memory limit test (and output contains 'API Key:')[0m
+ℹ️ Setting memory limit for 'insi_2WHa4L8AmP7BOSSdQiNyKQ+zo96+TCEz2K55wZ5Bs9DMNNFe9latMKcvK17QaDEj5UmFoPx2E8AL22YE9STcUhtEoSkl47k10dko06KZNoFtJZPN8sVpqjK8ryVcH/ZI1FDO/7VwweBmlAxeYbf9E/66Hq4=' to 200 bytes
+✅ [0;32mSUCCESS: Set memory limit to 200 bytes (and output contains 'OK')[0m
+✅ [0;32mSUCCESS: Get initial limits (and output contains 'Current Usage')[0m
+✅ [0;32mSUCCESS: Check initial memory usage is zero (and output contains 'Bytes in Memory:   0')[0m
+✅ [0;32mSUCCESS: Verify memory limit was set (and output contains 'Bytes in Memory:   200')[0m
+ℹ️ Attempting to set cache value with size 340 (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Cache set exceeds memory limit (and output contains 'memory limit exceeded')[0m
+✅ [0;32mSUCCESS: Get limits after failed cache set (and output contains 'Current Usage')[0m
+✅ [0;32mSUCCESS: Check memory usage is still zero (and output contains 'Bytes in Memory:   0')[0m
+ℹ️ Attempting to set cache value with size 68 (should succeed)
+✅ [0;32mSUCCESS: Cache set under memory limit (and output contains 'OK')[0m
+✅ [0;32mSUCCESS: Get limits after successful cache set (and output contains 'Current Usage')[0m
+✅ [0;32mSUCCESS: Memory usage increased after successful set.[0m
+ℹ️ Attempting to set another cache value with size 68 (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Second cache set exceeds remaining memory (and output contains 'memory limit exceeded')[0m
+ℹ️ Cleanup for memory usage limit test
+✅ [0;32mSUCCESS: Delete API key for cleanup (and output contains 'OK')[0m
+
+[0;34m==== Test: Data Operations (RPS) Rate Limit ====[0m
+ℹ️ Creating key for data rate limit test
+✅ [0;32mSUCCESS: Create API key for data limit test (and output contains 'API Key:')[0m
+ℹ️ Setting data RPS limit for 'insi_3afh7aeAP72mhh/DGXeIENqn+T922U8JklGSZl0DrYKWbMi1ZZBA8sGtXKrcn7HYiFdZtlQOZ8USHtvlnjaZ9rbDdYonUVHUdsvhdxtWYMVgzNtojdIwFMIrE4Ix6BRTdyCLuk8fPaNX7Y0IOMYCHO+vqxQ=' to 5 ops/sec
+✅ [0;32mSUCCESS: Set data RPS limit to 5/sec (and output contains 'OK')[0m
+✅ [0;32mSUCCESS: Verify data RPS limit was set (and output contains 'RPS Data Limit:    5')[0m
+ℹ️ Sending 'set' commands in a burst to test rate limit
+ℹ️ Burst test results: 6 succeeded, 9 failed with expected error.
+✅ [0;32mSUCCESS: Data operation burst was correctly throttled (some succeeded, some failed).[0m
+ℹ️ Cleanup for data rate limit test
+✅ [0;32mSUCCESS: Delete API key for cleanup (and output contains 'OK')[0m
+
+[0;34m==== Test: Event Rate Limit ====[0m
+ℹ️ Creating key for event rate limit test
+✅ [0;32mSUCCESS: Create API key for event limit test (and output contains 'API Key:')[0m
+ℹ️ Setting event RPS limit for 'insi_grkUlznNdqA47WmK//UNknaMBzpOes7gU1LAeBP2rGOAfJ8KPkbt6ytqDnO+zIJtrp1OHsjY5XtKnRCqRjchF8fORG3YUO1pmaQ/iEsaWsYulqXKPhcLI911u1GUFB7fKc8alNmlr2BOSL/JBNxBdSSbbLI=' to 3 events/sec
+✅ [0;32mSUCCESS: Set event RPS limit to 3/sec (and output contains 'OK')[0m
+✅ [0;32mSUCCESS: Verify event RPS limit was set (and output contains 'RPS Event Limit:   3')[0m
+ℹ️ Publishing events in a burst to test rate limit
+ℹ️ Burst test results: 4 succeeded, 6 failed with expected error.
+✅ [0;32mSUCCESS: Event burst was correctly throttled (some succeeded, some failed).[0m
+ℹ️ Cleanup for event rate limit test
+✅ [0;32mSUCCESS: Delete API key for cleanup (and output contains 'OK')[0m
+
+[0;34m==== Test: Alias and API Key Rate Limit Sharing ====[0m
+ℹ️ Creating key for alias rate limit test
+✅ [0;32mSUCCESS: Create API key for alias limit test (and output contains 'API Key:')[0m
+ℹ️ Setting data RPS limit for 'insi_BxxAi3lg6d9oqWgbH4TadyU3aaBTU2pDuUaRHjhm7h5TDHzP8yiIMxkQgGqqwUKxwaDYCvxhxHE91v1xvqq+UFTF3E6BYRg+WQLncQ7Em7rTO/nSsPmYlsG7mb8uD8qoR+nD9oGpPUvWbFN6/Vnre1ezEYk=' to 5 ops/sec
+✅ [0;32mSUCCESS: Set data RPS limit to 5/sec (and output contains 'OK')[0m
+ℹ️ Creating an alias for the key
+✅ [0;32mSUCCESS: Create alias for the key (and output contains 'Alias Key:')[0m
+ℹ️ Sending 'set' commands using original key and alias to test shared rate limit
+ℹ️ Shared limit burst test results: 6 succeeded, 14 failed with expected error.
+✅ [0;32mSUCCESS: API key and alias correctly share the same rate limit bucket.[0m
+ℹ️ Cleanup for alias rate limit test
+✅ [0;32mSUCCESS: Delete API key for cleanup (and output contains 'OK')[0m
+
+[0;32mAll TKV Usage Limit operations tests completed.[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 50
+[0;32mAll Usage Limit tests passed successfully![0m
+✅ Success: usage.sh completed.
+🚀 Running insight.sh...
+insid pid: 2624037
+2025-06-27T01:38:53.241-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:38:53.241-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:38:53.608-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:38:53.608-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:38:53.609-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:38:53.609-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:38:54.355-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:38:55.235-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:38:55.235-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:38:55.235-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:38:55.242-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:38:55.242-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:38:55.389-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:39:03.250-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+2025-06-27T01:39:03.259-0400 [INFO]  added peer, starting replication: peer=node2
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+2025-06-27T01:39:03.261-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-27T01:39:03.261-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:39:03.263-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+2025-06-27T01:39:03.616-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:39:03.621-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:39:03.625-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+2025-06-27T01:39:03.625-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:39:03.629-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+set root tracker key internal:api_key_memory_usage: value 0
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+ℹ️ Using insic executable: /tmp/insi-test-cluster/insic
+ℹ️ Using config: /tmp/insi-test-cluster/cluster.yaml
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mSUCCESS: Server Ping (and output contains 'Ping Response:')[0m
+ℹ️ Starting TKV Insight operations tests...
+
+[0;34m==== Test: Insight Data Creation and Retrieval ====[0m
+ℹ️ Creating 3 primary keys...
+✅ [0;32mSUCCESS: Create primary key #1 (and output contains 'API Key:')[0m
+✅ [0;32mSUCCESS: Create primary key #2 (and output contains 'API Key:')[0m
+✅ [0;32mSUCCESS: Create primary key #3 (and output contains 'API Key:')[0m
+ℹ️ Primary keys created:
+ - insight_test_key_2_1751002748_2624120: insi_q3ShQ8orc8I9Lwu9koy+ovHvONF24gYusn0Q/ZBfgiYdCUvIssVa9Hl1f82PZ2xv75vn0KC6J+0MjpABJQ195WAFN6wo0bGQ2YLJ2bTXBZVkRhmo3VBMYBkBgT6GGwXugJvzccuWGwgOvXYySORmnB+52A0=
+ - insight_test_key_3_1751002748_2624120: insi_+u6aXcdupoJbFVMc70KisM8FN5kWDibpJ3csM549JbC58i+Lt8mcVyNvgQr+oyzfyRfGhCQTMFAeDtnKoa5Ha5Vxt5lL+KwcMwzhhAiGF3pZLhf7UhMkBrDKI3BJrBuut5myDk68dLliDmyQkb//qfBI0BY=
+ - insight_test_key_1_1751002748_2624120: insi_5C4aN8NjwO0+enVR+vBU/dhK9BMQsxtB4lPuH1oAgeXkRqw+kF3RRppoZYDQgQq7MAk9y4k7JGJyZafdJ4l8qcWFJBrxMWLhjQ/KYim3N2cGFbu3YfH8fDO3pMVBAF7vlGf3Zv/k9D8QfexUsh+BNdU+Opk=
+ℹ️ Creating 2 aliases for each primary key...
+✅ [0;32mSUCCESS: Create alias #1 for key 'insight_test_key_2_1751002748_2624120' (and output contains 'Alias Key:')[0m
+✅ [0;32mSUCCESS: Create alias #2 for key 'insight_test_key_2_1751002748_2624120' (and output contains 'Alias Key:')[0m
+✅ [0;32mSUCCESS: Create alias #1 for key 'insight_test_key_3_1751002748_2624120' (and output contains 'Alias Key:')[0m
+✅ [0;32mSUCCESS: Create alias #2 for key 'insight_test_key_3_1751002748_2624120' (and output contains 'Alias Key:')[0m
+✅ [0;32mSUCCESS: Create alias #1 for key 'insight_test_key_1_1751002748_2624120' (and output contains 'Alias Key:')[0m
+✅ [0;32mSUCCESS: Create alias #2 for key 'insight_test_key_1_1751002748_2624120' (and output contains 'Alias Key:')[0m
+ℹ️ Aliases created:
+ - For insi_q3ShQ8o... -> insi_ZaBtDgjNLDRnKg8wdxKCklG6YV9UKK+W9CrRLxIRxbHct0ml8VpB7crpRXjVodqcr8sehwGs667WQveBPGGO/Ifjlk5Df9cfXnM+OZV0i5csr4WFcDVwx36GgZmUSWQzvKD+FivCX08m8zyi85ngtGLdDJSZfSqenj4BsDj5kIaJjqzT insi_OnrNuFSFPgM/ejbIugWTFSKAEvPubyzvil4iOrPjVdH4YD0lHyOpAlSK7vQw7ZdGxMFugHqgNUyBMRlkyCv5wiQxeOPv4WFoSqImTb31i6+tr5E87mYHNoUow49nG8VqmpZlU3uFI88zezxoVy8l3V/46pJEfy9gWsIKY9WDuPZkmul4
+ - For insi_+u6aXcd... -> insi_gzpX8b6bhhqAGLihTeTzW8LdlnpGT/ZxS2jChYD2BB04YNL1La+htrT3/24AaUGJ5cpqUH/H0md9D2NiZIBiMPnj7c7AVff1zy95glv/agElY4BNaCYmuE3BNTCKyc4InfSkAGBu58joS40lMvQnLPvQJfHXoER3iCms/XxMRjysdkKq insi_z4XscFI5r4Ack4+1t7xgtNsD0ml39LvHRSpn6OdagdX1iz4BXz+4xPULZZfZyRAGN1TmLMwsY3nbye21CtQxT8my85K1swZ7sjfcjJQDDdxBfkpyC/BTBGuaZQ7ljrfCMev/4gNgxBp3vuHiEVNLE6xLulJGHPAJq2FxHWpk/f+GkRYp
+ - For insi_5C4aN8N... -> insi_19IHU73q+KQLKhSBjlesFEmqiDS7K/8dncZtYwwxxA/DhPzzR3hhAPWG0W3btej1EG1sQ2tAj/evyx1fRS7XscFl4Mg5HYn4Ip/3YMzBNcp13suvDdGFAtrsgaxiFaW41eFigNcK2cxCjr5RHsjQ8NmCa2vMLwET1SgeUv55jQRbBCJ5 insi_K5xpLpVyp0Q+AgKjpQEbcom+EeRPiJ2fQT785/o7SZ29BmqR5BB7ulxf8cMondQDEcUZFs2MM4RE3rbBkEgyvSGbEUk/8BYL5Bo3d/ahf2f7hOJ9YRMQiQL4XRu6dVKIWbXazouKRVRxQUPrm0j+BnCTZ3dw5q8Xw/m5rEKHfrF5GwBf
+
+[0;34m==== Testing 'admin insight entities' ====[0m
+✅ [0;32mSUCCESS: Get list of entities (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS: Check for primary key 'insight_test_key_2_1751002748_2624120' in entities list (and output contains 'insi_q3ShQ8orc8I9Lwu9koy+ovHvONF24gYusn0Q/ZBfgiYdCUvIssVa9Hl1f82PZ2xv75vn0KC6J+0MjpABJQ195WAFN6wo0bGQ2YLJ2bTXBZVkRhmo3VBMYBkBgT6GGwXugJvzccuWGwgOvXYySORmnB+52A0=')[0m
+✅ [0;32mSUCCESS: Check for primary key 'insight_test_key_3_1751002748_2624120' in entities list (and output contains 'insi_+u6aXcdupoJbFVMc70KisM8FN5kWDibpJ3csM549JbC58i+Lt8mcVyNvgQr+oyzfyRfGhCQTMFAeDtnKoa5Ha5Vxt5lL+KwcMwzhhAiGF3pZLhf7UhMkBrDKI3BJrBuut5myDk68dLliDmyQkb//qfBI0BY=')[0m
+✅ [0;32mSUCCESS: Check for primary key 'insight_test_key_1_1751002748_2624120' in entities list (and output contains 'insi_5C4aN8NjwO0+enVR+vBU/dhK9BMQsxtB4lPuH1oAgeXkRqw+kF3RRppoZYDQgQq7MAk9y4k7JGJyZafdJ4l8qcWFJBrxMWLhjQ/KYim3N2cGFbu3YfH8fDO3pMVBAF7vlGf3Zv/k9D8QfexUsh+BNdU+Opk=')[0m
+
+[0;34m==== Testing 'admin insight entity' for each primary key ====[0m
+ℹ️ Checking entity details for primary key 'insight_test_key_2_1751002748_2624120'
+✅ [0;32mSUCCESS: Get entity details for key 'insight_test_key_2_1751002748_2624120' (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS:   - Verify RootApiKey matches (and output contains 'Root API Key:    insi_q3ShQ8orc8I9Lwu9koy+ovHvONF24gYusn0Q/ZBfgiYdCUvIssVa9Hl1f82PZ2xv75vn0KC6J+0MjpABJQ195WAFN6wo0bGQ2YLJ2bTXBZVkRhmo3VBMYBkBgT6GGwXugJvzccuWGwgOvXYySORmnB+52A0=')[0m
+✅ [0;32mSUCCESS:   - Verify alias 'insi_ZaBtDgjNLDRnKg8wdxKCklG6YV9UKK+W9CrRLxIRxbHct0ml8VpB7crpRXjVodqcr8sehwGs667WQveBPGGO/Ifjlk5Df9cfXnM+OZV0i5csr4WFcDVwx36GgZmUSWQzvKD+FivCX08m8zyi85ngtGLdDJSZfSqenj4BsDj5kIaJjqzT' is listed (and output contains 'insi_ZaBtDgjNLDRnKg8wdxKCklG6YV9UKK+W9CrRLxIRxbHct0ml8VpB7crpRXjVodqcr8sehwGs667WQveBPGGO/Ifjlk5Df9cfXnM+OZV0i5csr4WFcDVwx36GgZmUSWQzvKD+FivCX08m8zyi85ngtGLdDJSZfSqenj4BsDj5kIaJjqzT')[0m
+✅ [0;32mSUCCESS:   - Verify alias 'insi_OnrNuFSFPgM/ejbIugWTFSKAEvPubyzvil4iOrPjVdH4YD0lHyOpAlSK7vQw7ZdGxMFugHqgNUyBMRlkyCv5wiQxeOPv4WFoSqImTb31i6+tr5E87mYHNoUow49nG8VqmpZlU3uFI88zezxoVy8l3V/46pJEfy9gWsIKY9WDuPZkmul4' is listed (and output contains 'insi_OnrNuFSFPgM/ejbIugWTFSKAEvPubyzvil4iOrPjVdH4YD0lHyOpAlSK7vQw7ZdGxMFugHqgNUyBMRlkyCv5wiQxeOPv4WFoSqImTb31i6+tr5E87mYHNoUow49nG8VqmpZlU3uFI88zezxoVy8l3V/46pJEfy9gWsIKY9WDuPZkmul4')[0m
+ℹ️ Checking entity details for primary key 'insight_test_key_3_1751002748_2624120'
+✅ [0;32mSUCCESS: Get entity details for key 'insight_test_key_3_1751002748_2624120' (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS:   - Verify RootApiKey matches (and output contains 'Root API Key:    insi_+u6aXcdupoJbFVMc70KisM8FN5kWDibpJ3csM549JbC58i+Lt8mcVyNvgQr+oyzfyRfGhCQTMFAeDtnKoa5Ha5Vxt5lL+KwcMwzhhAiGF3pZLhf7UhMkBrDKI3BJrBuut5myDk68dLliDmyQkb//qfBI0BY=')[0m
+✅ [0;32mSUCCESS:   - Verify alias 'insi_gzpX8b6bhhqAGLihTeTzW8LdlnpGT/ZxS2jChYD2BB04YNL1La+htrT3/24AaUGJ5cpqUH/H0md9D2NiZIBiMPnj7c7AVff1zy95glv/agElY4BNaCYmuE3BNTCKyc4InfSkAGBu58joS40lMvQnLPvQJfHXoER3iCms/XxMRjysdkKq' is listed (and output contains 'insi_gzpX8b6bhhqAGLihTeTzW8LdlnpGT/ZxS2jChYD2BB04YNL1La+htrT3/24AaUGJ5cpqUH/H0md9D2NiZIBiMPnj7c7AVff1zy95glv/agElY4BNaCYmuE3BNTCKyc4InfSkAGBu58joS40lMvQnLPvQJfHXoER3iCms/XxMRjysdkKq')[0m
+✅ [0;32mSUCCESS:   - Verify alias 'insi_z4XscFI5r4Ack4+1t7xgtNsD0ml39LvHRSpn6OdagdX1iz4BXz+4xPULZZfZyRAGN1TmLMwsY3nbye21CtQxT8my85K1swZ7sjfcjJQDDdxBfkpyC/BTBGuaZQ7ljrfCMev/4gNgxBp3vuHiEVNLE6xLulJGHPAJq2FxHWpk/f+GkRYp' is listed (and output contains 'insi_z4XscFI5r4Ack4+1t7xgtNsD0ml39LvHRSpn6OdagdX1iz4BXz+4xPULZZfZyRAGN1TmLMwsY3nbye21CtQxT8my85K1swZ7sjfcjJQDDdxBfkpyC/BTBGuaZQ7ljrfCMev/4gNgxBp3vuHiEVNLE6xLulJGHPAJq2FxHWpk/f+GkRYp')[0m
+ℹ️ Checking entity details for primary key 'insight_test_key_1_1751002748_2624120'
+✅ [0;32mSUCCESS: Get entity details for key 'insight_test_key_1_1751002748_2624120' (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS:   - Verify RootApiKey matches (and output contains 'Root API Key:    insi_5C4aN8NjwO0+enVR+vBU/dhK9BMQsxtB4lPuH1oAgeXkRqw+kF3RRppoZYDQgQq7MAk9y4k7JGJyZafdJ4l8qcWFJBrxMWLhjQ/KYim3N2cGFbu3YfH8fDO3pMVBAF7vlGf3Zv/k9D8QfexUsh+BNdU+Opk=')[0m
+✅ [0;32mSUCCESS:   - Verify alias 'insi_19IHU73q+KQLKhSBjlesFEmqiDS7K/8dncZtYwwxxA/DhPzzR3hhAPWG0W3btej1EG1sQ2tAj/evyx1fRS7XscFl4Mg5HYn4Ip/3YMzBNcp13suvDdGFAtrsgaxiFaW41eFigNcK2cxCjr5RHsjQ8NmCa2vMLwET1SgeUv55jQRbBCJ5' is listed (and output contains 'insi_19IHU73q+KQLKhSBjlesFEmqiDS7K/8dncZtYwwxxA/DhPzzR3hhAPWG0W3btej1EG1sQ2tAj/evyx1fRS7XscFl4Mg5HYn4Ip/3YMzBNcp13suvDdGFAtrsgaxiFaW41eFigNcK2cxCjr5RHsjQ8NmCa2vMLwET1SgeUv55jQRbBCJ5')[0m
+✅ [0;32mSUCCESS:   - Verify alias 'insi_K5xpLpVyp0Q+AgKjpQEbcom+EeRPiJ2fQT785/o7SZ29BmqR5BB7ulxf8cMondQDEcUZFs2MM4RE3rbBkEgyvSGbEUk/8BYL5Bo3d/ahf2f7hOJ9YRMQiQL4XRu6dVKIWbXazouKRVRxQUPrm0j+BnCTZ3dw5q8Xw/m5rEKHfrF5GwBf' is listed (and output contains 'insi_K5xpLpVyp0Q+AgKjpQEbcom+EeRPiJ2fQT785/o7SZ29BmqR5BB7ulxf8cMondQDEcUZFs2MM4RE3rbBkEgyvSGbEUk/8BYL5Bo3d/ahf2f7hOJ9YRMQiQL4XRu6dVKIWbXazouKRVRxQUPrm0j+BnCTZ3dw5q8Xw/m5rEKHfrF5GwBf')[0m
+
+[0;34m==== Testing 'admin insight entity-by-alias' for each alias ====[0m
+ℹ️ Checking entity details for alias 'insi_ZaBtDgj...' (should map to 'insi_q3ShQ8o...')
+✅ [0;32mSUCCESS: Get entity details for alias 'insi_ZaBtDgj' (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS:   - Verify RootApiKey matches parent (and output contains 'Root API Key:    insi_q3ShQ8orc8I9Lwu9koy+ovHvONF24gYusn0Q/ZBfgiYdCUvIssVa9Hl1f82PZ2xv75vn0KC6J+0MjpABJQ195WAFN6wo0bGQ2YLJ2bTXBZVkRhmo3VBMYBkBgT6GGwXugJvzccuWGwgOvXYySORmnB+52A0=')[0m
+ℹ️ Checking entity details for alias 'insi_OnrNuFS...' (should map to 'insi_q3ShQ8o...')
+✅ [0;32mSUCCESS: Get entity details for alias 'insi_OnrNuFS' (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS:   - Verify RootApiKey matches parent (and output contains 'Root API Key:    insi_q3ShQ8orc8I9Lwu9koy+ovHvONF24gYusn0Q/ZBfgiYdCUvIssVa9Hl1f82PZ2xv75vn0KC6J+0MjpABJQ195WAFN6wo0bGQ2YLJ2bTXBZVkRhmo3VBMYBkBgT6GGwXugJvzccuWGwgOvXYySORmnB+52A0=')[0m
+ℹ️ Checking entity details for alias 'insi_gzpX8b6...' (should map to 'insi_+u6aXcd...')
+✅ [0;32mSUCCESS: Get entity details for alias 'insi_gzpX8b6' (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS:   - Verify RootApiKey matches parent (and output contains 'Root API Key:    insi_+u6aXcdupoJbFVMc70KisM8FN5kWDibpJ3csM549JbC58i+Lt8mcVyNvgQr+oyzfyRfGhCQTMFAeDtnKoa5Ha5Vxt5lL+KwcMwzhhAiGF3pZLhf7UhMkBrDKI3BJrBuut5myDk68dLliDmyQkb//qfBI0BY=')[0m
+ℹ️ Checking entity details for alias 'insi_z4XscFI...' (should map to 'insi_+u6aXcd...')
+✅ [0;32mSUCCESS: Get entity details for alias 'insi_z4XscFI' (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS:   - Verify RootApiKey matches parent (and output contains 'Root API Key:    insi_+u6aXcdupoJbFVMc70KisM8FN5kWDibpJ3csM549JbC58i+Lt8mcVyNvgQr+oyzfyRfGhCQTMFAeDtnKoa5Ha5Vxt5lL+KwcMwzhhAiGF3pZLhf7UhMkBrDKI3BJrBuut5myDk68dLliDmyQkb//qfBI0BY=')[0m
+ℹ️ Checking entity details for alias 'insi_19IHU73...' (should map to 'insi_5C4aN8N...')
+✅ [0;32mSUCCESS: Get entity details for alias 'insi_19IHU73' (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS:   - Verify RootApiKey matches parent (and output contains 'Root API Key:    insi_5C4aN8NjwO0+enVR+vBU/dhK9BMQsxtB4lPuH1oAgeXkRqw+kF3RRppoZYDQgQq7MAk9y4k7JGJyZafdJ4l8qcWFJBrxMWLhjQ/KYim3N2cGFbu3YfH8fDO3pMVBAF7vlGf3Zv/k9D8QfexUsh+BNdU+Opk=')[0m
+ℹ️ Checking entity details for alias 'insi_K5xpLpV...' (should map to 'insi_5C4aN8N...')
+✅ [0;32mSUCCESS: Get entity details for alias 'insi_K5xpLpV' (and output contains 'Entity Details')[0m
+✅ [0;32mSUCCESS:   - Verify RootApiKey matches parent (and output contains 'Root API Key:    insi_5C4aN8NjwO0+enVR+vBU/dhK9BMQsxtB4lPuH1oAgeXkRqw+kF3RRppoZYDQgQq7MAk9y4k7JGJyZafdJ4l8qcWFJBrxMWLhjQ/KYim3N2cGFbu3YfH8fDO3pMVBAF7vlGf3Zv/k9D8QfexUsh+BNdU+Opk=')[0m
+
+[0;34m==== Cleaning up created keys ====[0m
+ℹ️ Deleting primary key 'insight_test_key_2_1751002748_2624120' (insi_q3ShQ8orc8I9Lwu9koy+ovHvONF24gYusn0Q/ZBfgiYdCUvIssVa9Hl1f82PZ2xv75vn0KC6J+0MjpABJQ195WAFN6wo0bGQ2YLJ2bTXBZVkRhmo3VBMYBkBgT6GGwXugJvzccuWGwgOvXYySORmnB+52A0=)
+✅ [0;32mSUCCESS: Delete primary key 'insight_test_key_2_1751002748_2624120'[0m
+ℹ️ Deleting primary key 'insight_test_key_3_1751002748_2624120' (insi_+u6aXcdupoJbFVMc70KisM8FN5kWDibpJ3csM549JbC58i+Lt8mcVyNvgQr+oyzfyRfGhCQTMFAeDtnKoa5Ha5Vxt5lL+KwcMwzhhAiGF3pZLhf7UhMkBrDKI3BJrBuut5myDk68dLliDmyQkb//qfBI0BY=)
+✅ [0;32mSUCCESS: Delete primary key 'insight_test_key_3_1751002748_2624120'[0m
+ℹ️ Deleting primary key 'insight_test_key_1_1751002748_2624120' (insi_5C4aN8NjwO0+enVR+vBU/dhK9BMQsxtB4lPuH1oAgeXkRqw+kF3RRppoZYDQgQq7MAk9y4k7JGJyZafdJ4l8qcWFJBrxMWLhjQ/KYim3N2cGFbu3YfH8fDO3pMVBAF7vlGf3Zv/k9D8QfexUsh+BNdU+Opk=)
+✅ [0;32mSUCCESS: Delete primary key 'insight_test_key_1_1751002748_2624120'[0m
+
+[0;32mAll TKV Insight operations tests completed.[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 41
+[0;32mAll Insight tests passed successfully![0m
+✅ Success: insight.sh completed.
+🚀 Running metrics.sh...
+insid pid: 2624386
+2025-06-27T01:39:19.281-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:39:19.281-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+2025-06-27T01:39:19.282-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:39:19.282-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:39:19.321-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:39:19.321-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:39:20.353-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:39:20.993-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:39:21.250-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:39:21.250-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:39:21.250-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:39:21.259-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:39:21.259-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:39:29.293-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:39:29.297-0400 [INFO]  added peer, starting replication: peer=node1
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:39:29.300-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-27T01:39:29.300-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+2025-06-27T01:39:29.302-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+set root tracker key internal:api_key_memory_usage: value 0
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+2025-06-27T01:39:29.333-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+2025-06-27T01:39:29.336-0400 [INFO]  added peer, starting replication: peer=node2
+2025-06-27T01:39:29.341-0400 [WARN]  failed to get previous log: previous-index=8 last-index=0 error="log not found"
+2025-06-27T01:39:29.341-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+2025-06-27T01:39:29.348-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+ℹ️ Using insic executable: /tmp/insi-test-cluster/insic
+ℹ️ Using config: /tmp/insi-test-cluster/cluster.yaml
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mSUCCESS: Server Ping (and output contains 'Ping Response:')[0m
+ℹ️ Starting TKV Metrics operations tests...
+
+[0;34m==== Test: Metrics Endpoint Access Control ====[0m
+ℹ️ Attempting to get metrics without --root (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Get metrics without --root (and output contains 'requires --root flag')[0m
+ℹ️ Attempting to get metrics with --root (should succeed)
+✅ [0;32mSUCCESS: Get metrics with --root (and output contains 'Operations Per Second:')[0m
+✅ [0;32mSUCCESS: Check for System metric (and output contains 'System:')[0m
+✅ [0;32mSUCCESS: Check for Value Store metric (and output contains 'Value Store:')[0m
+
+[0;34m==== Test: Metrics Tracking ====[0m
+ℹ️ Testing Value Store metrics...
+Starting to run 'set' operations continuously...
+Stopped VS operations.
+✅ [0;32mSUCCESS: Get metrics during sustained VS operations (and output contains 'Operations Per Second:')[0m
+ℹ️ Detected Value Store Ops/sec: 37.96
+✅ [0;32mSUCCESS: Value Store ops/sec (37.96) is greater than 0.1 after operations.[0m
+ℹ️ Testing Cache Store metrics...
+Starting to run 'cache set' operations continuously...
+Stopped Cache operations.
+✅ [0;32mSUCCESS: Get metrics during sustained Cache operations (and output contains 'Operations Per Second:')[0m
+ℹ️ Detected Cache Ops/sec: 38.98
+✅ [0;32mSUCCESS: Cache ops/sec (38.98) is greater than 0.1 after operations.[0m
+
+[0;34m==== Test: Event and Subscriber Metrics Tracking ====[0m
+ℹ️ Testing Subscribers metric...
+Starting to run 'subscribe' operations continuously...
+Stopped subscriber load process.
+✅ [0;32mSUCCESS: Get metrics during sustained subscribe operations (and output contains 'Operations Per Second:')[0m
+ℹ️ Detected Subscribers Ops/sec: 4.00
+✅ [0;32mSUCCESS: Subscribers ops/sec (4.00) is greater than 0.1 after subscribing.[0m
+ℹ️ Testing Events metric...
+Starting to run 'publish' operations continuously...
+Stopped publish operations.
+✅ [0;32mSUCCESS: Get metrics during sustained publish operations (and output contains 'Operations Per Second:')[0m
+ℹ️ Detected Events Ops/sec: 38.99
+✅ [0;32mSUCCESS: Events ops/sec (38.99) is greater than 0.1 during publishing.[0m
+
+[0;32mAll TKV Metrics operations tests completed.[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 13
+[0;32mAll Metrics tests passed successfully![0m
+✅ Success: metrics.sh completed.
+🚀 Running api-keys.sh...
+insid pid: 2628568
+2025-06-27T01:39:53.520-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:39:53.520-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:39:53.521-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:39:53.521-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:39:53.606-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:39:53.606-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:39:55.254-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:39:55.519-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:39:55.574-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:39:55.574-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:39:55.574-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:39:55.582-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:39:55.582-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:40:03.531-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:40:03.536-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:40:03.536-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:40:03.540-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-27T01:40:03.540-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+2025-06-27T01:40:03.547-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+2025-06-27T01:40:03.548-0400 [INFO]  added peer, starting replication: peer=node2
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+2025-06-27T01:40:03.552-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+2025-06-27T01:40:03.552-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:40:03.554-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+set root tracker key internal:api_key_memory_usage: value 0
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+ℹ️ Using insic executable: /tmp/insi-test-cluster/insic
+ℹ️ Using config: /tmp/insi-test-cluster/cluster.yaml
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+ℹ️ Attempting to ping server... (will retry up to 15 times)
+✅ Server is responsive.
+✅ [0;32mSUCCESS: Server Ping (and output contains 'Ping Response:')[0m
+ℹ️ Starting TKV API Key operations tests...
+
+[0;34m==== Test: API Key Lifecycle (Add, Verify, Delete) ====[0m
+ℹ️ Attempting to add API key: testapikey_1751002808_2628681
+✅ [0;32mSUCCESS: API add key 'testapikey_1751002808_2628681' (and output contains 'API Key:')[0m
+ℹ️ Parsed generated key: insi_4S/xBAArmqEx44Z5UaDW5msB/ikHphVsBvWYz80OmYW1kWd+bVHBBPNvA9mqJmQycy10OdqgI45aCyon65zOHUe6BtYC8u++EOrbFeoCB78PXkjbzBfawXE0ke9mhYM/BWwCgcTtl/AHHZvCfc/Qr5s+8UQ=
+ℹ️ Attempting to verify newly created API key: insi_4S/xBAArmqEx44Z5UaDW5msB/ikHphVsBvWYz80OmYW1kWd+bVHBBPNvA9mqJmQycy10OdqgI45aCyon65zOHUe6BtYC8u++EOrbFeoCB78PXkjbzBfawXE0ke9mhYM/BWwCgcTtl/AHHZvCfc/Qr5s+8UQ=
+✅ [0;32mSUCCESS: API verify for new key 'insi_4S/xBAArmqEx44Z5UaDW5msB/ikHphVsBvWYz80OmYW1kWd+bVHBBPNvA9mqJmQycy10OdqgI45aCyon65zOHUe6BtYC8u++EOrbFeoCB78PXkjbzBfawXE0ke9mhYM/BWwCgcTtl/AHHZvCfc/Qr5s+8UQ=' (and output contains 'API Key Verified Successfully!')[0m
+ℹ️ Attempting to delete API key: insi_4S/xBAArmqEx44Z5UaDW5msB/ikHphVsBvWYz80OmYW1kWd+bVHBBPNvA9mqJmQycy10OdqgI45aCyon65zOHUe6BtYC8u++EOrbFeoCB78PXkjbzBfawXE0ke9mhYM/BWwCgcTtl/AHHZvCfc/Qr5s+8UQ=
+✅ [0;32mSUCCESS: API delete for key 'insi_4S/xBAArmqEx44Z5UaDW5msB/ikHphVsBvWYz80OmYW1kWd+bVHBBPNvA9mqJmQycy10OdqgI45aCyon65zOHUe6BtYC8u++EOrbFeoCB78PXkjbzBfawXE0ke9mhYM/BWwCgcTtl/AHHZvCfc/Qr5s+8UQ=' (and output contains 'OK')[0m
+ℹ️ Attempting to verify deleted API key: insi_4S/xBAArmqEx44Z5UaDW5msB/ikHphVsBvWYz80OmYW1kWd+bVHBBPNvA9mqJmQycy10OdqgI45aCyon65zOHUe6BtYC8u++EOrbFeoCB78PXkjbzBfawXE0ke9mhYM/BWwCgcTtl/AHHZvCfc/Qr5s+8UQ=
+✅ [0;32mSUCCESS (Received Expected Error): API verify for deleted key 'insi_4S/xBAArmqEx44Z5UaDW5msB/ikHphVsBvWYz80OmYW1kWd+bVHBBPNvA9mqJmQycy10OdqgI45aCyon65zOHUe6BtYC8u++EOrbFeoCB78PXkjbzBfawXE0ke9mhYM/BWwCgcTtl/AHHZvCfc/Qr5s+8UQ=' (and output contains 'Verification FAILED')[0m
+ℹ️ Attempting to verify random invalid API key: invalidkey_1751002825_2628681_random
+✅ [0;32mSUCCESS (Received Expected Error): API verify for random key 'invalidkey_1751002825_2628681_random' (and output contains 'Verification FAILED')[0m
+ℹ️ Attempting to delete random invalid API key: invalidkey_1751002825_2628681_random
+✅ [0;32mSUCCESS (Received Expected Error): API delete for non-existent key 'invalidkey_1751002825_2628681_random' (and output contains 'Error')[0m
+
+[0;34m==== Test: Admin Privileges (requires --root) ====[0m
+ℹ️ Attempting to add an API key without --root (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): API add without --root (and output contains 'requires --root flag')[0m
+ℹ️ Adding a key with --root to test deletion
+✅ [0;32mSUCCESS: Created temporary key for delete test: insi_qWDvJX8O5+iVCI6U9h1GujKJ+wH5xxMMuhLeDp5eL/IZxXtKSn/9WqKnO+r4teuTnC+uBNSLPbsNLFH1u9j5A/SGbA5JVPDRm4TFmVErAcBvy/KKfAZmE2F6DwriUWpuq4sZh7Q5igF73gM74F2yeOiTE7I=[0m
+ℹ️ Attempting to delete an API key without --root (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): API delete without --root (and output contains 'requires --root flag')[0m
+ℹ️ Cleaning up key with --root
+✅ [0;32mSUCCESS: API delete with --root (cleanup) (and output contains 'OK')[0m
+
+[0;34m==== Test: API Key Limits (Get, Set) ====[0m
+ℹ️ Attempting to add API key for limits test: testlimitskey_1751002831_2628681
+✅ [0;32mSUCCESS: API add key 'testlimitskey_1751002831_2628681' for limits test (and output contains 'API Key:')[0m
+ℹ️ Parsed generated key for limits test: insi_/CTNs7FPB8bdqQKjOfrcHHGwKdqnMkUzIeaF6uhA3lBmFqoHnUcD0nqMgHFnJU4C2RUJvsaXW/XmLph+KlLplsSB6Wn+PNkzRQKhKUH/VK4vA3oNTHliC6Tod0TvFhtVQJWyt3pot9AnAWsu4+dKsKLXsxk=
+ℹ️ Attempting to get initial limits for key: insi_/CTNs7FPB8bdqQKjOfrcHHGwKdqnMkUzIeaF6uhA3lBmFqoHnUcD0nqMgHFnJU4C2RUJvsaXW/XmLph+KlLplsSB6Wn+PNkzRQKhKUH/VK4vA3oNTHliC6Tod0TvFhtVQJWyt3pot9AnAWsu4+dKsKLXsxk=
+✅ [0;32mSUCCESS: Get initial limits for new key (and output contains 'Maximum Limits')[0m
+✅ [0;32mSUCCESS: Check initial current usage is zero (and output contains 'Bytes on Disk:     0')[0m
+ℹ️ Attempting to set limits for key: insi_/CTNs7FPB8bdqQKjOfrcHHGwKdqnMkUzIeaF6uhA3lBmFqoHnUcD0nqMgHFnJU4C2RUJvsaXW/XmLph+KlLplsSB6Wn+PNkzRQKhKUH/VK4vA3oNTHliC6Tod0TvFhtVQJWyt3pot9AnAWsu4+dKsKLXsxk=
+✅ [0;32mSUCCESS: Set new limits for key 'insi_/CTNs7FPB8bdqQKjOfrcHHGwKdqnMkUzIeaF6uhA3lBmFqoHnUcD0nqMgHFnJU4C2RUJvsaXW/XmLph+KlLplsSB6Wn+PNkzRQKhKUH/VK4vA3oNTHliC6Tod0TvFhtVQJWyt3pot9AnAWsu4+dKsKLXsxk=' (and output contains 'OK')[0m
+ℹ️ Attempting to get updated limits for key: insi_/CTNs7FPB8bdqQKjOfrcHHGwKdqnMkUzIeaF6uhA3lBmFqoHnUcD0nqMgHFnJU4C2RUJvsaXW/XmLph+KlLplsSB6Wn+PNkzRQKhKUH/VK4vA3oNTHliC6Tod0TvFhtVQJWyt3pot9AnAWsu4+dKsKLXsxk=
+✅ [0;32mSUCCESS: Get updated limits for key 'insi_/CTNs7FPB8bdqQKjOfrcHHGwKdqnMkUzIeaF6uhA3lBmFqoHnUcD0nqMgHFnJU4C2RUJvsaXW/XmLph+KlLplsSB6Wn+PNkzRQKhKUH/VK4vA3oNTHliC6Tod0TvFhtVQJWyt3pot9AnAWsu4+dKsKLXsxk=' (and output contains 'Maximum Limits')[0m
+✅ [0;32mSUCCESS: Verify updated disk limit (and output contains 'Bytes on Disk:     123456789')[0m
+✅ [0;32mSUCCESS: Verify updated memory limit (and output contains 'Bytes in Memory:   987654321')[0m
+✅ [0;32mSUCCESS: Verify updated events limit (and output contains 'Events per Second: 500')[0m
+✅ [0;32mSUCCESS: Verify updated subscribers limit (and output contains 'Subscribers:       50')[0m
+✅ [0;32mSUCCESS: Verify updated rps data limit (and output contains 'RPS Data Limit:    10000')[0m
+✅ [0;32mSUCCESS: Verify updated rps event limit (and output contains 'RPS Event Limit:   10000')[0m
+ℹ️ Attempting to delete API key used for limits test: insi_/CTNs7FPB8bdqQKjOfrcHHGwKdqnMkUzIeaF6uhA3lBmFqoHnUcD0nqMgHFnJU4C2RUJvsaXW/XmLph+KlLplsSB6Wn+PNkzRQKhKUH/VK4vA3oNTHliC6Tod0TvFhtVQJWyt3pot9AnAWsu4+dKsKLXsxk=
+✅ [0;32mSUCCESS: API delete for key 'insi_/CTNs7FPB8bdqQKjOfrcHHGwKdqnMkUzIeaF6uhA3lBmFqoHnUcD0nqMgHFnJU4C2RUJvsaXW/XmLph+KlLplsSB6Wn+PNkzRQKhKUH/VK4vA3oNTHliC6Tod0TvFhtVQJWyt3pot9AnAWsu4+dKsKLXsxk=' after limits test (and output contains 'OK')[0m
+
+[0;34m==== Test: API Get Another Key's Limits (as root) ====[0m
+ℹ️ Attempting to add API key for get-limits test: testgetlimits_1751002841_2628681
+✅ [0;32mSUCCESS: API add key 'testgetlimits_1751002841_2628681' for get-limits test (and output contains 'API Key:')[0m
+ℹ️ Parsed generated key for get-limits test: insi_gDVv0COgGlaZY2CXp0j5ZNsZ4AfdJN77iQY6WbKXUIdAJY2bLhf0OqnAuWpHUEDmrmvYFR3C0wR3BZLmf0vgZLVohxCIpBJHDEwekkDukTIO0WA3zalJFaqNHBy0+c0YsMWikbVVPNT5gewJcDqpddxYp8Q=
+ℹ️ Attempting to set limits for key: insi_gDVv0COgGlaZY2CXp0j5ZNsZ4AfdJN77iQY6WbKXUIdAJY2bLhf0OqnAuWpHUEDmrmvYFR3C0wR3BZLmf0vgZLVohxCIpBJHDEwekkDukTIO0WA3zalJFaqNHBy0+c0YsMWikbVVPNT5gewJcDqpddxYp8Q=
+✅ [0;32mSUCCESS: Set new limits for key 'insi_gDVv0COgGlaZY2CXp0j5ZNsZ4AfdJN77iQY6WbKXUIdAJY2bLhf0OqnAuWpHUEDmrmvYFR3C0wR3BZLmf0vgZLVohxCIpBJHDEwekkDukTIO0WA3zalJFaqNHBy0+c0YsMWikbVVPNT5gewJcDqpddxYp8Q=' (and output contains 'OK')[0m
+ℹ️ Attempting to get specific limits for key 'insi_gDVv0COgGlaZY2CXp0j5ZNsZ4AfdJN77iQY6WbKXUIdAJY2bLhf0OqnAuWpHUEDmrmvYFR3C0wR3BZLmf0vgZLVohxCIpBJHDEwekkDukTIO0WA3zalJFaqNHBy0+c0YsMWikbVVPNT5gewJcDqpddxYp8Q=' using root
+✅ [0;32mSUCCESS: Get specific limits for key 'insi_gDVv0COgGlaZY2CXp0j5ZNsZ4AfdJN77iQY6WbKXUIdAJY2bLhf0OqnAuWpHUEDmrmvYFR3C0wR3BZLmf0vgZLVohxCIpBJHDEwekkDukTIO0WA3zalJFaqNHBy0+c0YsMWikbVVPNT5gewJcDqpddxYp8Q=' (and output contains 'Maximum Limits')[0m
+✅ [0;32mSUCCESS: Verify specific disk limit (and output contains 'Bytes on Disk:     555666777')[0m
+✅ [0;32mSUCCESS: Verify specific memory limit (and output contains 'Bytes in Memory:   111222333')[0m
+✅ [0;32mSUCCESS: Verify specific events limit (and output contains 'Events per Second: 250')[0m
+✅ [0;32mSUCCESS: Verify specific subscribers limit (and output contains 'Subscribers:       25')[0m
+✅ [0;32mSUCCESS: Verify specific rps data limit (and output contains 'RPS Data Limit:    10000')[0m
+✅ [0;32mSUCCESS: Verify specific rps event limit (and output contains 'RPS Event Limit:   10000')[0m
+ℹ️ Attempting to get specific limits for key 'insi_gDVv0COgGlaZY2CXp0j5ZNsZ4AfdJN77iQY6WbKXUIdAJY2bLhf0OqnAuWpHUEDmrmvYFR3C0wR3BZLmf0vgZLVohxCIpBJHDEwekkDukTIO0WA3zalJFaqNHBy0+c0YsMWikbVVPNT5gewJcDqpddxYp8Q=' WITHOUT root
+✅ [0;32mSUCCESS (Received Expected Error): Get specific limits without root (and output contains 'requires --root flag')[0m
+ℹ️ Attempting to delete API key used for get-limits test: insi_gDVv0COgGlaZY2CXp0j5ZNsZ4AfdJN77iQY6WbKXUIdAJY2bLhf0OqnAuWpHUEDmrmvYFR3C0wR3BZLmf0vgZLVohxCIpBJHDEwekkDukTIO0WA3zalJFaqNHBy0+c0YsMWikbVVPNT5gewJcDqpddxYp8Q=
+✅ [0;32mSUCCESS: API delete for key 'insi_gDVv0COgGlaZY2CXp0j5ZNsZ4AfdJN77iQY6WbKXUIdAJY2bLhf0OqnAuWpHUEDmrmvYFR3C0wR3BZLmf0vgZLVohxCIpBJHDEwekkDukTIO0WA3zalJFaqNHBy0+c0YsMWikbVVPNT5gewJcDqpddxYp8Q=' after get-limits test (and output contains 'OK')[0m
+
+[0;34m==== Test: API Key Aliases (Add, List, Use, Delete, Data Scope, Chaining) ====[0m
+ℹ️ Creating primary key 'primary_for_alias_1751002851_2628681' for alias test
+✅ [0;32mSUCCESS: Create primary key for alias test (and output contains 'API Key:')[0m
+ℹ️ Parsed primary key: insi_d2y9X+2ict7So6iUttEAXPsMpSXixE/g08rcL4DMtRFOxtjJ9WlLK0gmNKst4LD0C2iPo4Ap0kmzZY4Jjo3sMZeQ++qc+IrzfEoXoCqKFqDc2h6J/I+DbcXQjSrglZhMZQZ72xiR7l3PQhGPpocv/3e5qC8=
+ℹ️ Setting a value with the primary key 'insi_d2y9X+2ict7So6iUttEAXPsMpSXixE/g08rcL4DMtRFOxtjJ9WlLK0gmNKst4LD0C2iPo4Ap0kmzZY4Jjo3sMZeQ++qc+IrzfEoXoCqKFqDc2h6J/I+DbcXQjSrglZhMZQZ72xiR7l3PQhGPpocv/3e5qC8=' to test data scope inheritance
+✅ [0;32mSUCCESS: Set value with primary key (and output contains 'OK')[0m
+ℹ️ Creating first alias for key insi_d2y9X+2ict7So6iUttEAXPsMpSXixE/g08rcL4DMtRFOxtjJ9WlLK0gmNKst4LD0C2iPo4Ap0kmzZY4Jjo3sMZeQ++qc+IrzfEoXoCqKFqDc2h6J/I+DbcXQjSrglZhMZQZ72xiR7l3PQhGPpocv/3e5qC8=
+✅ [0;32mSUCCESS: Create first alias (and output contains 'Alias Key:')[0m
+ℹ️ Parsed alias 1 key: insi_4Bc61iPhVfoN7xPLUyoqxRpZy6SLA4MO2Yni0TVCmdrbDsZlWLphjypyLRVWnOPoL1pSryFWwv1D1htIDi9YlnrpPBoHtno3yw/AamSNqr7G99dko8YRE3AWfUFIz8K5geyTwSiGiWdt4YqxQtrl2NJ8+e2B/dQ3XYkiEiNxz/1ND0GA
+ℹ️ Getting value with the alias key 'insi_4Bc61iPhVfoN7xPLUyoqxRpZy6SLA4MO2Yni0TVCmdrbDsZlWLphjypyLRVWnOPoL1pSryFWwv1D1htIDi9YlnrpPBoHtno3yw/AamSNqr7G99dko8YRE3AWfUFIz8K5geyTwSiGiWdt4YqxQtrl2NJ8+e2B/dQ3XYkiEiNxz/1ND0GA' to test data scope
+✅ [0;32mSUCCESS: Get value with alias key (and output contains 'alias-test-value')[0m
+ℹ️ Attempting to create an alias from another alias (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Create alias from alias key (and output contains 'Cannot create an alias from an alias key')[0m
+ℹ️ Setting a value with the alias key 'insi_4Bc61iPhVfoN7xPLUyoqxRpZy6SLA4MO2Yni0TVCmdrbDsZlWLphjypyLRVWnOPoL1pSryFWwv1D1htIDi9YlnrpPBoHtno3yw/AamSNqr7G99dko8YRE3AWfUFIz8K5geyTwSiGiWdt4YqxQtrl2NJ8+e2B/dQ3XYkiEiNxz/1ND0GA' to test limit inheritance
+✅ [0;32mSUCCESS: Set value with alias key (and output contains 'OK')[0m
+ℹ️ Getting value set by alias using the primary key 'insi_d2y9X+2ict7So6iUttEAXPsMpSXixE/g08rcL4DMtRFOxtjJ9WlLK0gmNKst4LD0C2iPo4Ap0kmzZY4Jjo3sMZeQ++qc+IrzfEoXoCqKFqDc2h6J/I+DbcXQjSrglZhMZQZ72xiR7l3PQhGPpocv/3e5qC8='
+✅ [0;32mSUCCESS: Get value (set by alias) with primary key (and output contains 'this-should-work')[0m
+ℹ️ Creating second alias for key insi_d2y9X+2ict7So6iUttEAXPsMpSXixE/g08rcL4DMtRFOxtjJ9WlLK0gmNKst4LD0C2iPo4Ap0kmzZY4Jjo3sMZeQ++qc+IrzfEoXoCqKFqDc2h6J/I+DbcXQjSrglZhMZQZ72xiR7l3PQhGPpocv/3e5qC8=
+✅ [0;32mSUCCESS: Create second alias (and output contains 'Alias Key:')[0m
+ℹ️ Parsed alias 2 key: insi_dojRo2tfNi0jzqHGFPIlfwgKy7pn9xZNZKYcIhfsZ6coAFXeefxRIzNUzmxToHshwWOOmug4mezs/9GUY/oQ4syLr1toytbtXdviW8fHz3dvgVVYT4si+ICsJhj31foulGHkMQI6YLhKG6TlAsW71lMwfQRkP6w8cQcAo19Vzk3NX+wv
+ℹ️ Listing aliases for primary key insi_d2y9X+2ict7So6iUttEAXPsMpSXixE/g08rcL4DMtRFOxtjJ9WlLK0gmNKst4LD0C2iPo4Ap0kmzZY4Jjo3sMZeQ++qc+IrzfEoXoCqKFqDc2h6J/I+DbcXQjSrglZhMZQZ72xiR7l3PQhGPpocv/3e5qC8=
+✅ [0;32mSUCCESS: List aliases (and output contains 'insi_4Bc61iPhVfoN7xPLUyoqxRpZy6SLA4MO2Yni0TVCmdrbDsZlWLphjypyLRVWnOPoL1pSryFWwv1D1htIDi9YlnrpPBoHtno3yw/AamSNqr7G99dko8YRE3AWfUFIz8K5geyTwSiGiWdt4YqxQtrl2NJ8+e2B/dQ3XYkiEiNxz/1ND0GA')[0m
+✅ [0;32mSUCCESS: Check for second alias in list (and output contains 'insi_dojRo2tfNi0jzqHGFPIlfwgKy7pn9xZNZKYcIhfsZ6coAFXeefxRIzNUzmxToHshwWOOmug4mezs/9GUY/oQ4syLr1toytbtXdviW8fHz3dvgVVYT4si+ICsJhj31foulGHkMQI6YLhKG6TlAsW71lMwfQRkP6w8cQcAo19Vzk3NX+wv')[0m
+ℹ️ Verifying first alias key via ping: insi_4Bc61iPhVfoN7xPLUyoqxRpZy6SLA4MO2Yni0TVCmdrbDsZlWLphjypyLRVWnOPoL1pSryFWwv1D1htIDi9YlnrpPBoHtno3yw/AamSNqr7G99dko8YRE3AWfUFIz8K5geyTwSiGiWdt4YqxQtrl2NJ8+e2B/dQ3XYkiEiNxz/1ND0GA
+✅ [0;32mSUCCESS: Ping with first alias (and output contains 'Ping Response:')[0m
+ℹ️ Verifying second alias key via ping: insi_dojRo2tfNi0jzqHGFPIlfwgKy7pn9xZNZKYcIhfsZ6coAFXeefxRIzNUzmxToHshwWOOmug4mezs/9GUY/oQ4syLr1toytbtXdviW8fHz3dvgVVYT4si+ICsJhj31foulGHkMQI6YLhKG6TlAsW71lMwfQRkP6w8cQcAo19Vzk3NX+wv
+✅ [0;32mSUCCESS: Ping with second alias (and output contains 'Ping Response:')[0m
+ℹ️ Deleting first alias key: insi_4Bc61iPhVfoN7xPLUyoqxRpZy6SLA4MO2Yni0TVCmdrbDsZlWLphjypyLRVWnOPoL1pSryFWwv1D1htIDi9YlnrpPBoHtno3yw/AamSNqr7G99dko8YRE3AWfUFIz8K5geyTwSiGiWdt4YqxQtrl2NJ8+e2B/dQ3XYkiEiNxz/1ND0GA
+✅ [0;32mSUCCESS: Delete first alias (and output contains 'OK')[0m
+ℹ️ Verifying that deleted alias is invalid: insi_4Bc61iPhVfoN7xPLUyoqxRpZy6SLA4MO2Yni0TVCmdrbDsZlWLphjypyLRVWnOPoL1pSryFWwv1D1htIDi9YlnrpPBoHtno3yw/AamSNqr7G99dko8YRE3AWfUFIz8K5geyTwSiGiWdt4YqxQtrl2NJ8+e2B/dQ3XYkiEiNxz/1ND0GA
+✅ [0;32mSUCCESS (Received Expected Error): Verify deleted alias (and output contains 'Verification FAILED')[0m
+ℹ️ Verifying the second alias is the only one remaining in the list
+✅ [0;32mSUCCESS: List aliases after delete (and output contains 'insi_dojRo2tfNi0jzqHGFPIlfwgKy7pn9xZNZKYcIhfsZ6coAFXeefxRIzNUzmxToHshwWOOmug4mezs/9GUY/oQ4syLr1toytbtXdviW8fHz3dvgVVYT4si+ICsJhj31foulGHkMQI6YLhKG6TlAsW71lMwfQRkP6w8cQcAo19Vzk3NX+wv')[0m
+✅ [0;32mSUCCESS: Deleted alias 'insi_4Bc61iPhVfoN7xPLUyoqxRpZy6SLA4MO2Yni0TVCmdrbDsZlWLphjypyLRVWnOPoL1pSryFWwv1D1htIDi9YlnrpPBoHtno3yw/AamSNqr7G99dko8YRE3AWfUFIz8K5geyTwSiGiWdt4YqxQtrl2NJ8+e2B/dQ3XYkiEiNxz/1ND0GA' was not found in list after deletion.[0m
+ℹ️ Verifying second alias still works after deleting first: insi_dojRo2tfNi0jzqHGFPIlfwgKy7pn9xZNZKYcIhfsZ6coAFXeefxRIzNUzmxToHshwWOOmug4mezs/9GUY/oQ4syLr1toytbtXdviW8fHz3dvgVVYT4si+ICsJhj31foulGHkMQI6YLhKG6TlAsW71lMwfQRkP6w8cQcAo19Vzk3NX+wv
+✅ [0;32mSUCCESS: Ping with second alias after deleting first (and output contains 'Ping Response:')[0m
+ℹ️ Cleanup: Deleting primary key insi_d2y9X+2ict7So6iUttEAXPsMpSXixE/g08rcL4DMtRFOxtjJ9WlLK0gmNKst4LD0C2iPo4Ap0kmzZY4Jjo3sMZeQ++qc+IrzfEoXoCqKFqDc2h6J/I+DbcXQjSrglZhMZQZ72xiR7l3PQhGPpocv/3e5qC8=
+✅ [0;32mSUCCESS: Delete primary key for cleanup (and output contains 'OK')[0m
+
+[0;34m==== Test: API Key Alias Limit (Max 16) ====[0m
+ℹ️ Creating primary key 'primary_for_alias_limit_1751002874_2628681' for alias limit test
+✅ [0;32mSUCCESS: Create primary key for alias limit test (and output contains 'API Key:')[0m
+ℹ️ Creating 16 aliases (should succeed)
+ℹ️ Creating alias #1...
+✅ [0;32mSUCCESS: Create alias #1 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #2...
+✅ [0;32mSUCCESS: Create alias #2 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #3...
+✅ [0;32mSUCCESS: Create alias #3 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #4...
+✅ [0;32mSUCCESS: Create alias #4 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #5...
+✅ [0;32mSUCCESS: Create alias #5 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #6...
+✅ [0;32mSUCCESS: Create alias #6 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #7...
+✅ [0;32mSUCCESS: Create alias #7 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #8...
+✅ [0;32mSUCCESS: Create alias #8 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #9...
+✅ [0;32mSUCCESS: Create alias #9 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #10...
+✅ [0;32mSUCCESS: Create alias #10 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #11...
+✅ [0;32mSUCCESS: Create alias #11 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #12...
+✅ [0;32mSUCCESS: Create alias #12 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #13...
+✅ [0;32mSUCCESS: Create alias #13 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #14...
+✅ [0;32mSUCCESS: Create alias #14 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #15...
+✅ [0;32mSUCCESS: Create alias #15 (and output contains 'Alias Key:')[0m
+ℹ️ Creating alias #16...
+✅ [0;32mSUCCESS: Create alias #16 (and output contains 'Alias Key:')[0m
+ℹ️ Attempting to create 17th alias (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Create 17th alias (and output contains 'Alias limit of 16 reached')[0m
+ℹ️ Cleanup: Deleting primary key for alias limit test: insi_N2aMoVnfyLO6MxrizNcktH5BJO7peMijEda9CytrPK6hjcEgcFbfsupF9qKY9mi49WrUuC6YM6ICvkqnqq9eNbNar3LIbEFnO765Grrw+ROuZxQDxx+m13yob9kuyVsOryAigOfl+BEg8tConP/OxrIDG6A=
+✅ [0;32mSUCCESS: Delete primary key for alias limit cleanup (and output contains 'OK')[0m
+
+[0;34m==== Test: Alias Deletion Security ====[0m
+ℹ️ Creating primary key A
+ℹ️ Creating primary key B
+ℹ️ Creating alias A1 for key A
+ℹ️ Attempting to delete alias A1 using its own key (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Delete alias with its own key (and output contains 'an alias key cannot be used to delete an alias')[0m
+ℹ️ Attempting to delete alias A1 using unrelated key B (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Delete alias with unrelated key (and output contains 'you can only delete aliases belonging to the authenticated key')[0m
+ℹ️ Attempting to delete non-existent alias 'alias_nonexistent_1751002885_2628681' with key A (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Delete non-existent alias (and output contains 'not found')[0m
+ℹ️ Cleanup for alias security test
+
+[0;34m==== Test: Root Key Cannot Create Alias ====[0m
+ℹ️ Attempting to create an alias using the system root key (should fail)
+✅ [0;32mSUCCESS (Received Expected Error): Create alias with root key (and output contains 'Cannot set alias for root key')[0m
+
+[0;34m==== Test: Alias Shares Parent's Resource Limits ====[0m
+ℹ️ Creating primary key 'primary_for_limit_share_1751002885_2628681' for limit sharing test
+ℹ️ Setting disk limit for 'insi_06iO9yx4r3vLGsP9JzGDeoGv72K9NIF5lJZZx1ED0nDruE4x33uR0Boj7WJ2QpMwxJGoaEsGYH8y+qWzgeI+fjlwOlGY0VixzTAE/A+a5GZvvALDhFSz2d1fcwo8rakYJHek/GPe1dpIqv3hoNZRVpgGPZs=' to 50 bytes
+ℹ️ Creating alias for the limit-restricted key
+ℹ️ Created test file '/tmp/insi_limit_test_blob.txt' of size 66 bytes
+ℹ️ Attempting to upload blob with alias key (should fail due to limit)
+✅ [0;32mSUCCESS (Received Expected Error): Blob upload with alias exceeds disk limit (and output contains 'exceeded')[0m
+ℹ️ Attempting to upload blob with primary key (should also fail)
+✅ [0;32mSUCCESS (Received Expected Error): Blob upload with primary key exceeds disk limit (and output contains 'exceeded')[0m
+ℹ️ Cleanup for shared limits test
+
+[0;34m==== Test: Multi-Alias Data Scope ====[0m
+ℹ️ Creating primary key 'primary_for_multi_alias_1751002890_2628681' for multi-alias test
+✅ [0;32mSUCCESS: Create primary key for multi-alias test (and output contains 'API Key:')[0m
+ℹ️ Creating 3 aliases for key insi_zSTK9qgj6atM6tNmja05XSG/8LNI3xWLXKW7botM5IxlN1mw43ITvAy5YXSqi74gMjmdsUc3Bjr4MFrEX8lCmnscA+VkXLzF9zCOE3zVAVMQFjP/JlH4V0HzZK16jeMS/bJTAD/3b5cLK+nXgNN4ijkEGbY=
+ℹ️  - Alias 1: insi_Bx7pKDV5YUhswp8aeVckXPJs6wGUDjroVlYBTS2z3uoj69gOCMGCgeiqVNPuq2tGZU5QeEdrOfQ0QocUZFJAxtUo5FrgeyfLHPp/hSq/E+7DQHsyPGPebYU3jtf2TZnKWptLgUENapUSCf4FMTwkB6iRHhBU8mRHGic2fHD84zN9mdjO
+ℹ️  - Alias 2: insi_HuZkZtQBzTIOte0UHiTb8R9k94xekvUIOueIPwwW9+gUhSuyPLuIMzq6p1Ev61K00UqoHE3K8drB1qO4CoUwks9Dsqgq3Mf2wyYmT3xjLWuXpg5MNUJ3KE6SGZSoZTK2+0n/3x+UvdVLMWnXlZwRMnxMOxiWMX91wp4mRveU6sTlCZ1q
+ℹ️  - Alias 3: insi_A/gqrtRCgPH+CBpC58wgPnnyUBHvXBjqVV028AVPnJEhkmCTCClcHSC9ifotCgxqqNy080jGOjCOI4vIlKzXlkeYt2pkAuF4QwQG4bjUXKhDhQK7BTvjmt/K2uiOXW3/d2+lR98OhZcSg6Vn8LyluiDIudbn15R/ajOzMdB+DwwIuHx2
+ℹ️ Using Alias 1 to set 'multi_alias_key' to 'value_from_alias1'
+✅ [0;32mSUCCESS: Set value with alias 1 (and output contains 'OK')[0m
+ℹ️ Using Alias 2 to get 'multi_alias_key'
+✅ [0;32mSUCCESS: Get value with alias 2 (and output contains 'value_from_alias1')[0m
+ℹ️ Using Alias 3 to update 'multi_alias_key' to 'updated_by_alias3'
+✅ [0;32mSUCCESS: Update value with alias 3 (and output contains 'OK')[0m
+ℹ️ Using primary key to confirm final value of 'multi_alias_key'
+✅ [0;32mSUCCESS: Confirm updated value with primary key (and output contains 'updated_by_alias3')[0m
+ℹ️ Cleanup: Deleting primary key for multi-alias test: insi_zSTK9qgj6atM6tNmja05XSG/8LNI3xWLXKW7botM5IxlN1mw43ITvAy5YXSqi74gMjmdsUc3Bjr4MFrEX8lCmnscA+VkXLzF9zCOE3zVAVMQFjP/JlH4V0HzZK16jeMS/bJTAD/3b5cLK+nXgNN4ijkEGbY=
+✅ [0;32mSUCCESS: Delete primary key for multi-alias cleanup (and output contains 'OK')[0m
+
+[0;34m==== Test: Alias Cleanup on Parent Key Deletion ====[0m
+ℹ️ Creating primary key 'primary_for_cleanup_test_1751002896_2628681' for cleanup test
+✅ [0;32mSUCCESS: Create primary key for cleanup test (and output contains 'API Key:')[0m
+ℹ️ Parsed primary key for cleanup test: insi_LBpzEgBQtZ6zDqVlte0OW8T/1dwaP5YG9flCT9jg6SgMI8/STYyCWPyhL1QArmO3KSQ17cmMp/cSBYYzeUCpqsoLHnpquHwdFL5hNpu46SnDtp5Hgqivbb0P3325Pm/rc+FQW0yYqWNZ61BfHQS/aAE+B0Y=
+ℹ️ Creating 3 aliases for key insi_LBpzEgBQtZ6zDqVlte0OW8T/1dwaP5YG9flCT9jg6SgMI8/STYyCWPyhL1QArmO3KSQ17cmMp/cSBYYzeUCpqsoLHnpquHwdFL5hNpu46SnDtp5Hgqivbb0P3325Pm/rc+FQW0yYqWNZ61BfHQS/aAE+B0Y=
+ℹ️  - Alias 1: insi_AqfRO1ub9G868+8Q+8m76oWBhvCGjFmjDe5G1UZB2nlumjOxzuGLBre4AAuG5/kUIHLNC9Hf8NrbuokFHrcO69eSE6j0gNEhOHpaOhHzW421Bjmct3kG8ApvBbed923gzeRwgEDsVCDA9VqKjl6JrNel3F7nWTCNYQthQ+3DYpoY68my
+ℹ️  - Alias 2: insi_zTnUVliQBlE8xKDChVlU+7dbCGqs2Prir8w274j0rziVRMhSVK0gVcHZVGfyw4hgfIaa1KPlbDIu9TR2V0B1P7aCoZ+A5Flz+hdFeOZuFE8l38/g0sHSPLl07Irg4JuSruHxsPUrp36Wc6LnU+BlIcWiugz6mzdExqigTQNoso+FZ5x/
+ℹ️  - Alias 3: insi_fpF9yjosvxfYWwZzaOe8l7b0r037zQ8aqfr4u4KXwPc5/6jXPcn7DV/POIiOM5/6ixJglBbD2ExcR3AklxAggykCTC63Gt1ahSpdxxw+9clOB3XsRPLzbIEhs2AthwGRcE3Cb1zuujGjriiJaBZ6gnvujW1T+5KfuHA0J4NdlpBcuWo0
+ℹ️ Deleting primary key 'insi_LBpzEgBQtZ6zDqVlte0OW8T/1dwaP5YG9flCT9jg6SgMI8/STYyCWPyhL1QArmO3KSQ17cmMp/cSBYYzeUCpqsoLHnpquHwdFL5hNpu46SnDtp5Hgqivbb0P3325Pm/rc+FQW0yYqWNZ61BfHQS/aAE+B0Y=' to trigger alias cleanup
+✅ [0;32mSUCCESS: Delete primary key to trigger cleanup (and output contains 'OK')[0m
+ℹ️ Waiting 45 seconds for tombstone runner to clean up aliases...
+ℹ️ Verifying all aliases are now invalid
+✅ [0;32mSUCCESS (Received Expected Error): Verify alias 1 is invalid after parent deletion (and output contains 'Verification FAILED')[0m
+✅ [0;32mSUCCESS (Received Expected Error): Verify alias 2 is invalid after parent deletion (and output contains 'Verification FAILED')[0m
+✅ [0;32mSUCCESS (Received Expected Error): Verify alias 3 is invalid after parent deletion (and output contains 'Verification FAILED')[0m
+
+[0;34m==== Test: Blob file is deleted when parent API key is deleted ====[0m
+ℹ️ Creating a primary key for the blob cleanup test
+✅ [0;32mCreated key: insi_DOhEvnyaESS3TGnMIYvtkiEo2TijMj63i/jbEV83WNtH4RYrgzBXE0YSY8Bf1rbqeNZyygJ4CYM3rRSFmICtHLlpelMcFRXN9FGwtXQEtU7G77VY63aKiBEQUAOpF41bSJpo65C1nxGvE2sqhBox34PBfeg=[0m
+ℹ️ Uploading blob with the new key
+✅ [0;32mSUCCESS: Blob upload with temporary key[0m
+ℹ️ Verifying physical blob existence...
+✅ [0;32mVerified blob file exists on all 3 nodes before key deletion.[0m
+ℹ️ Deleting parent API key 'insi_DOhEvnyaESS3TGnMIYvtkiEo2TijMj63i/jbEV83WNtH4RYrgzBXE0YSY8Bf1rbqeNZyygJ4CYM3rRSFmICtHLlpelMcFRXN9FGwtXQEtU7G77VY63aKiBEQUAOpF41bSJpo65C1nxGvE2sqhBox34PBfeg='
+✅ [0;32mSUCCESS: Delete parent API key (and output contains 'OK')[0m
+ℹ️ Waiting 45 seconds for tombstone runner to clean up blobs...
+ℹ️ Verifying physical blob no longer exists...
+✅ [0;32mVerified blob file was physically deleted from all nodes after parent key deletion.[0m
+
+[0;32mAll TKV API Key operations tests completed.[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 92
+[0;32mAll API Key tests passed successfully![0m
+✅ Success: api-keys.sh completed.
+🚀 Running crud-iter.sh...
+insid pid: 2632824
+2025-06-27T01:43:22.252-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:43:22.252-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+2025-06-27T01:43:22.260-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:43:22.260-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:43:22.264-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:43:22.264-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:43:23.824-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:43:24.060-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:43:24.060-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:43:24.060-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:43:24.065-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:43:24.065-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:43:24.162-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:43:32.267-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:43:32.271-0400 [INFO]  added peer, starting replication: peer=node1
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:43:32.275-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+2025-06-27T01:43:32.277-0400 [INFO]  added peer, starting replication: peer=node2
+2025-06-27T01:43:32.278-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-27T01:43:32.278-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+2025-06-27T01:43:32.281-0400 [WARN]  failed to get previous log: previous-index=5 last-index=0 error="log not found"
+2025-06-27T01:43:32.281-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:43:32.285-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+set root tracker key internal:api_key_memory_usage: value 0
+2025-06-27T01:43:32.285-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+ℹ️ Using config: /tmp/insi-test-cluster/cluster.yaml
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mServer is online. Proceeding with tests.[0m
+ℹ️ Starting TKV data tests with insic: /tmp/insi-test-cluster/insic
+ℹ️ Using config: /tmp/insi-test-cluster/cluster.yaml
+
+[0;34m==== Test: Set and Get ====[0m
+✅ [0;32mSUCCESS: Set key 'testkey_sg_1751003017' to 'testvalue_sg_1751003017'[0m
+   Output: OK
+✅ [0;32mSUCCESS: Get key 'testkey_sg_1751003017'[0m
+   Output: testvalue_sg_1751003017
+✅ [0;32mValue for 'testkey_sg_1751003017' matches![0m
+
+[0;34m==== Test: Get Non-Existent Key ====[0m
+✅ [0;32mSUCCESS (Received Expected Error): Get non-existent key 'nonexistentkey_1751003017'[0m
+   Output contains: Error: Key 'nonexistentkey_1751003017' not found.
+✅ [0;32mCorrectly received an error message for non-existent key.[0m
+
+[0;34m==== Test: Set, Delete, and Get ====[0m
+✅ [0;32mSUCCESS: Set key 'testkey_del_1751003017' for deletion test[0m
+   Output: OK
+✅ [0;32mSUCCESS: Delete key 'testkey_del_1751003017'[0m
+   Output: OK
+✅ [0;32mSUCCESS (Received Expected Error): Get deleted key 'testkey_del_1751003017'[0m
+   Output contains: Error: Key 'testkey_del_1751003017' not found.
+
+[0;34m==== Test: Iterate by Prefix ====[0m
+✅ [0;32mSUCCESS: Set key 'iter_prefix_1751003017_key1' for iteration[0m
+✅ [0;32mSUCCESS: Set key 'iter_prefix_1751003017_key2' for iteration[0m
+✅ [0;32mSUCCESS: Set key 'iter_prefix_1751003017_key3' for iteration[0m
+✅ [0;32mSUCCESS: Iterate by prefix 'iter_prefix_1751003017_' (expecting keys)[0m
+   Output: iter_prefix_1751003017_key1
+iter_prefix_1751003017_key2
+iter_prefix_1751003017_key3
+✅ [0;32mIterate by prefix 'iter_prefix_1751003017_' successfully retrieved all expected keys and no extras.[0m
+
+[0;34m==== Test: Bump Integer Value ====[0m
+✅ [0;32mSUCCESS: Set initial value for bump test ('testkey_bump_1751003017' -> '10')[0m
+✅ [0;32mSUCCESS: Bump key 'testkey_bump_1751003017' up by '5'[0m
+✅ [0;32mSUCCESS: Get key 'testkey_bump_1751003017' after bumping up[0m
+✅ [0;32mValue for 'testkey_bump_1751003017' is '15' as expected.[0m
+✅ [0;32mSUCCESS: Bump key 'testkey_bump_1751003017' down by '-10'[0m
+✅ [0;32mSUCCESS: Get key 'testkey_bump_1751003017' after bumping down[0m
+✅ [0;32mValue for 'testkey_bump_1751003017' is '5' as expected.[0m
+ℹ️ Testing bumping below zero (expected to result in '0')...
+✅ [0;32mSUCCESS: Bump key 'testkey_bump_1751003017' by '-10' which would go below zero[0m
+✅ [0;32mSUCCESS: Get key 'testkey_bump_1751003017' after bumping below zero[0m
+✅ [0;32mValue for 'testkey_bump_1751003017' is '0' as expected. Bumping does not go below zero.[0m
+✅ [0;32mSUCCESS: Bump non-existent key 'new_bump_key_1751003017' by '100'[0m
+✅ [0;32mSUCCESS: Get key 'new_bump_key_1751003017' after initial bump[0m
+✅ [0;32mValue for new key 'new_bump_key_1751003017' is '100' as expected.[0m
+✅ [0;32mSUCCESS (Received Expected Error): Bump key 'new_bump_key_1751003017' with non-integer value 'not-a-number'[0m
+   Output contains: time=2025-06-27T01:43:37.800-04:00 level=ERROR msg="bump: value must be an integer" error="strconv.Atoi: parsing \"not-a-number\": invalid syntax"
+Error: Value must be an integer: strconv.Atoi: parsing "not-a-number": invalid syntax
+✅ [0;32mSUCCESS (Received Expected Error): Bump key 'non_int_key_1751003017' which holds a string value[0m
+   Output contains: time=2025-06-27T01:43:37.854-04:00 level=ERROR msg="Bump failed" key=non_int_key_1751003017 error="server returned status 400 Bad Request: The existing value is not a valid integer, cannot bump.
+"
+Error: server returned status 400 Bad Request: The existing value is not a valid integer, cannot bump.
+
+[0;32mAll TKV data tests completed.[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 21
+[0;32mAll tests passed successfully![0m
+✅ Success: crud-iter.sh completed.
+🚀 Running cas-setnx.sh...
+insid pid: 2633150
+2025-06-27T01:43:38.208-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:43:38.208-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:43:38.210-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:43:38.210-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:43:38.211-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:43:38.211-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:43:39.563-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:43:39.827-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:43:39.917-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:43:39.917-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:43:39.917-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:43:39.930-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:43:39.930-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:43:48.217-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+2025-06-27T01:43:48.222-0400 [INFO]  added peer, starting replication: peer=node2
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+2025-06-27T01:43:48.225-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:43:48.226-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-27T01:43:48.226-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:43:48.228-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:43:48.229-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+2025-06-27T01:43:48.232-0400 [WARN]  failed to get previous log: previous-index=5 last-index=0 error="log not found"
+2025-06-27T01:43:48.232-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+set root tracker key internal:api_key_memory_usage: value 0
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:43:48.235-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mServer is online. Proceeding with atomic op tests.[0m
+
+[0;34m==== Test: setnx ====[0m
+✅ [0;32mSUCCESS: setnx on new key 'test_setnx_1751003032'[0m
+✅ [0;32mValue for 'test_setnx_1751003032' correctly set to 'value1'[0m
+✅ [0;32mSUCCESS (Received Expected Conflict): setnx on existing key 'test_setnx_1751003032'[0m
+✅ [0;32mValue for 'test_setnx_1751003032' remained 'value1' after failed setnx[0m
+
+[0;34m==== Test: cas (Compare-And-Swap) ====[0m
+✅ [0;32mSUCCESS (Received Expected Conflict): cas on non-existent key[0m
+✅ [0;32mSUCCESS (Received Expected Conflict): cas with incorrect old value for key 'test_cas_1751003033'[0m
+✅ [0;32mValue for 'test_cas_1751003033' remained 'initial_cas_value' after failed cas[0m
+✅ [0;32mSUCCESS: cas with correct old value for key 'test_cas_1751003033'[0m
+✅ [0;32mValue for 'test_cas_1751003033' correctly updated to 'new_cas_value'[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 5
+[0;32mAll atomic op tests passed successfully![0m
+✅ Success: cas-setnx.sh completed.
+🚀 Running events.sh...
+insid pid: 2633339
+2025-06-27T01:43:54.506-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:43:54.506-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:43:54.506-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:43:54.506-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:43:54.508-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:43:54.508-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:43:55.861-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:43:56.110-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:43:56.323-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:43:56.323-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:43:56.323-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:43:56.329-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:43:56.329-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:44:04.518-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:44:04.520-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:44:04.520-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+set root tracker key internal:api_key_memory_usage: value 0
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:44:04.523-0400 [INFO]  added peer, starting replication: peer=node2
+2025-06-27T01:44:04.524-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+2025-06-27T01:44:04.524-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+2025-06-27T01:44:04.527-0400 [WARN]  failed to get previous log: previous-index=5 last-index=0 error="log not found"
+2025-06-27T01:44:04.527-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:44:04.531-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+2025-06-27T01:44:04.532-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+--- Test Setup ---
+Using insic: /tmp/insi-test-cluster/insic
+Using config: /tmp/insi-test-cluster/cluster.yaml
+Targeting node: node0
+Test directory: /tmp/insic_events_test_pSlDnD
+Output file: /tmp/insic_events_test_pSlDnD/output.txt
+Topic: test-event-topic-2633426
+------------------
+Starting subscriber for topic 'test-event-topic-2633426'...
+Subscriber started with PID: 2633428. Outputting to: /tmp/insic_events_test_pSlDnD/output.txt
+Subscriber process seems to be running.
+Waiting for subscriber to connect...
+Subscriber connected.
+Publishing 3 messages to topic 'test-event-topic-2633426'...
+Publishing: 'Hello_World_1_2633426'
+OK
+Publishing: 'Another_Message_2_2633426'
+OK
+Publishing: 'Test_Data_3_2633426'
+OK
+All messages published.
+Waiting for messages to be processed (10 seconds)...
+Stopping subscriber (PID: 2633428)...
+Subscriber stopped.
+Verifying received messages in /tmp/insic_events_test_pSlDnD/output.txt...
+OK: Found message 'Hello_World_1_2633426'
+OK: Found message 'Another_Message_2_2633426'
+OK: Found message 'Test_Data_3_2633426'
+--- Test Summary ---
+SUCCESS: All 3 messages were received!
+See /tmp/insic_events_test_pSlDnD/output.txt for details.
+--------------------
+--- Cleaning up ---
+Subscriber process (PID: 2633428) already exited.
+Removing temporary directory: /tmp/insic_events_test_pSlDnD
+---------------------
+✅ Success: events.sh completed.
+🚀 Running get-set-delete.sh...
+insid pid: 2633925
+2025-06-27T01:44:26.139-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:26.139-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:44:26.299-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:26.299-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:26.300-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:26.300-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:27.676-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:44:27.676-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:44:27.676-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:44:27.685-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:44:27.685-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:44:27.865-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:44:28.165-0400 [WARN]  no known peers, aborting election
+set root tracker key internal:api_key_memory_usage: value 0
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+2025-06-27T01:44:36.306-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:44:36.311-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:44:36.311-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:44:36.313-0400 [INFO]  added peer, starting replication: peer=node2
+2025-06-27T01:44:36.314-0400 [WARN]  failed to get previous log: previous-index=11 last-index=0 error="log not found"
+2025-06-27T01:44:36.315-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+2025-06-27T01:44:36.317-0400 [WARN]  failed to get previous log: previous-index=12 last-index=0 error="log not found"
+2025-06-27T01:44:36.317-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:44:36.321-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+2025-06-27T01:44:36.327-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+ℹ️ Using config: /tmp/insi-test-cluster/cluster.yaml
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mServer is online. Proceeding with tests.[0m
+ℹ️ Starting TKV cache tests with insic: /tmp/insi-test-cluster/insic
+
+[0;34m==== Test: Cache Set and Get Basic ====[0m
+✅ [0;32mSUCCESS: Cache set key 'cachekey_sg_1751003081' to 'cachevalue_sg_1751003081', received 'OK'.[0m
+ℹ️ Brief pause after set...
+✅ [0;32mSUCCESS: Cache get key 'cachekey_sg_1751003081' returned correct value.[0m
+
+[0;34m==== Test: Cache Delete ====[0m
+✅ [0;32mSUCCESS: Cache set key 'cachekey_del_1751003081' for delete test, received 'OK'.[0m
+✅ [0;32mSUCCESS: Cache delete key 'cachekey_del_1751003081', received 'OK'.[0m
+ℹ️ Brief pause after delete...
+✅ [0;32mSUCCESS (Received Expected Error): Cache get deleted key 'cachekey_del_1751003081' (should fail after delete)[0m
+
+[0;34m==== Test: Cache Get Non-Existent Key ====[0m
+✅ [0;32mSUCCESS (Received Expected Error): Cache get non-existent key 'nonexistentcachekey_1751003081'[0m
+
+[0;34m==== Test: Cache CLI Argument Validation ====[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache set: missing value argument[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache set: too many arguments[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache get: missing key argument[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache get: too many arguments[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache delete: missing key argument[0m
+✅ [0;32mSUCCESS (Received Expected Error): cache delete: too many arguments[0m
+
+[0;34m==== Test: Cache Iterate by Prefix ====[0m
+✅ [0;32mSUCCESS: Cache set key 'c_iter_prefix_1751003082_key1' for iteration[0m
+✅ [0;32mSUCCESS: Cache set key 'c_iter_prefix_1751003082_key2' for iteration[0m
+✅ [0;32mSUCCESS: Cache set key 'c_iter_prefix_1751003082_key3' for iteration[0m
+✅ [0;32mSUCCESS: Cache iterate by prefix 'c_iter_prefix_1751003082_'[0m
+✅ [0;32mCache iterate by prefix 'c_iter_prefix_1751003082_' successfully retrieved all expected keys and no extras.[0m
+
+[0;32mAll TKV cache tests completed.[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 17
+[0;32mAll tests passed successfully![0m
+✅ Success: get-set-delete.sh completed.
+🚀 Running cache-cas-setnx.sh...
+insid pid: 2634686
+2025-06-27T01:44:43.027-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:43.027-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:43.030-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:43.030-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:43.031-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:43.031-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:44:44.254-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:44:44.431-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:44:44.986-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:44:44.986-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:44:44.986-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:44:44.994-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:44:44.994-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:44:53.041-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+set root tracker key internal:api_key_memory_usage: value 0
+2025-06-27T01:44:53.044-0400 [INFO]  added peer, starting replication: peer=node2
+2025-06-27T01:44:53.047-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:44:53.048-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+2025-06-27T01:44:53.048-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+2025-06-27T01:44:53.052-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:44:53.053-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+2025-06-27T01:44:53.055-0400 [WARN]  failed to get previous log: previous-index=6 last-index=0 error="log not found"
+2025-06-27T01:44:53.055-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+set root tracker key internal:api_key_disk_usage: value 0
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:44:53.069-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mServer is online. Proceeding with atomic cache op tests.[0m
+
+[0;34m==== Test: cache setnx ====[0m
+✅ [0;32mSUCCESS: cache setnx on new key 'test_cache_setnx_1751003097'[0m
+✅ [0;32mValue for 'test_cache_setnx_1751003097' correctly set to 'value1'[0m
+✅ [0;32mSUCCESS (Received Expected Conflict/Precondition): cache setnx on existing key 'test_cache_setnx_1751003097'[0m
+✅ [0;32mValue for 'test_cache_setnx_1751003097' remained 'value1' after failed setnx[0m
+
+[0;34m==== Test: cache cas (Compare-And-Swap) ====[0m
+✅ [0;32mSUCCESS (Received Expected Conflict/Precondition): cas on non-existent key[0m
+✅ [0;32mSUCCESS (Received Expected Conflict/Precondition): cas with incorrect old value for key 'test_cache_cas_1751003097'[0m
+✅ [0;32mValue for 'test_cache_cas_1751003097' remained 'initial_cas_value' after failed cas[0m
+✅ [0;32mSUCCESS: cas with correct old value for key 'test_cache_cas_1751003097'[0m
+✅ [0;32mValue for 'test_cache_cas_1751003097' correctly updated to 'new_cas_value'[0m
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 5
+[0;32mAll atomic cache op tests passed successfully![0m
+✅ Success: cache-cas-setnx.sh completed.
+🚀 Running blob.sh...
+insid pid: 2634947
+2025-06-27T01:44:59.273-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:59.273-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2224 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:59.372-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:59.372-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2222 [Follower]" leader-address= leader-id=
+2025-06-27T01:44:59.373-0400 [INFO]  initial configuration: index=0 servers=[]
+2025-06-27T01:44:59.373-0400 [INFO]  entering follower state: follower="Node at 127.0.0.1:2223 [Follower]" leader-address= leader-id=
+Launching server 127.0.0.1:8443
+Launching server 127.0.0.1:8446
+2025-06-27T01:45:00.674-0400 [WARN]  heartbeat timeout reached, starting election: last-leader-addr= last-leader-id=
+2025-06-27T01:45:00.674-0400 [INFO]  entering candidate state: node="Node at 127.0.0.1:2222 [Candidate]" term=2
+2025-06-27T01:45:00.674-0400 [INFO]  pre-vote successful, starting election: term=2 tally=1 refused=0 votesNeeded=1
+2025-06-27T01:45:00.682-0400 [INFO]  election won: term=2 tally=1
+2025-06-27T01:45:00.682-0400 [INFO]  entering leader state: leader="Node at 127.0.0.1:2222 [Leader]"
+2025-06-27T01:45:00.921-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:45:01.094-0400 [WARN]  no known peers, aborting election
+2025-06-27T01:45:09.279-0400 [INFO]  updating configuration: command=AddVoter server-id=node2 server-addr=127.0.0.1:2224 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224}]"
+2025-06-27T01:45:09.284-0400 [INFO]  added peer, starting replication: peer=node2
+Launching server 127.0.0.1:8445
+Launching server 127.0.0.1:8448
+2025-06-27T01:45:09.286-0400 [WARN]  failed to get previous log: previous-index=3 last-index=0 error="log not found"
+2025-06-27T01:45:09.287-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node2 127.0.0.1:2224}" next=1
+2025-06-27T01:45:09.289-0400 [INFO]  pipelining replication: peer="{Voter node2 127.0.0.1:2224}"
+2025-06-27T01:45:09.378-0400 [INFO]  updating configuration: command=AddVoter server-id=node1 server-addr=127.0.0.1:2223 servers="[{Suffrage:Voter ID:node0 Address:127.0.0.1:2222} {Suffrage:Voter ID:node2 Address:127.0.0.1:2224} {Suffrage:Voter ID:node1 Address:127.0.0.1:2223}]"
+2025-06-27T01:45:09.380-0400 [INFO]  added peer, starting replication: peer=node1
+2025-06-27T01:45:09.385-0400 [WARN]  failed to get previous log: previous-index=4 last-index=0 error="log not found"
+Launching server 127.0.0.1:8444
+Launching server 127.0.0.1:8447
+2025-06-27T01:45:09.385-0400 [WARN]  appendEntries rejected, sending older logs: peer="{Voter node1 127.0.0.1:2223}" next=1
+set root tracker key internal:api_key_memory_usage: value 0
+2025-06-27T01:45:09.388-0400 [INFO]  pipelining replication: peer="{Voter node1 127.0.0.1:2223}"
+set root tracker key internal:api_key_disk_usage: value 0
+set root tracker key internal:api_key_events: value 0
+set root tracker key internal:api_key_subscriptions: value 0
+set root tracker key internal:api_key_max_memory_usage:
+set root tracker key internal:api_key_max_disk_usage:
+set root tracker key internal:api_key_max_events:
+set root tracker key internal:api_key_max_subscriptions:
+ℹ️ Test directory prepared at /tmp/insic-blob-tests
+
+[0;34m==== Pre-Test: Server Ping Check ====[0m
+✅ [0;32mServer is online. Proceeding with blob tests.[0m
+
+[0;34m==== Test: Blob Lifecycle ====[0m
+ℹ️ Created test file '/tmp/insic-blob-tests/upload.txt' with SHA256 hash: e5f1dae104445fafb2376cff15b67671c83c67781e51df6d11b7a0baf20d3d90
+✅ [0;32mSUCCESS: Upload blob with key 'test_blob_1751003114_file1.txt'[0m
+✅ [0;32mIterate found blob key 'test_blob_1751003114_file1.txt'[0m
+✅ [0;32mSUCCESS: Download blob with key 'test_blob_1751003114_file1.txt'[0m
+ℹ️ Downloaded file hash: e5f1dae104445fafb2376cff15b67671c83c67781e51df6d11b7a0baf20d3d90
+✅ [0;32mDownloaded file content matches original[0m
+
+ℹ️[1;33m Verifying physical blob existence on ALL nodes...[0m
+ℹ️[1;33m > Key: 'test_blob_1751003114_file1.txt', Hash: '715893f0ae4d3f1df0ec851911de20d1d5ccff9dbf691e690622dc127be3b3e7', Scope: 'test-cluster-prefix'[0m
+ℹ️[1;33m > Waiting up to 10s for replication to all nodes...[0m
+✅ [0;32mVerified blob file exists on all 3 nodes.[0m
+✅ [0;32mSUCCESS: Delete blob with key 'test_blob_1751003114_file1.txt'[0m
+✅ [0;32mSUCCESS (Received Expected Failure): Attempt to download deleted blob 'test_blob_1751003114_file1.txt'[0m
+
+ℹ️[1;33m Verifying API no longer lists the deleted blob...[0m
+✅ [0;32mIterate no longer finds deleted blob key 'test_blob_1751003114_file1.txt'[0m
+
+ℹ️[1;33m Verifying physical blob deletion on ALL nodes...[0m
+⚠️ The application's blob garbage collector runs every 30 seconds.
+ℹ️[1;33m > WAITING 35 SECONDS for the garbage collector and replication...[0m
+✅ [0;32mVerified blob file was physically deleted from all 3 nodes.[0m
+
+[0;34m==== Test: Blob Iteration ====[0m
+ℹ️ Uploading test blobs...
+✅ [0;32mSUCCESS: Upload blob 1 ('iteration_test_1751003150/file1.txt')[0m
+✅ [0;32mSUCCESS: Upload blob 2 ('iteration_test_1751003150/file2.txt')[0m
+✅ [0;32mSUCCESS: Upload blob 3 ('iteration_test_1751003150/subdir/file3.txt')[0m
+✅ [0;32mSUCCESS: Upload blob 4 ('other_prefix/file4.txt')[0m
+
+ℹ️ Iterating with prefix 'iteration_test_1751003150'...
+✅ [0;32mSUCCESS: Iterate found all 3 expected blobs.[0m
+✅ [0;32mSUCCESS: Iterate did not find unexpected blob 'other_prefix/file4.txt'.[0m
+
+ℹ️ Testing iteration with limit...
+✅ [0;32mSUCCESS: Iterate with limit=2 returned 2 keys.[0m
+
+ℹ️ Testing iteration with offset...
+✅ [0;32mSUCCESS: Iterate with offset=2, limit=2 returned 1 key.[0m
+
+ℹ️ Testing iteration with a non-existent prefix...
+✅ [0;32mSUCCESS: Iterate with non-existent prefix correctly reported no keys.[0m
+
+ℹ️ Cleaning up uploaded blobs...
+ℹ️ Cleanup complete.
+
+[0;34m==== Test Summary ====[0m
+✅ Successful tests: 18
+[0;32mAll blob tests passed successfully![0m
+ℹ️ Test directory cleaned up.
+✅ Success: blob.sh completed.
+🎉 All tests passed successfully!

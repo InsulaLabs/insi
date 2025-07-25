@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/InsulaLabs/insi/db/models"
 )
@@ -238,7 +237,7 @@ func (c *Core) setAliasHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Check alias count
 	prefix := WithRootToAliasPrefix(td.KeyUUID)
-	aliases, err := c.fsm.Iterate(prefix, 0, MaxAliasesPerKey+1)
+	aliases, err := c.fsm.Iterate(prefix, 0, MaxAliasesPerKey+1, "")
 	if err != nil {
 		c.logger.Error("Could not iterate aliases", "error", err)
 		http.Error(w, "Could not check alias count", http.StatusInternalServerError)
@@ -358,19 +357,13 @@ func (c *Core) listAliasesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prefix := WithRootToAliasPrefix(td.KeyUUID)
-	aliases, err := c.fsm.Iterate(prefix, 0, MaxAliasesPerKey)
+	// Pass prefix + ":" as trimPrefix to remove the common prefix from results
+	aliases, err := c.fsm.Iterate(prefix, 0, MaxAliasesPerKey, prefix+":")
 	if err != nil {
 		c.logger.Error("Could not iterate aliases for listing", "error", err)
 		http.Error(w, "Could not list aliases", http.StatusInternalServerError)
 		return
 	}
-
-	aliasKeys := make([]string, len(aliases))
-	for i, aliasBytes := range aliases {
-		fullKey := string(aliasBytes)
-		aliasKeys[i] = strings.TrimPrefix(fullKey, prefix+":")
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(models.ListAliasesResponse{Aliases: aliasKeys})
+	json.NewEncoder(w).Encode(models.ListAliasesResponse{Aliases: aliases})
 }
