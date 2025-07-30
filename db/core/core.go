@@ -51,6 +51,10 @@ var ErrMemoryUsageLimitExceeded = fmt.Errorf("memory usage limit exceeded")
 
 var TombstoneRunnerInterval = time.Second * 30
 
+const (
+	BlobMaxTombstoneLimit = 1024
+)
+
 type StorageTarget string
 
 const (
@@ -853,7 +857,7 @@ func (c *Core) execTombstoneDeletion() {
 	c.logger.Info("Tombstone runner executing deletion cycle")
 
 	// 1. Iterate over all tombstone keys
-	tombstoneKeys, err := c.fsm.Iterate(ApiTombstonePrefix, 0, 100, "")
+	tombstoneKeys, err := c.fsm.Iterate(ApiTombstonePrefix, 0, BlobMaxTombstoneLimit, "")
 	if err != nil {
 		c.logger.Error("Could not get tombstone keys", "error", err)
 		return
@@ -882,7 +886,7 @@ func (c *Core) execTombstoneDeletion() {
 
 		// 2. Iteratively delete all data associated with the dataScopeUUID
 		// We use the dataScopeUUID as the prefix for all user data.
-		keysToDelete, err := c.fsm.Iterate(dataScopeUUID, 0, 100, "")
+		keysToDelete, err := c.fsm.Iterate("blob:"+dataScopeUUID+":", 0, BlobMaxTombstoneLimit, "")
 		if err != nil {
 			c.logger.Error("Could not iterate over keys for data scope", "data_scope_uuid", dataScopeUUID, "error", err)
 			continue
@@ -894,8 +898,8 @@ func (c *Core) execTombstoneDeletion() {
 				key := string(keyBytes)
 
 				// Check if the key is for blob metadata
-				// Format is <dataScopeUUID>:blob:<key>
-				if strings.HasPrefix(key, dataScopeUUID+":blob:") {
+				// Format is blob:<dataScopeUUID>:<key>
+				if strings.HasPrefix(key, "blob:"+dataScopeUUID+":") {
 					c.logger.Debug("Found blob metadata to delete as part of key cleanup", "key", key)
 					blobMetaJSON, metaErr := c.fsm.Get(key)
 					if metaErr != nil {

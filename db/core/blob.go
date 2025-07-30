@@ -365,7 +365,7 @@ func (x *blobService) startTombstoneSystem(ctx context.Context) {
 
 func (x *blobService) execTombstoneDeletion() {
 	// 1. Iterate over all tombstone keys
-	tombstoneKeys, err := x.core.fsm.Iterate(KeyPrimitiveBlobTombstone, 0, 100, "")
+	tombstoneKeys, err := x.core.fsm.Iterate(KeyPrimitiveBlobTombstone, 0, BlobMaxTombstoneLimit, "")
 	if err != nil {
 		x.logger.Error("Could not get blob tombstone keys", "error", err)
 		return
@@ -380,9 +380,12 @@ func (x *blobService) execTombstoneDeletion() {
 	for _, tombstoneKeyBytes := range tombstoneKeys {
 		tombstoneKey := string(tombstoneKeyBytes)
 		blobId := strings.TrimPrefix(tombstoneKey, KeyPrimitiveBlobTombstone)
-		// blobId is <data_scope_uuid>:blob:<key>
+		// blobId is blob:<data_scope_uuid>:<key>
 		// We need to parse this to get the parts
-		parts := strings.SplitN(blobId, ":blob:", 2)
+		parts := strings.SplitN(blobId, ":", 3)
+		if len(parts) == 3 && parts[0] == "blob" {
+			parts = parts[1:] // Remove "blob:" prefix to get [data_scope_uuid, key]
+		}
 		if len(parts) != 2 {
 			x.logger.Error("Invalid blob ID in tombstone key", "key", tombstoneKey)
 			continue
@@ -759,7 +762,7 @@ func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Req
 		limit = 100
 	}
 
-	searchPrefix := fmt.Sprintf("%s:blob:%s", td.DataScopeUUID, prefix)
+	searchPrefix := fmt.Sprintf("blob:%s:%s", td.DataScopeUUID, prefix)
 	keys, err := c.fsm.Iterate(searchPrefix, offset, limit, "")
 	if err != nil {
 		var nfErr *tkv.ErrKeyNotFound
@@ -774,7 +777,7 @@ func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Req
 
 	// Filter out tombstoned keys
 	finalKeys := []string{}
-	stripPrefix := fmt.Sprintf("%s:blob:", td.DataScopeUUID)
+	stripPrefix := fmt.Sprintf("blob:%s:", td.DataScopeUUID)
 	for _, metadataKey := range keys {
 		tombstoneKey := KeyPrimitiveBlobTombstone + metadataKey
 		_, err := c.fsm.Get(tombstoneKey)
