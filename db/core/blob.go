@@ -44,7 +44,7 @@ const (
 )
 
 func blobMetadataKey(dataScopeUUID, key string) string {
-	return fmt.Sprintf("%s:blob:%s", dataScopeUUID, key)
+	return fmt.Sprintf("blob:%s:%s", dataScopeUUID, key)
 }
 
 func (c *Core) blobPath(dataScopeUUID, key string) string {

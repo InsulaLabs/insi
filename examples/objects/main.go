@@ -104,6 +104,8 @@ func handleUserCommand(ctx context.Context, uc UserController, args []string) {
 			return
 		}
 		handleUserMod(ctx, uc, args)
+	case "delete-all":
+		deleteAllUsers(ctx, uc)
 	default:
 		printUserUsage()
 	}
@@ -238,6 +240,54 @@ func handleUserMod(ctx context.Context, uc UserController, args []string) {
 	}
 }
 
+func deleteAllUsers(ctx context.Context, uc UserController) {
+	users, err := uc.ListUsers(ctx)
+	if err != nil {
+		fmt.Printf("%sError listing users: %v%s\n", ColorRed, err, ColorReset)
+		return
+	}
+
+	if len(users) == 0 {
+		fmt.Printf("%sNo users found to delete.%s\n", ColorYellow, ColorReset)
+		return
+	}
+
+	fmt.Printf("%sWARNING: This will delete ALL %d users!%s\n", ColorRed, len(users), ColorReset)
+	fmt.Printf("Users to be deleted:\n")
+	for _, user := range users {
+		fmt.Printf("  - %s (%s)\n", user.Email, user.UUID)
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("\n%sAre you sure you want to delete ALL users? Type 'yes' to confirm: %s", ColorRed, ColorReset)
+	confirmation, _ := reader.ReadString('\n')
+	confirmation = strings.TrimSpace(confirmation)
+
+	if confirmation != "yes" {
+		fmt.Printf("%sOperation cancelled.%s\n", ColorYellow, ColorReset)
+		return
+	}
+
+	deletedCount := 0
+	failedCount := 0
+
+	for _, user := range users {
+		if err := uc.DeleteUser(ctx, user.UUID); err != nil {
+			fmt.Printf("%sFailed to delete user %s (%s): %v%s\n", ColorRed, user.Email, user.UUID, err, ColorReset)
+			failedCount++
+		} else {
+			fmt.Printf("%sDeleted user %s (%s)%s\n", ColorGreen, user.Email, user.UUID, ColorReset)
+			deletedCount++
+		}
+	}
+
+	fmt.Printf("\n%sSummary:%s\n", ColorBlue, ColorReset)
+	fmt.Printf("  %sDeleted:%s %d users\n", ColorGreen, ColorReset, deletedCount)
+	if failedCount > 0 {
+		fmt.Printf("  %sFailed:%s %d users\n", ColorRed, ColorReset, failedCount)
+	}
+}
+
 func printUser(user User) {
 	fmt.Printf("  %sUUID:%s        %s\n", ColorCyan, ColorReset, user.UUID)
 	fmt.Printf("  %sEmail:%s       %s\n", ColorCyan, ColorReset, user.Email)
@@ -260,6 +310,7 @@ func printUserUsage() {
 	fmt.Printf("  %slist%s\t\t- List all users\n", ColorGreen, ColorReset)
 	fmt.Printf("  %sauth <email>%s\t- Authenticate a user\n", ColorGreen, ColorReset)
 	fmt.Printf("  %smod <field> <email>%s\t- Modify a user's field (pass, email, name)\n", ColorGreen, ColorReset)
+	fmt.Printf("  %sdelete-all%s\t- Delete all users (requires confirmation)\n", ColorGreen, ColorReset)
 }
 
 func printUserModUsage() {

@@ -430,6 +430,9 @@ func (c *Core) iterateCacheKeysByPrefixHandler(w http.ResponseWriter, r *http.Re
 	offset, limit := parseOffsetAndLimit(r)
 
 	fullPrefix := fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix)
+	if prefix == "" || prefix == "*" {
+		fullPrefix = fmt.Sprintf("%s:", td.DataScopeUUID)
+	}
 
 	// Pass the data scope UUID prefix to be trimmed during iteration
 	keys, err := c.fsm.IterateCache(fullPrefix, offset, limit, fmt.Sprintf("%s:", td.DataScopeUUID))

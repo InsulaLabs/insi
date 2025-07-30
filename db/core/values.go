@@ -102,8 +102,13 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 		offsetInt = 0
 	}
 
+	fullPrefix := fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix)
+	if prefix == "" || prefix == "*" {
+		fullPrefix = fmt.Sprintf("%s:", td.DataScopeUUID)
+	}
+
 	// Pass the trimPrefix to remove it during iteration
-	value, err := c.fsm.Iterate(fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix), offsetInt, limitInt, fmt.Sprintf("%s:", td.DataScopeUUID))
+	value, err := c.fsm.Iterate(fullPrefix, offsetInt, limitInt, fmt.Sprintf("%s:", td.DataScopeUUID))
 	if err == badger.ErrKeyNotFound {
 		http.NotFound(w, r)
 		return
