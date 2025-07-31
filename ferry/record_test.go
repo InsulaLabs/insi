@@ -303,6 +303,7 @@ func TestRecordManager_NewInstance(t *testing.T) {
 
 	// Verify data was stored
 	expectedKeys := []string{
+		"dev:records:testRecord:instance1:__meta__",
 		"dev:records:testRecord:instance1:ID",
 		"dev:records:testRecord:instance1:Name",
 		"dev:records:testRecord:instance1:Age",
@@ -486,6 +487,7 @@ func TestRecordManager_DeleteRecord(t *testing.T) {
 
 	// Verify all fields are deleted
 	keys := []string{
+		"dev:records:testRecord:deleteTest:__meta__",
 		"dev:records:testRecord:deleteTest:ID",
 		"dev:records:testRecord:deleteTest:Name",
 		"dev:records:testRecord:deleteTest:Age",
@@ -690,7 +692,12 @@ func TestRecordManager_ProductionMode(t *testing.T) {
 	rm.NewInstance(ctx, "prodRecord", "prod1", record)
 
 	// Verify keys have prod:records prefix
-	key := "prod:records:prodRecord:prod1:Name"
+	key := "prod:records:prodRecord:prod1:__meta__"
+	if _, exists := mockC.data[key]; !exists {
+		t.Errorf("Expected metadata key %s with prod:records prefix", key)
+	}
+
+	key = "prod:records:prodRecord:prod1:Name"
 	if _, exists := mockC.data[key]; !exists {
 		t.Errorf("Expected key %s with prod:records prefix", key)
 	}

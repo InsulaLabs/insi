@@ -390,7 +390,31 @@ func (rm *recordManagerImpl) SetRecord(ctx context.Context, recordType, instance
 		return fmt.Errorf("data type %s does not match registered type %s", dataType.Name(), registeredType.Name())
 	}
 
-	return rm.storeRecord(ctx, recordType, instanceName, data)
+	// First, backup the existing record for rollback
+	backup, err := rm.GetRecord(ctx, recordType, instanceName)
+	if err != nil && !errors.Is(err, ErrKeyNotFound) {
+		// If we can't read the existing record (and it's not because it doesn't exist), bail out
+		return fmt.Errorf("failed to backup existing record: %w", err)
+	}
+
+	// Attempt to store the new record
+	if err := rm.storeRecord(ctx, recordType, instanceName, data); err != nil {
+		// If store failed and we have a backup, attempt to restore
+		if backup != nil {
+			rm.logger.Warn("SetRecord failed, attempting rollback", "type", recordType, "instance", instanceName, "error", err)
+
+			// Best effort rollback - we can't do much if this fails too
+			if rollbackErr := rm.storeRecord(ctx, recordType, instanceName, backup); rollbackErr != nil {
+				rm.logger.Error("Rollback failed", "type", recordType, "instance", instanceName, "error", rollbackErr)
+				return fmt.Errorf("update failed and rollback failed: update error: %w, rollback error: %v", err, rollbackErr)
+			}
+
+			rm.logger.Info("Successfully rolled back to previous state", "type", recordType, "instance", instanceName)
+		}
+		return err
+	}
+
+	return nil
 }
 
 func (rm *recordManagerImpl) SetRecordField(ctx context.Context, recordType, instanceName, fieldName string, value interface{}) error {
@@ -497,36 +521,59 @@ func (rm *recordManagerImpl) ListInstances(ctx context.Context, recordType strin
 	// Look for metadata keys instead of iterating all fields
 	prefix := recordType + ":"
 
-	var keys []string
-	var err error
+	// We need to get more keys than requested because we'll filter for metadata keys
+	// Get keys in batches until we have enough metadata keys
+	const batchSize = 100
+	instances := make([]string, 0)
+	keyOffset := 0
 
-	if rm.useCache {
-		keys, err = rm.cacheCtrl.IterateByPrefix(ctx, prefix, offset, limit*3) // Get more to filter
-	} else {
-		keys, err = rm.valueCtrl.IterateByPrefix(ctx, prefix, offset, limit*3) // Get more to filter
-	}
+	for len(instances) < offset+limit {
+		var keys []string
+		var err error
 
-	if err != nil {
-		return nil, err
-	}
+		if rm.useCache {
+			keys, err = rm.cacheCtrl.IterateByPrefix(ctx, prefix, keyOffset, batchSize)
+		} else {
+			keys, err = rm.valueCtrl.IterateByPrefix(ctx, prefix, keyOffset, batchSize)
+		}
 
-	// Extract unique instance names from metadata keys
-	instances := make([]string, 0, limit)
-	for _, key := range keys {
-		// Only process metadata keys
-		if strings.HasSuffix(key, ":__meta__") {
-			// Remove the prefix and suffix to get instance name
-			trimmed := strings.TrimPrefix(key, prefix)
-			instanceName := strings.TrimSuffix(trimmed, ":__meta__")
-			instances = append(instances, instanceName)
+		if err != nil {
+			return nil, err
+		}
 
-			if len(instances) >= limit {
-				break
+		// No more keys available
+		if len(keys) == 0 {
+			break
+		}
+
+		// Extract metadata keys
+		for _, key := range keys {
+			if strings.HasSuffix(key, ":__meta__") {
+				trimmed := strings.TrimPrefix(key, prefix)
+				instanceName := strings.TrimSuffix(trimmed, ":__meta__")
+				instances = append(instances, instanceName)
 			}
+		}
+
+		keyOffset += len(keys)
+
+		// If we got less than batchSize, we've reached the end
+		if len(keys) < batchSize {
+			break
 		}
 	}
 
-	return instances, nil
+	// Apply offset and limit to the filtered instances
+	start := offset
+	if start > len(instances) {
+		start = len(instances)
+	}
+	end := start + limit
+	if end > len(instances) {
+		end = len(instances)
+	}
+
+	return instances[start:end], nil
 }
 
 func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType string, upgrader interface{}) error {
