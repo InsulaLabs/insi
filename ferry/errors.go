@@ -11,7 +11,6 @@ var (
 	ErrEmptyScopePush = errors.New("empty scope push")
 	ErrEndScope       = errors.New("end scope")
 
-	// Ferry-specific errors that correspond to client errors
 	ErrKeyNotFound             = errors.New("key not found")
 	ErrConflict                = errors.New("operation failed due to a conflict")
 	ErrRateLimited             = errors.New("rate limited")
