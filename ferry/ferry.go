@@ -82,3 +82,7 @@ func GetCacheController[T any](f *Ferry, defaultT T) CacheController[T] {
 func GetEvents(f *Ferry) Events {
 	return NewEvents(f.client, f.logger)
 }
+
+func GetBlobController(f *Ferry) BlobController {
+	return NewBlobController(f.client, f.logger)
+}

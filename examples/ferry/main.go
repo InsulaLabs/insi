@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -116,6 +117,8 @@ func main() {
 		handleEvents(f, cmdArgs)
 	case "ping":
 		handlePing(f, cmdArgs)
+	case "blob":
+		handleBlob(f, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -228,7 +231,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("values"), color.CyanString("bump"), color.CyanString("<key>"), color.CyanString("<increment>"))
 	fmt.Fprintf(os.Stderr, "    Atomically increment a numeric value by the given amount\n")
 
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("values"), color.CyanString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("values"), color.CyanString("iterate"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "    List keys matching the given prefix (default: offset=0, limit=100)\n")
 
 	// Cache operations
@@ -248,7 +251,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("cas"), color.CyanString("<key>"), color.CyanString("<old_value>"), color.CyanString("<new_value>"))
 	fmt.Fprintf(os.Stderr, "    Compare-and-swap: update cached value only if current value matches old_value\n")
 
-	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("iterate"), color.CyanString("prefix"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("cache"), color.CyanString("iterate"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
 	fmt.Fprintf(os.Stderr, "    List cached keys matching the given prefix (default: offset=0, limit=100)\n")
 
 	// Events operations
@@ -262,6 +265,20 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("events"), color.CyanString("purge"))
 	fmt.Fprintf(os.Stderr, "    Disconnect all event subscriptions for the current API key across all nodes in the cluster\n")
 
+	// Blob operations
+	fmt.Fprintf(os.Stderr, "\n%s\n", color.YellowString("Blob Storage Operations:"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("blob"), color.CyanString("upload"), color.CyanString("<key>"), color.CyanString("<file>"))
+	fmt.Fprintf(os.Stderr, "    Upload a file as a blob with the given key\n")
+
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("blob"), color.CyanString("download"), color.CyanString("<key>"), color.CyanString("[output_file]"))
+	fmt.Fprintf(os.Stderr, "    Download a blob by key (outputs to stdout if no output file specified)\n")
+
+	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("blob"), color.CyanString("delete"), color.CyanString("<key>"))
+	fmt.Fprintf(os.Stderr, "    Delete a blob by key\n")
+
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("blob"), color.CyanString("iterate"), color.CyanString("<prefix>"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+	fmt.Fprintf(os.Stderr, "    List blob keys matching the given prefix (default: offset=0, limit=100)\n")
+
 	// Examples
 	fmt.Fprintf(os.Stderr, "\n%s\n", color.CyanString("Examples:"))
 	fmt.Fprintf(os.Stderr, "  # Generate configuration\n")
@@ -274,7 +291,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  ferry values set user:123 '{\"name\":\"Alice\",\"age\":30}'\n")
 	fmt.Fprintf(os.Stderr, "  ferry values get user:123\n")
 	fmt.Fprintf(os.Stderr, "  ferry values bump counter 1\n")
-	fmt.Fprintf(os.Stderr, "  ferry values iterate prefix user: 0 50\n")
+	fmt.Fprintf(os.Stderr, "  ferry values iterate user: 0 50\n")
 	fmt.Fprintf(os.Stderr, "  \n")
 	fmt.Fprintf(os.Stderr, "  # Cache operations\n")
 	fmt.Fprintf(os.Stderr, "  ferry cache set session:abc \"active\"\n")
@@ -284,12 +301,18 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  ferry events publish notifications '{\"type\":\"alert\",\"message\":\"Hello\"}'\n")
 	fmt.Fprintf(os.Stderr, "  ferry events subscribe notifications\n")
 	fmt.Fprintf(os.Stderr, "  \n")
+	fmt.Fprintf(os.Stderr, "  # Blob storage\n")
+	fmt.Fprintf(os.Stderr, "  ferry blob upload document:123 report.pdf\n")
+	fmt.Fprintf(os.Stderr, "  ferry blob download document:123 downloaded-report.pdf\n")
+	fmt.Fprintf(os.Stderr, "  ferry blob iterate document: 0 50\n")
+	fmt.Fprintf(os.Stderr, "  \n")
 	fmt.Fprintf(os.Stderr, "  # Using custom config\n")
 	fmt.Fprintf(os.Stderr, "  ferry --config prod-ferry.yaml values get mykey\n")
 
 	fmt.Fprintf(os.Stderr, "\n%s\n", color.CyanString("Notes:"))
 	fmt.Fprintf(os.Stderr, "  - Value store provides persistent storage with strong consistency\n")
 	fmt.Fprintf(os.Stderr, "  - Cache provides fast volatile storage (data may be evicted)\n")
+	fmt.Fprintf(os.Stderr, "  - Blob storage provides persistent storage for large binary objects\n")
 	fmt.Fprintf(os.Stderr, "  - Events enable real-time pub/sub messaging between clients\n")
 	fmt.Fprintf(os.Stderr, "  - All operations use the ferry package which provides automatic retries and error handling\n")
 }
@@ -424,43 +447,36 @@ func handleValues(f *ferry.Ferry, args []string) {
 }
 
 func handleValuesIterate(ctx context.Context, vc ferry.ValueController[string], args []string) {
-	if len(args) < 2 {
-		logger.Error("values iterate: requires <type (prefix)> <value> [offset] [limit]")
+	if len(args) < 1 {
+		logger.Error("values iterate: requires <prefix> [offset] [limit]")
 		printUsage()
 		os.Exit(1)
 	}
-	iterType := args[0]
-	value := args[1]
+	prefix := args[0]
 	offset, limit := 0, 100
 
 	var err error
+	if len(args) > 1 {
+		offset, err = strconv.Atoi(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[1], err)
+			os.Exit(1)
+		}
+	}
 	if len(args) > 2 {
-		offset, err = strconv.Atoi(args[2])
+		limit, err = strconv.Atoi(args[2])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[2], err)
-			os.Exit(1)
-		}
-	}
-	if len(args) > 3 {
-		limit, err = strconv.Atoi(args[3])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[3], err)
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[2], err)
 			os.Exit(1)
 		}
 	}
 
-	if iterType != "prefix" {
-		logger.Error("values iterate: unknown type", "type", iterType)
-		printUsage()
-		os.Exit(1)
-	}
-
-	results, err := vc.IterateByPrefix(ctx, value, offset, limit)
+	results, err := vc.IterateByPrefix(ctx, prefix, offset, limit)
 	if err != nil {
 		if err == ferry.ErrKeyNotFound {
 			color.HiRed("No keys found.")
 		} else {
-			logger.Error("Iterate failed", "type", iterType, "value", value, "error", err)
+			logger.Error("Iterate failed", "prefix", prefix, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		}
 		os.Exit(1)
@@ -586,43 +602,36 @@ func handleCache(f *ferry.Ferry, args []string) {
 }
 
 func handleCacheIterate(ctx context.Context, cc ferry.CacheController[string], args []string) {
-	if len(args) < 2 {
-		logger.Error("cache iterate: requires <type (prefix)> <value> [offset] [limit]")
+	if len(args) < 1 {
+		logger.Error("cache iterate: requires <prefix> [offset] [limit]")
 		printUsage()
 		os.Exit(1)
 	}
-	iterType := args[0]
-	value := args[1]
+	prefix := args[0]
 	offset, limit := 0, 100
 
 	var err error
+	if len(args) > 1 {
+		offset, err = strconv.Atoi(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[1], err)
+			os.Exit(1)
+		}
+	}
 	if len(args) > 2 {
-		offset, err = strconv.Atoi(args[2])
+		limit, err = strconv.Atoi(args[2])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[2], err)
-			os.Exit(1)
-		}
-	}
-	if len(args) > 3 {
-		limit, err = strconv.Atoi(args[3])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[3], err)
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[2], err)
 			os.Exit(1)
 		}
 	}
 
-	if iterType != "prefix" {
-		logger.Error("cache iterate: unknown type", "type", iterType)
-		printUsage()
-		os.Exit(1)
-	}
-
-	results, err := cc.IterateByPrefix(ctx, value, offset, limit)
+	results, err := cc.IterateByPrefix(ctx, prefix, offset, limit)
 	if err != nil {
 		if err == ferry.ErrKeyNotFound {
 			color.HiRed("No keys found in cache.")
 		} else {
-			logger.Error("Cache iterate failed", "type", iterType, "value", value, "error", err)
+			logger.Error("Cache iterate failed", "prefix", prefix, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
 		}
 		os.Exit(1)
@@ -744,5 +753,166 @@ func handleEvents(f *ferry.Ferry, args []string) {
 		logger.Error("events: unknown sub-command", "sub_command", subCommand)
 		printUsage()
 		os.Exit(1)
+	}
+}
+
+func handleBlob(f *ferry.Ferry, args []string) {
+	if len(args) < 1 {
+		logger.Error("blob: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	bc := ferry.GetBlobController(f)
+
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "upload":
+		if len(subArgs) != 2 {
+			logger.Error("blob upload: requires <key> <file>")
+			printUsage()
+			os.Exit(1)
+		}
+		key := subArgs[0]
+		filePath := subArgs[1]
+
+		// Open the file
+		file, err := os.Open(filePath)
+		if err != nil {
+			logger.Error("Failed to open file", "file", filePath, "error", err)
+			fmt.Fprintf(os.Stderr, "%s Failed to open file: %v\n", color.RedString("Error:"), err)
+			os.Exit(1)
+		}
+		defer file.Close()
+
+		// Get file info for the filename
+		fileInfo, err := file.Stat()
+		if err != nil {
+			logger.Error("Failed to stat file", "file", filePath, "error", err)
+			fmt.Fprintf(os.Stderr, "%s Failed to stat file: %v\n", color.RedString("Error:"), err)
+			os.Exit(1)
+		}
+
+		err = bc.Upload(ctx, key, file, fileInfo.Name())
+		if err != nil {
+			logger.Error("Upload failed", "key", key, "file", filePath, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			os.Exit(1)
+		}
+		color.HiGreen("OK - Uploaded %s as blob key '%s'", filePath, key)
+
+	case "download":
+		if len(subArgs) < 1 || len(subArgs) > 2 {
+			logger.Error("blob download: requires <key> [output_file]")
+			printUsage()
+			os.Exit(1)
+		}
+		key := subArgs[0]
+
+		reader, err := bc.Download(ctx, key)
+		if err != nil {
+			if err == ferry.ErrKeyNotFound {
+				fmt.Fprintf(os.Stderr, "%s Blob key '%s' not found.\n", color.RedString("Error:"), color.CyanString(key))
+			} else {
+				logger.Error("Download failed", "key", key, "error", err)
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
+			os.Exit(1)
+		}
+		defer reader.Close()
+
+		// If output file is specified, write to file
+		if len(subArgs) == 2 {
+			outputPath := subArgs[1]
+			file, err := os.Create(outputPath)
+			if err != nil {
+				logger.Error("Failed to create output file", "file", outputPath, "error", err)
+				fmt.Fprintf(os.Stderr, "%s Failed to create output file: %v\n", color.RedString("Error:"), err)
+				os.Exit(1)
+			}
+			defer file.Close()
+
+			_, err = io.Copy(file, reader)
+			if err != nil {
+				logger.Error("Failed to write output file", "file", outputPath, "error", err)
+				fmt.Fprintf(os.Stderr, "%s Failed to write output file: %v\n", color.RedString("Error:"), err)
+				os.Exit(1)
+			}
+			color.HiGreen("OK - Downloaded blob key '%s' to %s", key, outputPath)
+		} else {
+			// Output to stdout
+			_, err = io.Copy(os.Stdout, reader)
+			if err != nil {
+				logger.Error("Failed to write to stdout", "error", err)
+				fmt.Fprintf(os.Stderr, "%s Failed to write to stdout: %v\n", color.RedString("Error:"), err)
+				os.Exit(1)
+			}
+		}
+
+	case "delete":
+		if len(subArgs) != 1 {
+			logger.Error("blob delete: requires <key>")
+			printUsage()
+			os.Exit(1)
+		}
+		key := subArgs[0]
+		err := bc.Delete(ctx, key)
+		if err != nil {
+			logger.Error("Delete failed", "key", key, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			os.Exit(1)
+		}
+		color.HiGreen("OK - Deleted blob key '%s'", key)
+
+	case "iterate":
+		handleBlobIterate(ctx, bc, subArgs)
+
+	default:
+		logger.Error("blob: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleBlobIterate(ctx context.Context, bc ferry.BlobController, args []string) {
+	if len(args) < 1 {
+		logger.Error("blob iterate: requires <prefix> [offset] [limit]")
+		printUsage()
+		os.Exit(1)
+	}
+	prefix := args[0]
+	offset, limit := 0, 100
+
+	var err error
+	if len(args) > 1 {
+		offset, err = strconv.Atoi(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[1], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 2 {
+		limit, err = strconv.Atoi(args[2])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[2], err)
+			os.Exit(1)
+		}
+	}
+
+	results, err := bc.IterateByPrefix(ctx, prefix, offset, limit)
+	if err != nil {
+		if err == ferry.ErrKeyNotFound {
+			color.HiRed("No blob keys found.")
+		} else {
+			logger.Error("Iterate failed", "prefix", prefix, "error", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		}
+		os.Exit(1)
+	}
+	for _, item := range results {
+		fmt.Println(item)
 	}
 }
