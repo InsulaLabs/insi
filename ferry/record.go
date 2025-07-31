@@ -14,47 +14,20 @@ import (
 	"time"
 )
 
-// RecordManager handles structured records stored as individual fields in KV backend
 type RecordManager interface {
-	// Register a record type with a name
 	Register(recordType string, example interface{}) error
-
-	// Create a new instance of a registered record type
 	NewInstance(ctx context.Context, recordType, instanceName string, data interface{}) error
-
-	// Get an entire record
 	GetRecord(ctx context.Context, recordType, instanceName string) (interface{}, error)
-
-	// Get a specific field from a record
 	GetRecordField(ctx context.Context, recordType, instanceName, fieldName string) (interface{}, error)
-
-	// Update an entire record
 	SetRecord(ctx context.Context, recordType, instanceName string, data interface{}) error
-
-	// SetRecordIfMatch updates a record only if it matches the expected state
-	// Uses Compare-And-Swap to prevent race conditions
 	SetRecordIfMatch(ctx context.Context, recordType, instanceName string, expected, data interface{}) error
-
-	// Update a specific field in a record
 	SetRecordField(ctx context.Context, recordType, instanceName, fieldName string, value interface{}) error
-
-	// Delete an entire record
 	DeleteRecord(ctx context.Context, recordType, instanceName string) error
-
-	// Sync methods for reading from backend
 	SyncRecord(ctx context.Context, recordType, instanceName string) (interface{}, error)
 	SyncRecordField(ctx context.Context, recordType, instanceName, fieldName string) (interface{}, error)
-
-	// Upgrade all instances of a record type
 	UpgradeRecord(ctx context.Context, recordType string, upgrader interface{}) error
-
-	// List all instances of a record type
 	ListInstances(ctx context.Context, recordType string, offset, limit int) ([]string, error)
-
-	// List all registered record types
 	ListRecordTypes(ctx context.Context) ([]string, error)
-
-	// List all instances across all record types
 	ListAllInstances(ctx context.Context, offset, limit int) (map[string][]string, error)
 
 	// CleanupOldFields removes fields that are no longer in the record type definition
@@ -77,24 +50,20 @@ type recordManagerImpl struct {
 	cacheCtrl CacheController[string]
 }
 
-// RecordManagerOption configures the RecordManager
 type RecordManagerOption func(*recordManagerImpl)
 
-// WithCache uses cache backend instead of value backend
 func WithCache() RecordManagerOption {
 	return func(rm *recordManagerImpl) {
 		rm.useCache = true
 	}
 }
 
-// WithProduction sets production mode
 func WithProduction() RecordManagerOption {
 	return func(rm *recordManagerImpl) {
 		rm.inProd = true
 	}
 }
 
-// NewRecordManager creates a new record manager
 func NewRecordManager(ferry *Ferry, logger *slog.Logger, opts ...RecordManagerOption) RecordManager {
 	rm := &recordManagerImpl{
 		ferry:    ferry,
@@ -104,16 +73,13 @@ func NewRecordManager(ferry *Ferry, logger *slog.Logger, opts ...RecordManagerOp
 		useCache: false,
 	}
 
-	// Apply options
 	for _, opt := range opts {
 		opt(rm)
 	}
 
-	// Initialize controllers
 	rm.valueCtrl = GetValueController(ferry, "")
 	rm.cacheCtrl = GetCacheController(ferry, "")
 
-	// Set up the base scope with records prefix
 	scope := "dev"
 	if rm.inProd {
 		scope = "prod"
@@ -163,7 +129,6 @@ func (rm *recordManagerImpl) Register(recordType string, example interface{}) er
 				return fmt.Errorf("field name %q is reserved and cannot be used", field.Name)
 			}
 
-			// Also check for fields that could cause parsing issues
 			if strings.Contains(field.Name, ":") {
 				return fmt.Errorf("field name %q cannot contain colons (:)", field.Name)
 			}
@@ -190,17 +155,14 @@ func (rm *recordManagerImpl) buildKey(recordType, instanceName, fieldName string
 	return strings.Join(parts, ":")
 }
 
-// buildIndexKey creates a key for the instance index
 func (rm *recordManagerImpl) buildIndexKey(recordType, instanceName string) string {
 	return fmt.Sprintf("%s:%s:__meta__", recordType, instanceName)
 }
 
-// buildInstanceIndexKey creates a key for the instance index
 func (rm *recordManagerImpl) buildInstanceIndexKey(recordType, instanceName string) string {
 	return fmt.Sprintf("__instances__:%s:%s", recordType, instanceName)
 }
 
-// addToInstanceIndex adds an instance to the index
 func (rm *recordManagerImpl) addToInstanceIndex(ctx context.Context, recordType, instanceName string) error {
 	indexKey := rm.buildInstanceIndexKey(recordType, instanceName)
 
@@ -214,7 +176,6 @@ func (rm *recordManagerImpl) addToInstanceIndex(ctx context.Context, recordType,
 	return rm.valueCtrl.Set(ctx, indexKey, value)
 }
 
-// removeFromInstanceIndex removes an instance from the index
 func (rm *recordManagerImpl) removeFromInstanceIndex(ctx context.Context, recordType, instanceName string) error {
 	indexKey := rm.buildInstanceIndexKey(recordType, instanceName)
 
@@ -225,7 +186,6 @@ func (rm *recordManagerImpl) removeFromInstanceIndex(ctx context.Context, record
 }
 
 func (rm *recordManagerImpl) NewInstance(ctx context.Context, recordType, instanceName string, data interface{}) error {
-	// FIX: Validate instance name to prevent key parsing issues
 	if instanceName == "" {
 		return errors.New("instance name cannot be empty")
 	}
@@ -241,7 +201,6 @@ func (rm *recordManagerImpl) NewInstance(ctx context.Context, recordType, instan
 		return fmt.Errorf("record type %s not registered", recordType)
 	}
 
-	// Validate that the data matches the registered type
 	dataType := reflect.TypeOf(data)
 	if dataType.Kind() == reflect.Ptr {
 		dataType = dataType.Elem()
@@ -251,31 +210,25 @@ func (rm *recordManagerImpl) NewInstance(ctx context.Context, recordType, instan
 		return fmt.Errorf("data type %s does not match registered type %s", dataType.Name(), registeredType.Name())
 	}
 
-	// Compute checksum for the new record
 	checksum, err := rm.computeRecordChecksum(data)
 	if err != nil {
 		return fmt.Errorf("failed to compute record checksum: %w", err)
 	}
 
-	// Try to create the instance atomically using SetNX on the metadata key
 	indexKey := rm.buildIndexKey(recordType, instanceName)
 	var setNXErr error
 
 	if rm.useCache {
-		// For cache, we need to check if key exists first since we might not have SetNX
 		existing, getErr := rm.cacheCtrl.Get(ctx, indexKey)
 		if getErr == nil && existing != "" {
 			return fmt.Errorf("instance %s already exists", instanceName)
 		}
-		// If key doesn't exist, set it
 		setNXErr = rm.cacheCtrl.Set(ctx, indexKey, checksum)
 	} else {
-		// For value store, try to use SetNX if available, otherwise check+set
 		existing, getErr := rm.valueCtrl.Get(ctx, indexKey)
 		if getErr == nil && existing != "" {
 			return fmt.Errorf("instance %s already exists", instanceName)
 		}
-		// If key doesn't exist, set it
 		setNXErr = rm.valueCtrl.Set(ctx, indexKey, checksum)
 	}
 
@@ -283,15 +236,20 @@ func (rm *recordManagerImpl) NewInstance(ctx context.Context, recordType, instan
 		return fmt.Errorf("failed to create instance: %w", setNXErr)
 	}
 
-	// Now store all the fields
 	if err := rm.storeRecordFields(ctx, recordType, instanceName, data); err != nil {
-		// Cleanup the metadata key on failure
 		if rm.useCache {
 			_ = rm.cacheCtrl.Delete(ctx, indexKey)
 		} else {
 			_ = rm.valueCtrl.Delete(ctx, indexKey)
 		}
 		return fmt.Errorf("failed to store record fields: %w", err)
+	}
+
+	if err := rm.addToInstanceIndex(ctx, recordType, instanceName); err != nil {
+		rm.logger.Warn("Failed to add to instance index",
+			"type", recordType,
+			"instance", instanceName,
+			"error", err)
 	}
 
 	return nil
@@ -403,7 +361,6 @@ func (rm *recordManagerImpl) SetRecord(ctx context.Context, recordType, instance
 		return fmt.Errorf("record type %s not registered", recordType)
 	}
 
-	// Validate that the data matches the registered type
 	dataType := reflect.TypeOf(data)
 	if dataType.Kind() == reflect.Ptr {
 		dataType = dataType.Elem()
@@ -507,6 +464,14 @@ func (rm *recordManagerImpl) SetRecord(ctx context.Context, recordType, instance
 		return err
 	}
 
+	// Ensure instance is in the index (important for records created via SetRecord)
+	if err := rm.addToInstanceIndex(ctx, recordType, instanceName); err != nil {
+		rm.logger.Warn("Failed to add to instance index",
+			"type", recordType,
+			"instance", instanceName,
+			"error", err)
+	}
+
 	return nil
 }
 
@@ -519,7 +484,6 @@ func (rm *recordManagerImpl) SetRecordIfMatch(ctx context.Context, recordType, i
 		return fmt.Errorf("record type %s not registered", recordType)
 	}
 
-	// Validate that the data matches the registered type
 	dataType := reflect.TypeOf(data)
 	if dataType.Kind() == reflect.Ptr {
 		dataType = dataType.Elem()
@@ -529,25 +493,18 @@ func (rm *recordManagerImpl) SetRecordIfMatch(ctx context.Context, recordType, i
 		return fmt.Errorf("data type %s does not match registered type %s", dataType.Name(), registeredType.Name())
 	}
 
-	// FIXED: Use atomic CompareAndSwap on a version key
-	// We'll use the __meta__ key to store a version/checksum
-
-	// First, compute a checksum of the expected record
 	expectedChecksum, err := rm.computeRecordChecksum(expected)
 	if err != nil {
 		return fmt.Errorf("failed to compute expected checksum: %w", err)
 	}
 
-	// Compute checksum of the new data
 	newChecksum, err := rm.computeRecordChecksum(data)
 	if err != nil {
 		return fmt.Errorf("failed to compute new checksum: %w", err)
 	}
 
-	// Get the metadata key that we'll use for atomic CAS
 	metaKey := rm.buildIndexKey(recordType, instanceName)
 
-	// Attempt atomic compare-and-swap on the metadata key
 	var casErr error
 	if rm.useCache {
 		casErr = rm.cacheCtrl.CompareAndSwap(ctx, metaKey, expectedChecksum, newChecksum)
@@ -557,17 +514,13 @@ func (rm *recordManagerImpl) SetRecordIfMatch(ctx context.Context, recordType, i
 
 	if casErr != nil {
 		if errors.Is(casErr, ErrConflict) {
-			// The record has been modified since we read it
 			rm.logger.Warn("SetRecordIfMatch failed: record was modified", "type", recordType, "instance", instanceName)
 			return ErrCASFailed
 		}
 		return fmt.Errorf("failed to perform atomic CAS: %w", casErr)
 	}
 
-	// CAS succeeded, now we can safely update all fields
-	// If any field update fails, we need to restore the old checksum
 	if err := rm.storeRecordFields(ctx, recordType, instanceName, data); err != nil {
-		// Rollback: restore the old checksum
 		rm.logger.Error("Failed to store record fields, rolling back", "error", err)
 
 		var rollbackErr error
@@ -589,20 +542,16 @@ func (rm *recordManagerImpl) SetRecordIfMatch(ctx context.Context, recordType, i
 	return nil
 }
 
-// computeRecordChecksum generates a deterministic checksum for a record
 func (rm *recordManagerImpl) computeRecordChecksum(data interface{}) (string, error) {
-	// Use JSON marshaling to get a consistent representation
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal record for checksum: %w", err)
 	}
 
-	// Use SHA256 for a proper hash
 	hash := sha256.Sum256(jsonBytes)
 	return hex.EncodeToString(hash[:]), nil
 }
 
-// storeRecordFields stores just the fields, not the metadata
 func (rm *recordManagerImpl) storeRecordFields(ctx context.Context, recordType, instanceName string, data interface{}) error {
 	val := reflect.ValueOf(data)
 	if val.Kind() == reflect.Ptr {
@@ -615,14 +564,12 @@ func (rm *recordManagerImpl) storeRecordFields(ctx context.Context, recordType, 
 		field := typ.Field(i)
 		fieldValue := val.Field(i)
 
-		// Skip unexported fields
 		if !field.IsExported() {
 			continue
 		}
 
 		key := rm.buildKey(recordType, instanceName, field.Name)
 
-		// Convert field value to string
 		var valueStr string
 		switch fieldValue.Kind() {
 		case reflect.String:
@@ -636,12 +583,10 @@ func (rm *recordManagerImpl) storeRecordFields(ctx context.Context, recordType, 
 		case reflect.Bool:
 			valueStr = fmt.Sprintf("%t", fieldValue.Bool())
 		case reflect.Struct:
-			// Special handling for time.Time
 			if fieldValue.Type() == reflect.TypeOf(time.Time{}) {
 				t := fieldValue.Interface().(time.Time)
 				valueStr = t.Format(time.RFC3339)
 			} else {
-				// For other structs, use JSON encoding
 				data, err := json.Marshal(fieldValue.Interface())
 				if err != nil {
 					return fmt.Errorf("failed to marshal field %s: %w", field.Name, err)
@@ -649,7 +594,6 @@ func (rm *recordManagerImpl) storeRecordFields(ctx context.Context, recordType, 
 				valueStr = string(data)
 			}
 		default:
-			// For complex types, use JSON encoding
 			data, err := json.Marshal(fieldValue.Interface())
 			if err != nil {
 				return fmt.Errorf("failed to marshal field %s: %w", field.Name, err)
@@ -657,7 +601,6 @@ func (rm *recordManagerImpl) storeRecordFields(ctx context.Context, recordType, 
 			valueStr = string(data)
 		}
 
-		// Store the field
 		var err error
 		if rm.useCache {
 			err = rm.cacheCtrl.Set(ctx, key, valueStr)
@@ -682,13 +625,11 @@ func (rm *recordManagerImpl) SetRecordField(ctx context.Context, recordType, ins
 		return fmt.Errorf("record type %s not registered", recordType)
 	}
 
-	// Find the field
 	field, found := registeredType.FieldByName(fieldName)
 	if !found {
 		return fmt.Errorf("field %s not found in record type %s", fieldName, recordType)
 	}
 
-	// Validate type compatibility
 	valueType := reflect.TypeOf(value)
 	if !valueType.AssignableTo(field.Type) {
 		return fmt.Errorf("value type %s is not assignable to field type %s", valueType, field.Type)
@@ -696,7 +637,6 @@ func (rm *recordManagerImpl) SetRecordField(ctx context.Context, recordType, ins
 
 	key := rm.buildKey(recordType, instanceName, fieldName)
 
-	// Convert value to string
 	var valueStr string
 	switch v := value.(type) {
 	case string:
@@ -726,7 +666,6 @@ func (rm *recordManagerImpl) DeleteRecord(ctx context.Context, recordType, insta
 		return fmt.Errorf("record type %s not registered", recordType)
 	}
 
-	// Delete the instance index metadata
 	indexKey := rm.buildIndexKey(recordType, instanceName)
 	var indexErr error
 	if rm.useCache {
@@ -738,11 +677,33 @@ func (rm *recordManagerImpl) DeleteRecord(ctx context.Context, recordType, insta
 		return fmt.Errorf("failed to delete instance index: %w", indexErr)
 	}
 
-	// Delete each field
+	if err := rm.removeFromInstanceIndex(ctx, recordType, instanceName); err != nil && !errors.Is(err, ErrKeyNotFound) {
+		rm.logger.Warn("Failed to remove from instance index",
+			"type", recordType,
+			"instance", instanceName,
+			"error", err)
+	}
+
+	upgradeStatusKey := fmt.Sprintf("%s:%s:__upgrade_status__", recordType, instanceName)
+	if rm.useCache {
+		if err := rm.cacheCtrl.Delete(ctx, upgradeStatusKey); err != nil && !errors.Is(err, ErrKeyNotFound) {
+			rm.logger.Warn("Failed to delete upgrade status",
+				"type", recordType,
+				"instance", instanceName,
+				"error", err)
+		}
+	} else {
+		if err := rm.valueCtrl.Delete(ctx, upgradeStatusKey); err != nil && !errors.Is(err, ErrKeyNotFound) {
+			rm.logger.Warn("Failed to delete upgrade status",
+				"type", recordType,
+				"instance", instanceName,
+				"error", err)
+		}
+	}
+
 	for i := 0; i < registeredType.NumField(); i++ {
 		field := registeredType.Field(i)
 
-		// Skip unexported fields
 		if !field.IsExported() {
 			continue
 		}
@@ -773,12 +734,47 @@ func (rm *recordManagerImpl) ListInstances(ctx context.Context, recordType strin
 		return nil, fmt.Errorf("record type %s not registered", recordType)
 	}
 
-	// FIX: Use instance index for efficient listing
-	// Look for metadata keys instead of iterating all fields
+	indexPrefix := fmt.Sprintf("__instances__:%s:", recordType)
+
+	var keys []string
+	var err error
+
+	if rm.useCache {
+		keys, err = rm.cacheCtrl.IterateByPrefix(ctx, indexPrefix, offset, limit)
+	} else {
+		keys, err = rm.valueCtrl.IterateByPrefix(ctx, indexPrefix, offset, limit)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to iterate instance index: %w", err)
+	}
+
+	instances := make([]string, 0, len(keys))
+	for _, key := range keys {
+		instanceName := strings.TrimPrefix(key, indexPrefix)
+		instances = append(instances, instanceName)
+	}
+
+	if len(instances) < limit && len(keys) < limit {
+		rm.logger.Info("Instance index incomplete, falling back to metadata scan",
+			"type", recordType,
+			"indexCount", len(instances),
+			"requested", limit)
+
+		additionalInstances, err := rm.listInstancesFallback(ctx, recordType, offset+len(instances), limit-len(instances))
+		if err != nil {
+			return instances, nil
+		}
+
+		instances = append(instances, additionalInstances...)
+	}
+
+	return instances, nil
+}
+
+func (rm *recordManagerImpl) listInstancesFallback(ctx context.Context, recordType string, offset, limit int) ([]string, error) {
 	prefix := recordType + ":"
 
-	// We need to get more keys than requested because we'll filter for metadata keys
-	// Get keys in batches until we have enough metadata keys
 	const batchSize = 100
 	instances := make([]string, 0)
 	keyOffset := 0
@@ -797,12 +793,10 @@ func (rm *recordManagerImpl) ListInstances(ctx context.Context, recordType strin
 			return nil, err
 		}
 
-		// No more keys available
 		if len(keys) == 0 {
 			break
 		}
 
-		// Extract metadata keys
 		for _, key := range keys {
 			if strings.HasSuffix(key, ":__meta__") {
 				trimmed := strings.TrimPrefix(key, prefix)
@@ -813,13 +807,11 @@ func (rm *recordManagerImpl) ListInstances(ctx context.Context, recordType strin
 
 		keyOffset += len(keys)
 
-		// If we got less than batchSize, we've reached the end
 		if len(keys) < batchSize {
 			break
 		}
 	}
 
-	// Apply offset and limit to the filtered instances
 	start := offset
 	if start > len(instances) {
 		start = len(instances)
@@ -833,7 +825,6 @@ func (rm *recordManagerImpl) ListInstances(ctx context.Context, recordType strin
 }
 
 func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType string, upgrader interface{}) error {
-	// Validate upgrader function
 	upgraderType := reflect.TypeOf(upgrader)
 	if upgraderType.Kind() != reflect.Func {
 		return errors.New("upgrader must be a function")
@@ -849,7 +840,6 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 
 	upgraderValue := reflect.ValueOf(upgrader)
 
-	// Implement proper pagination to handle large datasets
 	const batchSize = 100
 	const maxRollbackBatch = 10 // Limit rollback to prevent memory issues
 	offset := 0
@@ -857,7 +847,6 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 	totalFailed := 0
 	totalSkipped := 0
 
-	// Track recent successful upgrades for limited rollback
 	type upgradeRecord struct {
 		instanceName string
 		oldData      interface{}
@@ -867,25 +856,20 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 	recentUpgrades := make([]upgradeRecord, 0, maxRollbackBatch)
 
 	for {
-		// Get batch of instances
 		instances, err := rm.ListInstances(ctx, recordType, offset, batchSize)
 		if err != nil {
 			return fmt.Errorf("failed to list instances at offset %d: %w", offset, err)
 		}
 
-		// If no more instances, we're done
 		if len(instances) == 0 {
 			break
 		}
 
-		// Process this batch
 		for _, instanceName := range instances {
-			// Check if this instance was already upgraded (for resumability)
 			status, _, err := rm.getUpgradeStatus(ctx, recordType, instanceName)
 			if err != nil {
-				rm.logger.Error("Failed to get upgrade status", "instance", instanceName, "error", err)
-				totalFailed++
-				continue
+				rm.logger.Debug("Failed to get upgrade status, assuming not upgraded", "instance", instanceName, "error", err)
+				status = upgradeStatusPending
 			}
 
 			if status == upgradeStatusCompleted {
@@ -894,7 +878,6 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 				continue
 			}
 
-			// Get the current record
 			oldRecord, err := rm.GetRecord(ctx, recordType, instanceName)
 			if err != nil {
 				rm.logger.Error("Failed to get record for upgrade", "type", recordType, "instance", instanceName, "error", err)
@@ -902,7 +885,6 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 				continue
 			}
 
-			// Get current checksum
 			metaKey := rm.buildIndexKey(recordType, instanceName)
 			var oldChecksum string
 			if rm.useCache {
@@ -911,7 +893,6 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 				oldChecksum, _ = rm.valueCtrl.Get(ctx, metaKey)
 			}
 
-			// Mark as in progress
 			if err := rm.setUpgradeStatus(ctx, recordType, instanceName, upgradeStatusInProgress, oldChecksum); err != nil {
 				rm.logger.Warn("Failed to set upgrade status", "instance", instanceName, "error", err)
 			}
@@ -1003,9 +984,15 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 				continue
 			}
 
-			// Mark as completed
 			if err := rm.setUpgradeStatus(ctx, recordType, instanceName, upgradeStatusCompleted, newChecksum); err != nil {
 				rm.logger.Warn("Failed to mark upgrade as completed", "instance", instanceName, "error", err)
+			}
+
+			if err := rm.addToInstanceIndex(ctx, recordType, instanceName); err != nil {
+				rm.logger.Warn("Failed to add to instance index during upgrade",
+					"type", recordType,
+					"instance", instanceName,
+					"error", err)
 			}
 
 			// Track in recent upgrades (sliding window)
@@ -1024,10 +1011,8 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 			totalUpgraded++
 		}
 
-		// Move to next batch
 		offset += len(instances)
 
-		// Log progress
 		if totalUpgraded%1000 == 0 && totalUpgraded > 0 {
 			rm.logger.Info("Upgrade progress",
 				"type", recordType,
@@ -1061,14 +1046,11 @@ func (rm *recordManagerImpl) ListRecordTypes(ctx context.Context) ([]string, err
 func (rm *recordManagerImpl) ListAllInstances(ctx context.Context, offset, limit int) (map[string][]string, error) {
 	result := make(map[string][]string)
 
-	// Get all record types
 	recordTypes, err := rm.ListRecordTypes(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// FIX: Implement proper pagination across record types
-	// We need to track global position across all record types
 	globalPosition := 0
 	itemsCollected := 0
 
@@ -1140,7 +1122,6 @@ func (rm *recordManagerImpl) CleanupOldFields(ctx context.Context, recordType, i
 		return fmt.Errorf("record type %s not registered", recordType)
 	}
 
-	// Build a set of valid field names from the registered type
 	validFields := make(map[string]bool)
 	for i := 0; i < registeredType.NumField(); i++ {
 		field := registeredType.Field(i)
@@ -1149,10 +1130,8 @@ func (rm *recordManagerImpl) CleanupOldFields(ctx context.Context, recordType, i
 		}
 	}
 
-	// Always keep the metadata key
 	validFields["__meta__"] = true
 
-	// Get all keys for this instance
 	prefix := rm.buildKey(recordType, instanceName, "")
 
 	var keys []string
@@ -1167,10 +1146,8 @@ func (rm *recordManagerImpl) CleanupOldFields(ctx context.Context, recordType, i
 		return fmt.Errorf("failed to list keys for cleanup: %w", err)
 	}
 
-	// Check each key and delete if the field is not valid
 	deletedCount := 0
 	for _, key := range keys {
-		// Extract field name from key
 		parts := strings.Split(key, ":")
 		if len(parts) < 3 {
 			continue
@@ -1178,7 +1155,6 @@ func (rm *recordManagerImpl) CleanupOldFields(ctx context.Context, recordType, i
 
 		fieldName := parts[len(parts)-1]
 
-		// If field is not in valid set, delete it
 		if !validFields[fieldName] {
 			rm.logger.Info("Cleaning up orphaned field", "type", recordType, "instance", instanceName, "field", fieldName)
 
@@ -1300,7 +1276,6 @@ func (rm *recordManagerImpl) setFieldValue(fieldValue reflect.Value, fieldType r
 	return nil
 }
 
-// upgradeStatus represents the status of a record upgrade
 type upgradeStatus string
 
 const (
@@ -1310,7 +1285,6 @@ const (
 	upgradeStatusFailed     upgradeStatus = "failed"
 )
 
-// getUpgradeStatus retrieves the upgrade status for a specific instance
 func (rm *recordManagerImpl) getUpgradeStatus(ctx context.Context, recordType, instanceName string) (upgradeStatus, string, error) {
 	statusKey := fmt.Sprintf("%s:%s:__upgrade_status__", recordType, instanceName)
 
@@ -1338,7 +1312,6 @@ func (rm *recordManagerImpl) getUpgradeStatus(ctx context.Context, recordType, i
 	return upgradeStatus(parts[0]), parts[1], nil
 }
 
-// setUpgradeStatus sets the upgrade status for a specific instance
 func (rm *recordManagerImpl) setUpgradeStatus(ctx context.Context, recordType, instanceName string, status upgradeStatus, checksum string) error {
 	statusKey := fmt.Sprintf("%s:%s:__upgrade_status__", recordType, instanceName)
 	statusValue := fmt.Sprintf("%s:%s", status, checksum)
@@ -1349,9 +1322,7 @@ func (rm *recordManagerImpl) setUpgradeStatus(ctx context.Context, recordType, i
 	return rm.valueCtrl.Set(ctx, statusKey, statusValue)
 }
 
-// safeRollbackRecord attempts to rollback a record only if it hasn't been modified since upgrade
 func (rm *recordManagerImpl) safeRollbackRecord(ctx context.Context, recordType, instanceName string, oldData interface{}, expectedChecksum string) error {
-	// First check if the record still has the checksum we expect
 	metaKey := rm.buildIndexKey(recordType, instanceName)
 
 	var currentChecksum string
@@ -1366,7 +1337,6 @@ func (rm *recordManagerImpl) safeRollbackRecord(ctx context.Context, recordType,
 		return fmt.Errorf("failed to get current checksum for rollback: %w", err)
 	}
 
-	// If checksum doesn't match, record was modified - skip rollback
 	if currentChecksum != expectedChecksum {
 		rm.logger.Warn("Skipping rollback - record was modified after upgrade",
 			"type", recordType,
@@ -1376,13 +1346,11 @@ func (rm *recordManagerImpl) safeRollbackRecord(ctx context.Context, recordType,
 		return fmt.Errorf("record was modified after upgrade, cannot rollback")
 	}
 
-	// Compute the checksum of the old data
 	oldChecksum, err := rm.computeRecordChecksum(oldData)
 	if err != nil {
 		return fmt.Errorf("failed to compute old data checksum: %w", err)
 	}
 
-	// Use atomic CAS to rollback
 	var casErr error
 	if rm.useCache {
 		casErr = rm.cacheCtrl.CompareAndSwap(ctx, metaKey, expectedChecksum, oldChecksum)
@@ -1397,9 +1365,7 @@ func (rm *recordManagerImpl) safeRollbackRecord(ctx context.Context, recordType,
 		return fmt.Errorf("failed to rollback checksum: %w", casErr)
 	}
 
-	// Now restore the old fields
 	if err := rm.storeRecordFields(ctx, recordType, instanceName, oldData); err != nil {
-		// Try to restore the new checksum if field restore fails
 		if rm.useCache {
 			_ = rm.cacheCtrl.CompareAndSwap(ctx, metaKey, oldChecksum, expectedChecksum)
 		} else {
@@ -1407,6 +1373,66 @@ func (rm *recordManagerImpl) safeRollbackRecord(ctx context.Context, recordType,
 		}
 		return fmt.Errorf("failed to restore old fields: %w", err)
 	}
+
+	return nil
+}
+
+func (rm *recordManagerImpl) RebuildInstanceIndex(ctx context.Context, recordType string) error {
+	rm.registryMu.RLock()
+	_, exists := rm.registry[recordType]
+	rm.registryMu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("record type %s not registered", recordType)
+	}
+
+	rm.logger.Info("Starting instance index rebuild", "type", recordType)
+
+	const batchSize = 100
+	offset := 0
+	totalIndexed := 0
+	totalFailed := 0
+
+	for {
+		instances, err := rm.listInstancesFallback(ctx, recordType, offset, batchSize)
+		if err != nil {
+			return fmt.Errorf("failed to list instances for rebuild: %w", err)
+		}
+
+		if len(instances) == 0 {
+			break
+		}
+
+		for _, instanceName := range instances {
+			if err := rm.addToInstanceIndex(ctx, recordType, instanceName); err != nil {
+				rm.logger.Error("Failed to add instance to index during rebuild",
+					"type", recordType,
+					"instance", instanceName,
+					"error", err)
+				totalFailed++
+			} else {
+				totalIndexed++
+			}
+		}
+
+		offset += len(instances)
+
+		if totalIndexed%1000 == 0 && totalIndexed > 0 {
+			rm.logger.Info("Instance index rebuild progress",
+				"type", recordType,
+				"indexed", totalIndexed,
+				"failed", totalFailed)
+		}
+
+		if len(instances) < batchSize {
+			break
+		}
+	}
+
+	rm.logger.Info("Instance index rebuild completed",
+		"type", recordType,
+		"totalIndexed", totalIndexed,
+		"totalFailed", totalFailed)
 
 	return nil
 }

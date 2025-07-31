@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -68,6 +70,9 @@ func (m *mockClient) IterateByPrefix(prefix string, offset, limit int) ([]string
 		}
 	}
 
+	// Sort keys for consistent pagination
+	sort.Strings(keys)
+
 	// Apply offset and limit
 	start := offset
 	if start > len(keys) {
@@ -117,6 +122,9 @@ func (m *mockClient) IterateCacheByPrefix(prefix string, offset, limit int) ([]s
 			keys = append(keys, k)
 		}
 	}
+
+	// Sort keys for consistent pagination
+	sort.Strings(keys)
 
 	// Apply offset and limit
 	start := offset
@@ -522,11 +530,24 @@ func TestRecordManager_DeleteRecord(t *testing.T) {
 		"dev:records:testRecord:deleteTest:ID",
 		"dev:records:testRecord:deleteTest:Name",
 		"dev:records:testRecord:deleteTest:Age",
+		// Also check instance index
+		"dev:records:__instances__:testRecord:deleteTest",
 	}
 
 	for _, key := range keys {
 		if _, exists := mockC.data[key]; exists {
 			t.Errorf("Key %s should have been deleted", key)
+		}
+	}
+
+	// Verify it doesn't appear in listing
+	instances, err := rm.ListInstances(ctx, "testRecord", 0, 10)
+	if err != nil {
+		t.Fatalf("Failed to list instances: %v", err)
+	}
+	for _, inst := range instances {
+		if inst == "deleteTest" {
+			t.Error("Deleted instance still appears in listing")
 		}
 	}
 }
@@ -620,11 +641,13 @@ func TestRecordManager_UpgradeRecord(t *testing.T) {
 
 	// Upgrade function
 	upgrader := func(old OldRecord) (NewRecord, error) {
-		return NewRecord{
+		newRec := NewRecord{
 			Name:      old.Name,
 			Age:       old.Age,
 			UpdatedAt: time.Now(),
-		}, nil
+		}
+		t.Logf("Upgrader creating: Name=%s, Age=%d, UpdatedAt=%v", newRec.Name, newRec.Age, newRec.UpdatedAt)
+		return newRec, nil
 	}
 
 	// Perform upgrade
@@ -638,6 +661,16 @@ func TestRecordManager_UpgradeRecord(t *testing.T) {
 
 	// Verify upgrades
 	for i := 0; i < 3; i++ {
+		// Debug: check what keys exist for this instance
+		instancePrefix := fmt.Sprintf("dev:records:upgradeable:user%d:", i)
+		var foundKeys []string
+		for k := range mockC.data {
+			if strings.HasPrefix(k, instancePrefix) {
+				foundKeys = append(foundKeys, k)
+			}
+		}
+		t.Logf("Keys for user%d: %v", i, foundKeys)
+
 		result, err := rm.GetRecord(ctx, "upgradeable", fmt.Sprintf("user%d", i))
 		if err != nil {
 			t.Fatalf("Failed to get upgraded record: %v", err)
@@ -1449,15 +1482,20 @@ func (m *mockCacheController) IterateByPrefix(ctx context.Context, prefix string
 		return nil, err
 	}
 
-	// Remove the prefix from returned keys
-	prefixLen := len(m.prefix) + 1
-	result := make([]string, len(keys))
-	for i, key := range keys {
-		if len(key) > prefixLen {
-			result[i] = key[prefixLen:]
-		}
+	// Sort keys for consistent pagination
+	sort.Strings(keys)
+
+	// Apply offset and limit
+	start := offset
+	if start > len(keys) {
+		start = len(keys)
 	}
-	return result, nil
+	end := start + limit
+	if end > len(keys) {
+		end = len(keys)
+	}
+
+	return keys[start:end], nil
 }
 
 type failingValueController struct {
@@ -1694,5 +1732,421 @@ func TestRecordManager_SafeRollback(t *testing.T) {
 	rolledRecord := rolled.(TestRecord)
 	if rolledRecord.Name != "Test User 2" || rolledRecord.Age != 40 {
 		t.Errorf("Record not rolled back correctly: got name=%s age=%d", rolledRecord.Name, rolledRecord.Age)
+	}
+}
+
+func TestRecordManager_EfficientListInstances(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register record type
+	rm.Register("product", SimpleRecord{})
+
+	// Test 1: Empty list
+	instances, err := rm.ListInstances(ctx, "product", 0, 10)
+	if err != nil {
+		t.Fatalf("Failed to list empty instances: %v", err)
+	}
+	if len(instances) != 0 {
+		t.Errorf("Expected 0 instances, got %d", len(instances))
+	}
+
+	// Test 2: Create instances and verify they appear in the index
+	for i := 0; i < 25; i++ {
+		record := SimpleRecord{
+			Name:  fmt.Sprintf("Product %d", i),
+			Value: i * 10,
+		}
+		err := rm.NewInstance(ctx, "product", fmt.Sprintf("prod_%03d", i), record)
+		if err != nil {
+			t.Fatalf("Failed to create instance %d: %v", i, err)
+		}
+	}
+
+	// Verify instance index keys were created
+	indexCount := 0
+	for key := range mockC.data {
+		if strings.HasPrefix(key, "dev:records:__instances__:product:") {
+			indexCount++
+		}
+	}
+	if indexCount != 25 {
+		t.Errorf("Expected 25 instance index entries, got %d", indexCount)
+	}
+
+	// Test 3: List all instances
+	instances, err = rm.ListInstances(ctx, "product", 0, 30)
+	if err != nil {
+		t.Fatalf("Failed to list all instances: %v", err)
+	}
+	if len(instances) != 25 {
+		t.Errorf("Expected 25 instances, got %d", len(instances))
+	}
+
+	// Test 4: Pagination
+	page1, err := rm.ListInstances(ctx, "product", 0, 10)
+	if err != nil {
+		t.Fatalf("Failed to list page 1: %v", err)
+	}
+	if len(page1) != 10 {
+		t.Errorf("Expected 10 instances in page 1, got %d", len(page1))
+	}
+
+	page2, err := rm.ListInstances(ctx, "product", 10, 10)
+	if err != nil {
+		t.Fatalf("Failed to list page 2: %v", err)
+	}
+	if len(page2) != 10 {
+		t.Errorf("Expected 10 instances in page 2, got %d", len(page2))
+	}
+
+	page3, err := rm.ListInstances(ctx, "product", 20, 10)
+	if err != nil {
+		t.Fatalf("Failed to list page 3: %v", err)
+	}
+	if len(page3) != 5 {
+		t.Errorf("Expected 5 instances in page 3, got %d", len(page3))
+	}
+
+	// Verify no overlap between pages
+	pageMap := make(map[string]bool)
+	for _, inst := range page1 {
+		pageMap[inst] = true
+	}
+	for _, inst := range page2 {
+		if pageMap[inst] {
+			t.Errorf("Instance %s appears in both page 1 and page 2", inst)
+		}
+		pageMap[inst] = true
+	}
+	for _, inst := range page3 {
+		if pageMap[inst] {
+			t.Errorf("Instance %s appears in multiple pages", inst)
+		}
+	}
+
+	// Test 5: Delete instance removes from index
+	err = rm.DeleteRecord(ctx, "product", "prod_010")
+	if err != nil {
+		t.Fatalf("Failed to delete record: %v", err)
+	}
+
+	// Verify index entry was removed
+	indexKey := "dev:records:__instances__:product:prod_010"
+	if _, exists := mockC.data[indexKey]; exists {
+		t.Error("Instance index entry should have been deleted")
+	}
+
+	// List should now show 24 instances
+	instances, err = rm.ListInstances(ctx, "product", 0, 30)
+	if err != nil {
+		t.Fatalf("Failed to list after delete: %v", err)
+	}
+	if len(instances) != 24 {
+		t.Errorf("Expected 24 instances after delete, got %d", len(instances))
+	}
+
+	// Test 6: Performance comparison (simulate)
+	// Count how many keys we iterate with new method vs old
+	iteratedKeys := 0
+	indexPrefix := "dev:records:__instances__:product:"
+	for key := range mockC.data {
+		if strings.HasPrefix(key, indexPrefix) {
+			iteratedKeys++
+		}
+	}
+
+	// With old method, we'd iterate all field keys
+	totalFieldKeys := 0
+	recordPrefix := "dev:records:product:"
+	for key := range mockC.data {
+		if strings.HasPrefix(key, recordPrefix) && !strings.HasPrefix(key, indexPrefix) {
+			totalFieldKeys++
+		}
+	}
+
+	t.Logf("Performance improvement: %d index keys vs %d total field keys (%.1fx improvement)",
+		iteratedKeys, totalFieldKeys, float64(totalFieldKeys)/float64(iteratedKeys))
+
+	if iteratedKeys >= totalFieldKeys {
+		t.Error("Index should have fewer keys than total fields")
+	}
+}
+
+func TestRecordManager_IndexMigration(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register record type
+	rm.Register("legacy", SimpleRecord{})
+
+	// Create records WITHOUT using NewInstance (simulating old records)
+	// Directly set the data to simulate pre-index records
+	for i := 0; i < 10; i++ {
+		instanceName := fmt.Sprintf("legacy_%d", i)
+
+		// Set metadata key (old style)
+		metaKey := fmt.Sprintf("dev:records:legacy:%s:__meta__", instanceName)
+		mockC.data[metaKey] = "old_checksum"
+
+		// Set fields
+		mockC.data[fmt.Sprintf("dev:records:legacy:%s:Name", instanceName)] = fmt.Sprintf("Legacy %d", i)
+		mockC.data[fmt.Sprintf("dev:records:legacy:%s:Value", instanceName)] = fmt.Sprintf("%d", i*5)
+	}
+
+	// Verify no index entries exist
+	indexCount := 0
+	for key := range mockC.data {
+		if strings.Contains(key, "__instances__") {
+			indexCount++
+		}
+	}
+	if indexCount != 0 {
+		t.Errorf("Expected 0 index entries for legacy records, got %d", indexCount)
+	}
+
+	// List should still work (using fallback)
+	instances, err := rm.ListInstances(ctx, "legacy", 0, 20)
+	if err != nil {
+		t.Fatalf("Failed to list legacy instances: %v", err)
+	}
+	if len(instances) != 10 {
+		t.Errorf("Expected 10 legacy instances, got %d", len(instances))
+	}
+
+	// Run index rebuild
+	err = rm.RebuildInstanceIndex(ctx, "legacy")
+	if err != nil {
+		t.Fatalf("Failed to rebuild index: %v", err)
+	}
+
+	// Verify index entries were created
+	indexCount = 0
+	for key := range mockC.data {
+		if strings.HasPrefix(key, "dev:records:__instances__:legacy:") {
+			indexCount++
+		}
+	}
+	if indexCount != 10 {
+		t.Errorf("Expected 10 index entries after rebuild, got %d", indexCount)
+	}
+
+	// List should now use the efficient index
+	instances, err = rm.ListInstances(ctx, "legacy", 0, 20)
+	if err != nil {
+		t.Fatalf("Failed to list after rebuild: %v", err)
+	}
+	if len(instances) != 10 {
+		t.Errorf("Expected 10 instances after rebuild, got %d", len(instances))
+	}
+}
+
+func TestRecordManager_MixedIndexState(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register record type
+	rm.Register("mixed", SimpleRecord{})
+
+	// Create some records with index
+	for i := 0; i < 5; i++ {
+		record := SimpleRecord{
+			Name:  fmt.Sprintf("Indexed %d", i),
+			Value: i,
+		}
+		rm.NewInstance(ctx, "mixed", fmt.Sprintf("indexed_%d", i), record)
+	}
+
+	// Create some records without index (simulate old records)
+	for i := 0; i < 5; i++ {
+		instanceName := fmt.Sprintf("old_%d", i)
+
+		// Set metadata key
+		metaKey := fmt.Sprintf("dev:records:mixed:%s:__meta__", instanceName)
+		mockC.data[metaKey] = "checksum"
+
+		// Set fields
+		mockC.data[fmt.Sprintf("dev:records:mixed:%s:Name", instanceName)] = fmt.Sprintf("Old %d", i)
+		mockC.data[fmt.Sprintf("dev:records:mixed:%s:Value", instanceName)] = fmt.Sprintf("%d", i)
+	}
+
+	// List should return all 10 (5 from index, 5 from fallback)
+	instances, err := rm.ListInstances(ctx, "mixed", 0, 20)
+	if err != nil {
+		t.Fatalf("Failed to list mixed instances: %v", err)
+	}
+	if len(instances) != 10 {
+		t.Errorf("Expected 10 total instances, got %d", len(instances))
+	}
+
+	// Verify we have both indexed and old instances
+	hasIndexed := false
+	hasOld := false
+	for _, inst := range instances {
+		if strings.HasPrefix(inst, "indexed_") {
+			hasIndexed = true
+		}
+		if strings.HasPrefix(inst, "old_") {
+			hasOld = true
+		}
+	}
+
+	if !hasIndexed {
+		t.Error("Missing indexed instances in list")
+	}
+	if !hasOld {
+		t.Error("Missing old instances in list")
+	}
+}
+
+func TestRecordManager_DeleteRecordCleansAllMetadata(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register record type
+	rm.Register("metadata_test", TestRecord{})
+
+	// Create a record
+	record := TestRecord{
+		ID:        "123",
+		Name:      "Test Metadata",
+		Age:       30,
+		IsActive:  true,
+		CreatedAt: time.Now().Truncate(time.Second),
+		UpdatedAt: time.Now().Truncate(time.Second),
+	}
+
+	err := rm.NewInstance(ctx, "metadata_test", "test_instance", record)
+	if err != nil {
+		t.Fatalf("Failed to create record: %v", err)
+	}
+
+	// Simulate an upgrade to create upgrade status
+	err = rm.setUpgradeStatus(ctx, "metadata_test", "test_instance", upgradeStatusCompleted, "test_checksum")
+	if err != nil {
+		t.Fatalf("Failed to set upgrade status: %v", err)
+	}
+
+	// Verify all metadata exists before deletion
+	expectedKeys := map[string]bool{
+		// Record fields
+		"dev:records:metadata_test:test_instance:ID":        true,
+		"dev:records:metadata_test:test_instance:Name":      true,
+		"dev:records:metadata_test:test_instance:Age":       true,
+		"dev:records:metadata_test:test_instance:IsActive":  true,
+		"dev:records:metadata_test:test_instance:CreatedAt": true,
+		"dev:records:metadata_test:test_instance:UpdatedAt": true,
+		"dev:records:metadata_test:test_instance:Tags":      true,
+		"dev:records:metadata_test:test_instance:Metadata":  true,
+		// Metadata keys
+		"dev:records:metadata_test:test_instance:__meta__":           true,
+		"dev:records:__instances__:metadata_test:test_instance":      true,
+		"dev:records:metadata_test:test_instance:__upgrade_status__": true,
+	}
+
+	for key := range expectedKeys {
+		if _, exists := mockC.data[key]; !exists {
+			t.Logf("Warning: Expected key %s not found before deletion", key)
+		}
+	}
+
+	// Count total keys before deletion
+	keysBeforeDeletion := 0
+	keyPrefix := "dev:records:"
+	instanceRelatedKeys := []string{}
+	for key := range mockC.data {
+		if strings.HasPrefix(key, keyPrefix) && strings.Contains(key, "test_instance") {
+			keysBeforeDeletion++
+			instanceRelatedKeys = append(instanceRelatedKeys, key)
+		}
+	}
+	t.Logf("Keys before deletion (%d): %v", keysBeforeDeletion, instanceRelatedKeys)
+
+	// Delete the record
+	err = rm.DeleteRecord(ctx, "metadata_test", "test_instance")
+	if err != nil {
+		t.Fatalf("Failed to delete record: %v", err)
+	}
+
+	// Verify ALL keys are deleted
+	keysAfterDeletion := 0
+	remainingKeys := []string{}
+	for key := range mockC.data {
+		if strings.Contains(key, "test_instance") {
+			keysAfterDeletion++
+			remainingKeys = append(remainingKeys, key)
+		}
+	}
+
+	if keysAfterDeletion > 0 {
+		t.Errorf("Found %d keys after deletion that should have been removed: %v",
+			keysAfterDeletion, remainingKeys)
+	}
+
+	// Specifically check each type of metadata
+	metadataChecks := []struct {
+		name string
+		key  string
+	}{
+		{"checksum metadata", "dev:records:metadata_test:test_instance:__meta__"},
+		{"instance index", "dev:records:__instances__:metadata_test:test_instance"},
+		{"upgrade status", "dev:records:metadata_test:test_instance:__upgrade_status__"},
+		{"ID field", "dev:records:metadata_test:test_instance:ID"},
+		{"Name field", "dev:records:metadata_test:test_instance:Name"},
+	}
+
+	for _, check := range metadataChecks {
+		if _, exists := mockC.data[check.key]; exists {
+			t.Errorf("%s should have been deleted: %s", check.name, check.key)
+		}
+	}
+
+	// Verify instance doesn't appear in listing
+	instances, err := rm.ListInstances(ctx, "metadata_test", 0, 10)
+	if err != nil {
+		t.Fatalf("Failed to list instances: %v", err)
+	}
+	if len(instances) != 0 {
+		t.Errorf("Deleted instance still appears in listing: %v", instances)
 	}
 }
