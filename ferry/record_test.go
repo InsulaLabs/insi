@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"sync/atomic"
+
 	"github.com/InsulaLabs/insi/client"
 )
 
@@ -246,6 +248,35 @@ func TestRecordManager_Register(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-struct type")
 	}
+
+	// Test record type with colon
+	err = rm.Register("test:record", TestRecord{})
+	if err == nil {
+		t.Fatal("Expected error for record type with colon")
+	}
+
+	// Test struct with reserved field names
+	type BadRecord1 struct {
+		Meta string // Will be checked as "__meta__" in validation
+		Name string
+	}
+
+	// Manually construct a type that would have the reserved name
+	// Since Go doesn't allow __meta__ as a field name, we'll test this differently
+
+	// Test struct with field containing colon
+	type BadRecord2 struct {
+		Name     string
+		BadField string // Can't actually have : in field name
+	}
+
+	err = rm.Register("okrecord", BadRecord2{})
+	if err != nil {
+		t.Fatalf("Should allow normal struct: %v", err)
+	}
+
+	// Since Go's syntax doesn't allow the bad field names we want to prevent,
+	// the validation is more of a safeguard for dynamic/reflection-based usage
 }
 
 func TestRecordManager_NewInstance(t *testing.T) {
@@ -892,6 +923,422 @@ func TestRecordManager_ListAllInstances(t *testing.T) {
 	}
 }
 
+func TestRecordManager_SetRecordIfMatch(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register record type
+	rm.Register("user", TestRecord{})
+
+	// Create initial record
+	original := TestRecord{
+		ID:        "123",
+		Name:      "John Doe",
+		Age:       30,
+		IsActive:  true,
+		CreatedAt: time.Now().Truncate(time.Second),
+		UpdatedAt: time.Now().Truncate(time.Second),
+	}
+
+	err := rm.NewInstance(ctx, "user", "john", original)
+	if err != nil {
+		t.Fatalf("Failed to create record: %v", err)
+	}
+
+	// Test successful CAS update
+	updated := original
+	updated.Name = "John Smith"
+	updated.Age = 31
+
+	err = rm.SetRecordIfMatch(ctx, "user", "john", original, updated)
+	if err != nil {
+		t.Fatalf("SetRecordIfMatch should succeed with correct expected value: %v", err)
+	}
+
+	// Verify update
+	result, err := rm.GetRecord(ctx, "user", "john")
+	if err != nil {
+		t.Fatalf("Failed to get updated record: %v", err)
+	}
+
+	updatedRecord := result.(TestRecord)
+	if updatedRecord.Name != "John Smith" || updatedRecord.Age != 31 {
+		t.Errorf("Record not updated correctly: got name=%s age=%d", updatedRecord.Name, updatedRecord.Age)
+	}
+
+	// Test failed CAS update (wrong expected value)
+	wrongExpected := original
+	wrongExpected.Age = 99 // This doesn't match current state
+
+	newUpdate := updated
+	newUpdate.Name = "Should Not Update"
+
+	err = rm.SetRecordIfMatch(ctx, "user", "john", wrongExpected, newUpdate)
+	if err == nil {
+		t.Fatal("SetRecordIfMatch should fail with incorrect expected value")
+	}
+	if !errors.Is(err, ErrCASFailed) {
+		t.Errorf("Expected ErrCASFailed, got %v", err)
+	}
+
+	// Verify record wasn't changed
+	result, err = rm.GetRecord(ctx, "user", "john")
+	if err != nil {
+		t.Fatalf("Failed to get record: %v", err)
+	}
+
+	stillUpdated := result.(TestRecord)
+	if stillUpdated.Name != "John Smith" {
+		t.Errorf("Record should not have been updated: got name=%s", stillUpdated.Name)
+	}
+}
+
+func TestRecordManager_SetRecordIfMatch_ConcurrentSafety(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register record type
+	rm.Register("counter", SimpleRecord{})
+
+	// Create initial record
+	initial := SimpleRecord{
+		Name:  "Counter",
+		Value: 0,
+	}
+
+	err := rm.NewInstance(ctx, "counter", "shared", initial)
+	if err != nil {
+		t.Fatalf("Failed to create record: %v", err)
+	}
+
+	// Simulate concurrent updates
+	const numGoroutines = 10
+	var wg sync.WaitGroup
+	successCount := atomic.Int32{}
+	conflictCount := atomic.Int32{}
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(goroutineID int) {
+			defer wg.Done()
+
+			// Each goroutine tries to increment the counter
+			for attempt := 0; attempt < 5; attempt++ {
+				// Read current value
+				current, err := rm.GetRecord(ctx, "counter", "shared")
+				if err != nil {
+					t.Errorf("Goroutine %d: Failed to get record: %v", goroutineID, err)
+					return
+				}
+
+				currentRecord := current.(SimpleRecord)
+
+				// Try to update with CAS
+				updated := SimpleRecord{
+					Name:  currentRecord.Name,
+					Value: currentRecord.Value + 1,
+				}
+
+				err = rm.SetRecordIfMatch(ctx, "counter", "shared", currentRecord, updated)
+				if err == nil {
+					successCount.Add(1)
+				} else if errors.Is(err, ErrCASFailed) {
+					conflictCount.Add(1)
+					// This is expected - retry
+					time.Sleep(time.Millisecond) // Small backoff
+				} else {
+					t.Errorf("Goroutine %d: Unexpected error: %v", goroutineID, err)
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify final state
+	final, err := rm.GetRecord(ctx, "counter", "shared")
+	if err != nil {
+		t.Fatalf("Failed to get final record: %v", err)
+	}
+
+	finalRecord := final.(SimpleRecord)
+
+	t.Logf("Final counter value: %d", finalRecord.Value)
+	t.Logf("Successful updates: %d", successCount.Load())
+	t.Logf("Conflicts detected: %d", conflictCount.Load())
+
+	// The final value should equal the number of successful updates
+	if int32(finalRecord.Value) != successCount.Load() {
+		t.Errorf("Data integrity issue: final value %d != successful updates %d",
+			finalRecord.Value, successCount.Load())
+	}
+
+	// We should have seen some conflicts with concurrent access
+	if conflictCount.Load() == 0 {
+		t.Log("Warning: No conflicts detected, test might not be exercising concurrency properly")
+	}
+}
+
+func TestRecordManager_CleanupOldFields(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register a simple record type
+	rm.Register("simple", SimpleRecord{})
+
+	// Create a record
+	record := SimpleRecord{
+		Name:  "Test",
+		Value: 100,
+	}
+
+	rm.NewInstance(ctx, "simple", "test1", record)
+
+	// Manually add some extra fields that aren't in the type definition
+	// This simulates what happens after a type change that removes fields
+	extraKey1 := "dev:records:simple:test1:OldField1"
+	extraKey2 := "dev:records:simple:test1:OldField2"
+	mockC.data[extraKey1] = "old value 1"
+	mockC.data[extraKey2] = "old value 2"
+
+	// Verify extra fields exist
+	if _, exists := mockC.data[extraKey1]; !exists {
+		t.Fatal("Setup failed: extra field 1 should exist")
+	}
+	if _, exists := mockC.data[extraKey2]; !exists {
+		t.Fatal("Setup failed: extra field 2 should exist")
+	}
+
+	// Run cleanup
+	err := rm.CleanupOldFields(ctx, "simple", "test1")
+	if err != nil {
+		t.Fatalf("CleanupOldFields failed: %v", err)
+	}
+
+	// Verify extra fields were removed
+	if _, exists := mockC.data[extraKey1]; exists {
+		t.Error("Extra field 1 should have been cleaned up")
+	}
+	if _, exists := mockC.data[extraKey2]; exists {
+		t.Error("Extra field 2 should have been cleaned up")
+	}
+
+	// Verify valid fields still exist
+	nameKey := "dev:records:simple:test1:Name"
+	valueKey := "dev:records:simple:test1:Value"
+	metaKey := "dev:records:simple:test1:__meta__"
+
+	if _, exists := mockC.data[nameKey]; !exists {
+		t.Error("Name field should still exist")
+	}
+	if _, exists := mockC.data[valueKey]; !exists {
+		t.Error("Value field should still exist")
+	}
+	if _, exists := mockC.data[metaKey]; !exists {
+		t.Error("Metadata key should still exist")
+	}
+
+	// Verify record is still readable
+	result, err := rm.GetRecord(ctx, "simple", "test1")
+	if err != nil {
+		t.Fatalf("Failed to get record after cleanup: %v", err)
+	}
+
+	cleaned := result.(SimpleRecord)
+	if cleaned.Name != "Test" || cleaned.Value != 100 {
+		t.Errorf("Record data corrupted after cleanup: got name=%s value=%d", cleaned.Name, cleaned.Value)
+	}
+}
+
+func TestRecordManager_FieldTypeConversion(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Define old record type with string value
+	type OldRecord struct {
+		Name  string
+		Value string // Was string
+		Score string // Was string
+	}
+
+	// Define new record type with numeric values
+	type NewRecord struct {
+		Name  string
+		Value int     // Now int
+		Score float64 // Now float
+	}
+
+	// Register old type and create records
+	rm.Register("convertible", OldRecord{})
+
+	// Create records with string values that can be converted
+	old1 := OldRecord{
+		Name:  "Test1",
+		Value: "42",
+		Score: "98.5",
+	}
+	rm.NewInstance(ctx, "convertible", "test1", old1)
+
+	// Create record with float stored as string
+	old2 := OldRecord{
+		Name:  "Test2",
+		Value: "3.14", // Float as string, will truncate to 3 when converted to int
+		Score: "100",  // Int as string, will convert to float
+	}
+	rm.NewInstance(ctx, "convertible", "test2", old2)
+
+	// Re-register with new type
+	rm.Register("convertible", NewRecord{})
+
+	// Read records with new type - should handle type conversion
+	result1, err := rm.GetRecord(ctx, "convertible", "test1")
+	if err != nil {
+		t.Fatalf("Failed to get record after type change: %v", err)
+	}
+
+	new1 := result1.(NewRecord)
+	if new1.Name != "Test1" || new1.Value != 42 || new1.Score != 98.5 {
+		t.Errorf("Type conversion failed for test1: got name=%s value=%d score=%f",
+			new1.Name, new1.Value, new1.Score)
+	}
+
+	result2, err := rm.GetRecord(ctx, "convertible", "test2")
+	if err != nil {
+		t.Fatalf("Failed to get record after type change: %v", err)
+	}
+
+	new2 := result2.(NewRecord)
+	if new2.Name != "Test2" || new2.Value != 3 || new2.Score != 100.0 {
+		t.Errorf("Type conversion failed for test2: got name=%s value=%d score=%f",
+			new2.Name, new2.Value, new2.Score)
+	}
+
+	// Test boolean conversion
+	type BoolRecord struct {
+		Name    string
+		Active  string
+		Enabled string
+		Flag    string
+	}
+
+	type NewBoolRecord struct {
+		Name    string
+		Active  bool
+		Enabled bool
+		Flag    bool
+	}
+
+	rm.Register("booltest", BoolRecord{})
+
+	boolOld := BoolRecord{
+		Name:    "BoolTest",
+		Active:  "true",
+		Enabled: "1",
+		Flag:    "yes",
+	}
+	rm.NewInstance(ctx, "booltest", "test1", boolOld)
+
+	rm.Register("booltest", NewBoolRecord{})
+
+	resultBool, err := rm.GetRecord(ctx, "booltest", "test1")
+	if err != nil {
+		t.Fatalf("Failed to get bool record: %v", err)
+	}
+
+	newBool := resultBool.(NewBoolRecord)
+	if !newBool.Active || !newBool.Enabled || !newBool.Flag {
+		t.Errorf("Boolean conversion failed: active=%v enabled=%v flag=%v",
+			newBool.Active, newBool.Enabled, newBool.Flag)
+	}
+}
+
+func TestRecordManager_InstanceNameValidation(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register record type
+	rm.Register("user", SimpleRecord{})
+
+	// Test empty instance name
+	err := rm.NewInstance(ctx, "user", "", SimpleRecord{Name: "Test"})
+	if err == nil {
+		t.Fatal("Expected error for empty instance name")
+	}
+
+	// Test instance name with colon
+	err = rm.NewInstance(ctx, "user", "bad:instance", SimpleRecord{Name: "Test"})
+	if err == nil {
+		t.Fatal("Expected error for instance name with colon")
+	}
+
+	// Test valid instance name
+	err = rm.NewInstance(ctx, "user", "valid_instance", SimpleRecord{Name: "Test", Value: 123})
+	if err != nil {
+		t.Fatalf("Should allow valid instance name: %v", err)
+	}
+
+	// Verify it was created
+	record, err := rm.GetRecord(ctx, "user", "valid_instance")
+	if err != nil {
+		t.Fatalf("Failed to get valid record: %v", err)
+	}
+
+	result := record.(SimpleRecord)
+	if result.Name != "Test" || result.Value != 123 {
+		t.Errorf("Record not stored correctly: got name=%s value=%d", result.Name, result.Value)
+	}
+}
+
 // Mock controllers that directly use our mock client
 
 type mockValueController struct {
@@ -920,7 +1367,15 @@ func (m *mockValueController) Delete(ctx context.Context, key string) error {
 
 func (m *mockValueController) CompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error {
 	fullKey := fmt.Sprintf("%s:%s", m.prefix, key)
-	return m.mock.CompareAndSwap(fullKey, oldValue, newValue)
+	err := m.mock.CompareAndSwap(fullKey, oldValue, newValue)
+	// Translate client errors to ferry errors
+	if errors.Is(err, client.ErrConflict) {
+		return ErrConflict
+	}
+	if errors.Is(err, client.ErrKeyNotFound) {
+		return ErrKeyNotFound
+	}
+	return err
 }
 
 func (m *mockValueController) Bump(ctx context.Context, key string, value int) error {
@@ -976,7 +1431,15 @@ func (m *mockCacheController) Delete(ctx context.Context, key string) error {
 
 func (m *mockCacheController) CompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error {
 	fullKey := fmt.Sprintf("%s:%s", m.prefix, key)
-	return m.mock.CompareAndSwapCache(fullKey, oldValue, newValue)
+	err := m.mock.CompareAndSwapCache(fullKey, oldValue, newValue)
+	// Translate client errors to ferry errors
+	if errors.Is(err, client.ErrConflict) {
+		return ErrConflict
+	}
+	if errors.Is(err, client.ErrKeyNotFound) {
+		return ErrKeyNotFound
+	}
+	return err
 }
 
 func (m *mockCacheController) IterateByPrefix(ctx context.Context, prefix string, offset, limit int) ([]string, error) {
@@ -995,4 +1458,241 @@ func (m *mockCacheController) IterateByPrefix(ctx context.Context, prefix string
 		}
 	}
 	return result, nil
+}
+
+type failingValueController struct {
+	mockValueController
+	failOnKey string
+}
+
+func (m *failingValueController) Set(ctx context.Context, key string, value string) error {
+	fullKey := fmt.Sprintf("%s:%s", m.prefix, key)
+	if fullKey == m.failOnKey {
+		return errors.New("simulated storage failure")
+	}
+	return m.mockValueController.Set(ctx, key, value)
+}
+
+func TestRecordManager_SetRecordRollback(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register record type
+	rm.Register("user", TestRecord{})
+
+	// Create initial record (without failing mock)
+	original := TestRecord{
+		ID:        "123",
+		Name:      "Original",
+		Age:       25,
+		IsActive:  true,
+		CreatedAt: time.Now().Truncate(time.Second),
+		UpdatedAt: time.Now().Truncate(time.Second),
+	}
+
+	err := rm.NewInstance(ctx, "user", "test1", original)
+	if err != nil {
+		t.Fatalf("Failed to create record: %v", err)
+	}
+
+	// Verify original state
+	result, err := rm.GetRecord(ctx, "user", "test1")
+	if err != nil {
+		t.Fatalf("Failed to get record: %v", err)
+	}
+
+	orig := result.(TestRecord)
+	if orig.Name != "Original" || orig.Age != 25 {
+		t.Errorf("Unexpected original state: name=%s age=%d", orig.Name, orig.Age)
+	}
+
+	// Now create the failing mock for the update
+	failingMock := &failingValueController{
+		mockValueController: mockValueController{mock: mockC, prefix: "dev:records"},
+		failOnKey:           "dev:records:user:test1:IsActive", // Will fail when storing this field
+	}
+
+	// Replace the value controller with the failing one
+	rm.valueCtrl = failingMock
+
+	updated := TestRecord{
+		ID:        "123",
+		Name:      "Should Rollback",
+		Age:       30,
+		IsActive:  false, // This field will fail to store
+		CreatedAt: original.CreatedAt,
+		UpdatedAt: time.Now().Truncate(time.Second),
+	}
+
+	err = rm.SetRecord(ctx, "user", "test1", updated)
+	if err == nil {
+		t.Fatal("SetRecord should have failed")
+	}
+
+	// Reset to normal controller for reading
+	rm.valueCtrl = &mockValueController{mock: mockC, prefix: "dev:records"}
+
+	// Verify record was rolled back to original state
+	result, err = rm.GetRecord(ctx, "user", "test1")
+	if err != nil {
+		t.Fatalf("Failed to get record after rollback: %v", err)
+	}
+
+	rolledBack := result.(TestRecord)
+	if rolledBack.Name != "Original" || rolledBack.Age != 25 {
+		t.Errorf("Record not rolled back correctly: got name=%s age=%d, want name=Original age=25",
+			rolledBack.Name, rolledBack.Age)
+	}
+}
+
+func TestRecordManager_SafeRollback(t *testing.T) {
+	ferry, mockC := createTestFerry()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rm := &recordManagerImpl{
+		ferry:     ferry,
+		logger:    logger.WithGroup("test_record_manager"),
+		registry:  make(map[string]reflect.Type),
+		valueCtrl: &mockValueController{mock: mockC, prefix: "dev:records"},
+		useCache:  false,
+	}
+
+	ctx := context.Background()
+
+	// Register record type
+	rm.Register("user", TestRecord{})
+
+	// Create initial record
+	initial := TestRecord{
+		ID:        "123",
+		Name:      "Original User",
+		Age:       25,
+		IsActive:  true,
+		CreatedAt: time.Now().Truncate(time.Second),
+		UpdatedAt: time.Now().Truncate(time.Second),
+	}
+
+	// Store initial record
+	err := rm.NewInstance(ctx, "user", "test1", initial)
+	if err != nil {
+		t.Fatalf("Failed to create initial record: %v", err)
+	}
+
+	// Get the initial checksum
+	metaKey := rm.buildIndexKey("user", "test1")
+	initialChecksum, _ := rm.valueCtrl.Get(ctx, metaKey)
+
+	// Simulate an upgrade that will fail
+	upgraded := TestRecord{
+		ID:        "123",
+		Name:      "Upgraded User",
+		Age:       26,
+		IsActive:  false,
+		CreatedAt: initial.CreatedAt,
+		UpdatedAt: time.Now().Truncate(time.Second),
+	}
+
+	// Update the checksum as if upgrade started
+	upgradedChecksum, _ := rm.computeRecordChecksum(upgraded)
+	err = rm.valueCtrl.CompareAndSwap(ctx, metaKey, initialChecksum, upgradedChecksum)
+	if err != nil {
+		t.Fatalf("Failed to update checksum: %v", err)
+	}
+
+	// Store some fields but not all (simulating partial failure)
+	rm.valueCtrl.Set(ctx, "user:test1:Name", "Upgraded User")
+	rm.valueCtrl.Set(ctx, "user:test1:Age", "26")
+	// Don't update IsActive - simulating failure
+
+	// Now simulate another process modifying the record
+	concurrent := TestRecord{
+		ID:        "123",
+		Name:      "Concurrent Update",
+		Age:       30,
+		IsActive:  true,
+		CreatedAt: initial.CreatedAt,
+		UpdatedAt: time.Now().Add(time.Minute).Truncate(time.Second),
+	}
+
+	// Another process updates with proper CAS
+	concurrentChecksum, _ := rm.computeRecordChecksum(concurrent)
+	err = rm.valueCtrl.CompareAndSwap(ctx, metaKey, upgradedChecksum, concurrentChecksum)
+	if err != nil {
+		t.Fatalf("Concurrent update should succeed: %v", err)
+	}
+
+	// Update all fields for concurrent update
+	rm.storeRecordFields(ctx, "user", "test1", concurrent)
+
+	// Now try to rollback the original upgrade
+	err = rm.safeRollbackRecord(ctx, "user", "test1", initial, upgradedChecksum)
+	if err == nil {
+		t.Fatal("Rollback should fail because record was modified")
+	}
+
+	// Verify the record still has the concurrent update
+	final, err := rm.GetRecord(ctx, "user", "test1")
+	if err != nil {
+		t.Fatalf("Failed to get final record: %v", err)
+	}
+
+	finalRecord := final.(TestRecord)
+	if finalRecord.Name != "Concurrent Update" || finalRecord.Age != 30 {
+		t.Errorf("Record should keep concurrent update: got name=%s age=%d", finalRecord.Name, finalRecord.Age)
+	}
+
+	// Test successful rollback when no concurrent modification
+	// Create another record
+	initial2 := TestRecord{
+		ID:   "456",
+		Name: "Test User 2",
+		Age:  40,
+	}
+
+	err = rm.NewInstance(ctx, "user", "test2", initial2)
+	if err != nil {
+		t.Fatalf("Failed to create second record: %v", err)
+	}
+
+	// Get checksum
+	metaKey2 := rm.buildIndexKey("user", "test2")
+	checksum2, _ := rm.valueCtrl.Get(ctx, metaKey2)
+
+	// Update to new version
+	updated2 := TestRecord{
+		ID:   "456",
+		Name: "Updated User 2",
+		Age:  41,
+	}
+
+	newChecksum2, _ := rm.computeRecordChecksum(updated2)
+	rm.valueCtrl.CompareAndSwap(ctx, metaKey2, checksum2, newChecksum2)
+	rm.storeRecordFields(ctx, "user", "test2", updated2)
+
+	// Now rollback should succeed
+	err = rm.safeRollbackRecord(ctx, "user", "test2", initial2, newChecksum2)
+	if err != nil {
+		t.Fatalf("Rollback should succeed when no concurrent modification: %v", err)
+	}
+
+	// Verify rollback worked
+	rolled, err := rm.GetRecord(ctx, "user", "test2")
+	if err != nil {
+		t.Fatalf("Failed to get rolled back record: %v", err)
+	}
+
+	rolledRecord := rolled.(TestRecord)
+	if rolledRecord.Name != "Test User 2" || rolledRecord.Age != 40 {
+		t.Errorf("Record not rolled back correctly: got name=%s age=%d", rolledRecord.Name, rolledRecord.Age)
+	}
 }

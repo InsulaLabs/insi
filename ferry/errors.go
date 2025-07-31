@@ -13,6 +13,7 @@ var (
 
 	ErrKeyNotFound             = errors.New("key not found")
 	ErrConflict                = errors.New("operation failed due to a conflict")
+	ErrCASFailed               = errors.New("compare-and-swap failed: record was modified")
 	ErrRateLimited             = errors.New("rate limited")
 	ErrDiskLimitExceeded       = errors.New("disk limit exceeded")
 	ErrMemoryLimitExceeded     = errors.New("memory limit exceeded")
