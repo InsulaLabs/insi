@@ -12,13 +12,14 @@ var (
 	ErrEndScope       = errors.New("end scope")
 
 	// Ferry-specific errors that correspond to client errors
-	ErrKeyNotFound         = errors.New("key not found")
-	ErrConflict            = errors.New("operation failed due to a conflict")
-	ErrRateLimited         = errors.New("rate limited")
-	ErrDiskLimitExceeded   = errors.New("disk limit exceeded")
-	ErrMemoryLimitExceeded = errors.New("memory limit exceeded")
-	ErrEventsLimitExceeded = errors.New("events limit exceeded")
-	ErrAPIKeyNotFound      = errors.New("api key not found")
+	ErrKeyNotFound             = errors.New("key not found")
+	ErrConflict                = errors.New("operation failed due to a conflict")
+	ErrRateLimited             = errors.New("rate limited")
+	ErrDiskLimitExceeded       = errors.New("disk limit exceeded")
+	ErrMemoryLimitExceeded     = errors.New("memory limit exceeded")
+	ErrEventsLimitExceeded     = errors.New("events limit exceeded")
+	ErrSubscriberLimitExceeded = errors.New("subscriber limit exceeded")
+	ErrAPIKeyNotFound          = errors.New("api key not found")
 )
 
 func translateError(err error) error {
@@ -78,6 +79,15 @@ func translateError(err error) error {
 			eventsLimitErr.Message,
 			eventsLimitErr.CurrentUsage,
 			eventsLimitErr.Limit,
+		)
+	}
+
+	var subscriberLimitErr *client.ErrSubscriberLimitExceeded
+	if errors.As(err, &subscriberLimitErr) {
+		return fmt.Errorf(
+			"%w: %s",
+			ErrSubscriberLimitExceeded,
+			subscriberLimitErr.Message,
 		)
 	}
 

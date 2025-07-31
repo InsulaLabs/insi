@@ -78,3 +78,7 @@ func GetValueController[T any](f *Ferry, defaultT T) ValueController[T] {
 func GetCacheController[T any](f *Ferry, defaultT T) CacheController[T] {
 	return NewCacheController(defaultT, f.client, f.logger)
 }
+
+func GetEvents(f *Ferry) Events {
+	return NewEvents(f.client, f.logger)
+}
