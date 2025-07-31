@@ -538,7 +538,7 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 			} else {
 				// Fallback if parsing fails
 				retryAfter = 1 * time.Second // Default to 1s if header is missing or invalid
-				c.logger.Warn(
+				c.logger.Debug(
 					"Could not parse Retry-After header, defaulting",
 					"value", retryAfterStr,
 					"default", retryAfter,
@@ -551,7 +551,7 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 			bodyBytes, _ := io.ReadAll(resp.Body)
 
-			c.logger.Warn(
+			c.logger.Debug(
 				"Request was rate limited",
 				"url", currentReqURL.String(),
 				"retry_after", retryAfter,
@@ -1217,7 +1217,7 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 				c.redirectCoutner.Add(1)
 				if c.enableLeaderStickiness {
 					if stickErr := c.setLeader(redirectURL); stickErr != nil {
-						c.logger.Warn("Failed to set sticky leader from WebSocket redirect", "error", stickErr)
+						c.logger.Debug("Failed to set sticky leader from WebSocket redirect", "error", stickErr)
 					}
 				}
 			}
@@ -1691,7 +1691,7 @@ func (c *Client) setLeader(leaderURL *url.URL) error {
 
 		// If the host from the redirect matches either the public or private host of this endpoint, we've found our leader.
 		if potentialPublicURL.Host == leaderURL.Host || potentialPrivateURL.Host == leaderURL.Host {
-			c.logger.Info("Redirect detected. Sticking to new leader.", "leader_host", leaderURL.Host)
+			c.logger.Debug("Redirect detected. Sticking to new leader.", "leader_host", leaderURL.Host)
 			c.publicBaseURL = potentialPublicURL
 			c.privateBaseURL = potentialPrivateURL
 			return nil

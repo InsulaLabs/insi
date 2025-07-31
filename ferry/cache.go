@@ -173,7 +173,22 @@ func (cc *ccImpl[T]) IterateByPrefix(ctx context.Context, prefix string, offset,
 		if err != nil {
 			return err
 		}
-		result = keys
+
+		// Remove the scope prefix from returned keys
+		scopePrefix := ""
+		if len(cc.scopes) > 0 {
+			scopePrefix = strings.Join(cc.scopes, ":") + ":"
+		}
+
+		result = make([]string, 0, len(keys))
+		for _, key := range keys {
+			if strings.HasPrefix(key, scopePrefix) {
+				result = append(result, strings.TrimPrefix(key, scopePrefix))
+			} else {
+				// If key doesn't have expected prefix, include it as-is
+				result = append(result, key)
+			}
+		}
 		return nil
 	})
 
