@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/tkv"
@@ -74,11 +75,6 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 	c.logger.Debug("IterateKeysByPrefixHandler", "entity", td.Entity)
 
 	prefix := r.URL.Query().Get("prefix")
-	if td.Entity != EntityRoot && prefix == "" {
-		http.Error(w, "Missing prefix parameter", http.StatusBadRequest)
-		return
-	}
-
 	offset := r.URL.Query().Get("offset")
 	limit := r.URL.Query().Get("limit")
 
@@ -102,12 +98,12 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 		offsetInt = 0
 	}
 
-	fullPrefix := fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix)
-	if prefix == "" || prefix == "*" {
-		fullPrefix = fmt.Sprintf("%s:", td.DataScopeUUID)
+	prefix = strings.TrimSuffix(prefix, "*")
+	fullPrefix := fmt.Sprintf("%s:", td.DataScopeUUID)
+	if prefix != "" {
+		fullPrefix = fmt.Sprintf("%s:%s", td.DataScopeUUID, prefix)
 	}
 
-	// Pass the trimPrefix to remove it during iteration
 	value, err := c.fsm.Iterate(fullPrefix, offsetInt, limitInt, fmt.Sprintf("%s:", td.DataScopeUUID))
 	if err == badger.ErrKeyNotFound {
 		http.NotFound(w, r)

@@ -762,7 +762,15 @@ func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Req
 		limit = 100
 	}
 
-	searchPrefix := fmt.Sprintf("blob:%s:%s", td.DataScopeUUID, prefix)
+	// Strip trailing "*" from prefix
+	prefix = strings.TrimSuffix(prefix, "*")
+
+	// Build search prefix
+	searchPrefix := fmt.Sprintf("blob:%s:", td.DataScopeUUID)
+	if prefix != "" {
+		searchPrefix = fmt.Sprintf("blob:%s:%s", td.DataScopeUUID, prefix)
+	}
+
 	keys, err := c.fsm.Iterate(searchPrefix, offset, limit, "")
 	if err != nil {
 		var nfErr *tkv.ErrKeyNotFound

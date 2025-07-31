@@ -812,21 +812,21 @@ func handleBlob(f *ferry.Ferry, args []string) {
 		}
 		key := subArgs[0]
 
-		reader, err := bc.Download(ctx, key)
-		if err != nil {
-			if err == ferry.ErrKeyNotFound {
-				fmt.Fprintf(os.Stderr, "%s Blob key '%s' not found.\n", color.RedString("Error:"), color.CyanString(key))
-			} else {
-				logger.Error("Download failed", "key", key, "error", err)
-				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
-			}
-			os.Exit(1)
-		}
-		defer reader.Close()
-
-		// If output file is specified, write to file
 		if len(subArgs) == 2 {
 			outputPath := subArgs[1]
+
+			reader, err := bc.Download(ctx, key)
+			if err != nil {
+				if err == ferry.ErrKeyNotFound {
+					fmt.Fprintf(os.Stderr, "%s Blob key '%s' not found.\n", color.RedString("Error:"), color.CyanString(key))
+				} else {
+					logger.Error("Download failed", "key", key, "error", err)
+					fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+				}
+				os.Exit(1)
+			}
+			defer reader.Close()
+
 			file, err := os.Create(outputPath)
 			if err != nil {
 				logger.Error("Failed to create output file", "file", outputPath, "error", err)
@@ -843,7 +843,18 @@ func handleBlob(f *ferry.Ferry, args []string) {
 			}
 			color.HiGreen("OK - Downloaded blob key '%s' to %s", key, outputPath)
 		} else {
-			// Output to stdout
+			reader, err := bc.Download(ctx, key)
+			if err != nil {
+				if err == ferry.ErrKeyNotFound {
+					fmt.Fprintf(os.Stderr, "%s Blob key '%s' not found.\n", color.RedString("Error:"), color.CyanString(key))
+				} else {
+					logger.Error("Download failed", "key", key, "error", err)
+					fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+				}
+				os.Exit(1)
+			}
+			defer reader.Close()
+
 			_, err = io.Copy(os.Stdout, reader)
 			if err != nil {
 				logger.Error("Failed to write to stdout", "error", err)
