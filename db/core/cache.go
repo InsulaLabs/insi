@@ -125,7 +125,7 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 	if exists {
 		delta = int64(len(p.Value) - len(existingValue))
 	} else {
-		delta = int64(p.TotalLength())
+		delta = int64(len(p.Value))
 	}
 
 	ok, current, limit := c.CheckMemoryUsage(td, delta)
@@ -216,10 +216,9 @@ func (c *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	size := len(p.Key) + len(existingValue)
+	size := len(existingValue)
 	if err := c.AssignBytesToTD(td, StorageTargetMemory, -int64(size)); err != nil {
 		c.logger.Error("Could not bump integer via FSM for memory usage on delete", "error", err)
-		// Don't fail the whole request, but log it.
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -272,7 +271,7 @@ func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ok, current, limit := c.CheckMemoryUsage(td, int64(p.TotalLength()))
+	ok, current, limit := c.CheckMemoryUsage(td, int64(len(p.Value)))
 	if !ok {
 		w.Header().Set("X-Current-Memory-Usage", current)
 		w.Header().Set("X-Memory-Usage-Limit", limit)
@@ -291,7 +290,7 @@ func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := c.AssignBytesToTD(td, StorageTargetMemory, int64(p.TotalLength())); err != nil {
+	if err := c.AssignBytesToTD(td, StorageTargetMemory, int64(len(p.Value))); err != nil {
 		c.logger.Error("could not assign bytes to td for memory on setnx", "error", err)
 		// continue on, we don't want to block the request on this
 	}
@@ -385,10 +384,8 @@ func (c *Core) compareAndSwapCacheHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// If CAS was successful, assign the new bytes.
 	if err := c.AssignBytesToTD(td, StorageTargetMemory, delta); err != nil {
 		c.logger.Error("could not assign bytes to td for memory on cas", "error", err)
-		// Don't fail the request, but log it.
 	}
 
 	w.WriteHeader(http.StatusOK)

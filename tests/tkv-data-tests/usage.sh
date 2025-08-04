@@ -305,7 +305,7 @@ test_memory_usage_limit() {
     sleep 5
 
     # 2. Set a low memory limit
-    local mem_limit=200 # bytes. Set higher to accommodate overhead.
+    local mem_limit=100 # bytes. Set low enough that two 68-byte values will exceed it
     echo -e "${INFO_EMOJI} Setting memory limit for '$api_key' to $mem_limit bytes"
     run_insic "api" "set-limits" "$api_key" "--mem" "$mem_limit"
     expect_success "Set memory limit to $mem_limit bytes" $? "$CMD_OUTPUT" "OK"
@@ -355,6 +355,102 @@ test_memory_usage_limit() {
 
     # 9. Cleanup
     echo -e "${INFO_EMOJI} Cleanup for memory usage limit test"
+    run_insic "api" "delete" "$api_key"
+    expect_success "Delete API key for cleanup" $? "$CMD_OUTPUT" "OK"
+}
+
+test_cache_memory_usage_tracking() {
+    print_header "Test: Cache Memory Usage Tracking (Update/Delete Bug)"
+    local key_name="cache_memory_key_$(date +%s)_$$"
+    local api_key=""
+
+    # 1. Create a key
+    echo -e "${INFO_EMOJI} Creating key for cache memory usage test"
+    run_insic "api" "add" "$key_name"
+    if [ $? -ne 0 ]; then echo "Failed to create API key"; return; fi
+    api_key=$(echo "$CMD_OUTPUT" | grep "API Key:" | awk '{print $3}')
+    expect_success "Create API key for cache memory test" 0 "$CMD_OUTPUT" "API Key:"
+
+    sleep 5
+
+    # 2. Check initial usage is zero
+    run_insic_with_key "$api_key" "" "api" "limits"
+    expect_success "Get initial limits" $? "$CMD_OUTPUT" "Current Usage"
+    expect_success "Check initial memory usage is zero" $? "$CMD_OUTPUT" "Bytes in Memory:   0"
+
+    # 3. Set a cache key-value pair
+    local test_key="mycachekey"
+    local test_value1="cachevalue1"
+    echo -e "${INFO_EMOJI} Setting cache key '$test_key' to '$test_value1'"
+    run_insic_with_key "$api_key" "" "cache" "set" "$test_key" "$test_value1"
+    expect_success "Set initial cache key-value pair" $? "$CMD_OUTPUT" "OK"
+
+    sleep 5
+
+    # 4. Check memory usage after initial set
+    run_insic_with_key "$api_key" "" "api" "limits"
+    expect_success "Get limits after initial cache set" $? "$CMD_OUTPUT" "Current Usage"
+    local initial_usage=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes in Memory:" | head -1 | awk '{print $4}')
+    echo -e "${INFO_EMOJI} Memory usage after initial cache set: $initial_usage bytes"
+
+    # 5. Update the cache key multiple times
+    local test_value2="cachevalue2_longer_than_before"
+    echo -e "${INFO_EMOJI} Updating cache key '$test_key' to '$test_value2'"
+    run_insic_with_key "$api_key" "" "cache" "set" "$test_key" "$test_value2"
+    expect_success "Update cache key with longer value" $? "$CMD_OUTPUT" "OK"
+
+    sleep 5
+
+    # Check memory usage after first update
+    run_insic_with_key "$api_key" "" "api" "limits"
+    local usage_after_update1=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes in Memory:" | head -1 | awk '{print $4}')
+    echo -e "${INFO_EMOJI} Memory usage after first cache update: $usage_after_update1 bytes"
+
+    # 6. Update again with shorter value
+    local test_value3="cv3"
+    echo -e "${INFO_EMOJI} Updating cache key '$test_key' to '$test_value3'"
+    run_insic_with_key "$api_key" "" "cache" "set" "$test_key" "$test_value3"
+    expect_success "Update cache key with shorter value" $? "$CMD_OUTPUT" "OK"
+
+    sleep 5
+
+    # Check memory usage after second update
+    run_insic_with_key "$api_key" "" "api" "limits"
+    local usage_after_update2=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes in Memory:" | head -1 | awk '{print $4}')
+    echo -e "${INFO_EMOJI} Memory usage after second cache update: $usage_after_update2 bytes"
+
+    # 7. Delete the cache key
+    echo -e "${INFO_EMOJI} Deleting cache key '$test_key'"
+    run_insic_with_key "$api_key" "" "cache" "delete" "$test_key"
+    expect_success "Delete cache key" $? "$CMD_OUTPUT" "OK"
+
+    sleep 5
+
+    # 8. Check final memory usage - should be zero
+    run_insic_with_key "$api_key" "" "api" "limits"
+    expect_success "Get limits after cache delete" $? "$CMD_OUTPUT" "Current Usage"
+    local final_usage=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes in Memory:" | head -1 | awk '{print $4}')
+    echo -e "${INFO_EMOJI} Memory usage after cache delete: $final_usage bytes"
+
+    # 9. Verify memory usage is back to zero
+    if [ "$final_usage" = "0" ]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Memory usage correctly returned to zero after cache delete${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Memory usage is $final_usage instead of 0 after cache delete (BUG DETECTED!)${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+        
+        # Additional test: check if we can set more data to see if usage is negative
+        echo -e "${INFO_EMOJI} Setting another cache key to check if usage calculation is negative"
+        run_insic_with_key "$api_key" "" "cache" "set" "testcachekey2" "testcachevalue2"
+        sleep 5
+        run_insic_with_key "$api_key" "" "api" "limits"
+        local usage_after_new_key=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes in Memory:" | head -1 | awk '{print $4}')
+        echo -e "${INFO_EMOJI} Memory usage after setting new cache key: $usage_after_new_key bytes"
+    fi
+
+    # 10. Cleanup
+    echo -e "${INFO_EMOJI} Cleanup for cache memory usage test"
     run_insic "api" "delete" "$api_key"
     expect_success "Delete API key for cleanup" $? "$CMD_OUTPUT" "OK"
 }
@@ -638,6 +734,102 @@ test_alias_rate_limit_sharing() {
     expect_success "Delete API key for cleanup" $? "$CMD_OUTPUT" "OK"
 }
 
+test_value_store_disk_usage_tracking() {
+    print_header "Test: Value Store Disk Usage Tracking (Update/Delete Bug)"
+    local key_name="valuestore_disk_key_$(date +%s)_$$"
+    local api_key=""
+
+    # 1. Create a key
+    echo -e "${INFO_EMOJI} Creating key for value store disk usage test"
+    run_insic "api" "add" "$key_name"
+    if [ $? -ne 0 ]; then echo "Failed to create API key"; return; fi
+    api_key=$(echo "$CMD_OUTPUT" | grep "API Key:" | awk '{print $3}')
+    expect_success "Create API key for value store disk test" 0 "$CMD_OUTPUT" "API Key:"
+
+    sleep 5
+
+    # 2. Check initial usage is zero
+    run_insic_with_key "$api_key" "" "api" "limits"
+    expect_success "Get initial limits" $? "$CMD_OUTPUT" "Current Usage"
+    expect_success "Check initial disk usage is zero" $? "$CMD_OUTPUT" "Bytes on Disk:     0"
+
+    # 3. Set a key-value pair
+    local test_key="mykey"
+    local test_value1="value1"
+    echo -e "${INFO_EMOJI} Setting key '$test_key' to '$test_value1'"
+    run_insic_with_key "$api_key" "" "set" "$test_key" "$test_value1"
+    expect_success "Set initial key-value pair" $? "$CMD_OUTPUT" "OK"
+
+    sleep 5
+
+    # 4. Check disk usage after initial set
+    run_insic_with_key "$api_key" "" "api" "limits"
+    expect_success "Get limits after initial set" $? "$CMD_OUTPUT" "Current Usage"
+    local initial_usage=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes on Disk:" | head -1 | awk '{print $4}')
+    echo -e "${INFO_EMOJI} Disk usage after initial set: $initial_usage bytes"
+
+    # 5. Update the key multiple times
+    local test_value2="value2_longer_than_before"
+    echo -e "${INFO_EMOJI} Updating key '$test_key' to '$test_value2'"
+    run_insic_with_key "$api_key" "" "set" "$test_key" "$test_value2"
+    expect_success "Update key with longer value" $? "$CMD_OUTPUT" "OK"
+
+    sleep 5
+
+    # Check disk usage after first update
+    run_insic_with_key "$api_key" "" "api" "limits"
+    local usage_after_update1=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes on Disk:" | head -1 | awk '{print $4}')
+    echo -e "${INFO_EMOJI} Disk usage after first update: $usage_after_update1 bytes"
+
+    # 6. Update again with shorter value
+    local test_value3="v3"
+    echo -e "${INFO_EMOJI} Updating key '$test_key' to '$test_value3'"
+    run_insic_with_key "$api_key" "" "set" "$test_key" "$test_value3"
+    expect_success "Update key with shorter value" $? "$CMD_OUTPUT" "OK"
+
+    sleep 5
+
+    # Check disk usage after second update
+    run_insic_with_key "$api_key" "" "api" "limits"
+    local usage_after_update2=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes on Disk:" | head -1 | awk '{print $4}')
+    echo -e "${INFO_EMOJI} Disk usage after second update: $usage_after_update2 bytes"
+
+    # 7. Delete the key
+    echo -e "${INFO_EMOJI} Deleting key '$test_key'"
+    run_insic_with_key "$api_key" "" "delete" "$test_key"
+    expect_success "Delete key" $? "$CMD_OUTPUT" "OK"
+
+    sleep 5
+
+    # 8. Check final disk usage - should be zero
+    run_insic_with_key "$api_key" "" "api" "limits"
+    expect_success "Get limits after delete" $? "$CMD_OUTPUT" "Current Usage"
+    local final_usage=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes on Disk:" | head -1 | awk '{print $4}')
+    echo -e "${INFO_EMOJI} Disk usage after delete: $final_usage bytes"
+
+    # 9. Verify disk usage is back to zero
+    if [ "$final_usage" = "0" ]; then
+        echo -e "${SUCCESS_EMOJI} ${GREEN}SUCCESS: Disk usage correctly returned to zero after delete${NC}"
+        SUCCESSFUL_TESTS_COUNT=$((SUCCESSFUL_TESTS_COUNT + 1))
+    else
+        echo -e "${FAILURE_EMOJI} ${RED}FAILURE: Disk usage is $final_usage instead of 0 after delete (BUG DETECTED!)${NC}"
+        FAILED_TESTS_COUNT=$((FAILED_TESTS_COUNT + 1))
+        
+        # Additional test: check if we can set more data to see if usage is negative
+        echo -e "${INFO_EMOJI} Setting another key to check if usage calculation is negative"
+        run_insic_with_key "$api_key" "" "set" "testkey2" "testvalue2"
+        sleep 5
+        run_insic_with_key "$api_key" "" "api" "limits"
+        local usage_after_new_key=$(echo "$CMD_OUTPUT" | grep -A20 "Current Usage" | grep "Bytes on Disk:" | head -1 | awk '{print $4}')
+        echo -e "${INFO_EMOJI} Disk usage after setting new key: $usage_after_new_key bytes"
+    fi
+
+    # 10. Cleanup
+    echo -e "${INFO_EMOJI} Cleanup for value store disk usage test"
+    run_insic "api" "delete" "$api_key"
+    expect_success "Delete API key for cleanup" $? "$CMD_OUTPUT" "OK"
+}
+
 # --- Main Execution ---
 main() {
     if [ -z "$1" ]; then
@@ -699,6 +891,8 @@ main() {
     test_data_rate_limit
     test_event_rate_limit
     test_alias_rate_limit_sharing
+    test_value_store_disk_usage_tracking
+    test_cache_memory_usage_tracking
     
     echo -e "\n${GREEN}All TKV Usage Limit operations tests completed.${NC}"
 

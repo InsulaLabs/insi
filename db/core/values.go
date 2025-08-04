@@ -199,7 +199,7 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 	if exists {
 		delta = int64(len(p.Value) - len(existingValue))
 	} else {
-		delta = int64(p.TotalLength())
+		delta = int64(len(p.Value))
 	}
 
 	ok, current, limit := c.CheckDiskUsage(td, delta)
@@ -289,7 +289,7 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	size := len(p.Key) + len(existingValue)
+	size := len(existingValue)
 	if err := c.AssignBytesToTD(td, StorageTargetDisk, -int64(size)); err != nil {
 		c.logger.Error("Could not bump integer via FSM for disk usage on delete", "error", err)
 	}
@@ -347,7 +347,7 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ok, current, limit := c.CheckDiskUsage(td, int64(p.TotalLength()))
+	ok, current, limit := c.CheckDiskUsage(td, int64(len(p.Value)))
 	if !ok {
 		w.Header().Set("X-Current-Disk-Usage", current)
 		w.Header().Set("X-Disk-Usage-Limit", limit)
@@ -367,7 +367,7 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := c.AssignBytesToTD(td, StorageTargetDisk, int64(p.TotalLength())); err != nil {
+	if err := c.AssignBytesToTD(td, StorageTargetDisk, int64(len(p.Value))); err != nil {
 		c.logger.Error("could not assign bytes to td for disk on setnx", "error", err)
 	}
 
