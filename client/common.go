@@ -17,7 +17,7 @@ func WithRetries[R any](ctx context.Context, logger *slog.Logger, fn func() (R, 
 
 		var rateLimitErr *ErrRateLimited
 		if errors.As(err, &rateLimitErr) {
-			logger.Warn("User operation rate limited, sleeping", "duration", rateLimitErr.RetryAfter)
+			logger.Debug("User operation rate limited, sleeping", "duration", rateLimitErr.RetryAfter)
 			select {
 			case <-time.After(rateLimitErr.RetryAfter):
 				logger.Debug("Finished rate limit sleep, retrying operation.")
