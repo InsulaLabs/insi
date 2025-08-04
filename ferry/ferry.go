@@ -86,7 +86,3 @@ func GetEvents(f *Ferry) Events {
 func GetBlobController(f *Ferry) BlobController {
 	return NewBlobController(f.client, f.logger)
 }
-
-func GetRecordManager(f *Ferry, opts ...RecordManagerOption) RecordManager {
-	return NewRecordManager(f, f.logger, opts...)
-}

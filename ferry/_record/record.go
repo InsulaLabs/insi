@@ -48,6 +48,11 @@ type recordManagerImpl struct {
 	// Controllers
 	valueCtrl ValueController[string]
 	cacheCtrl CacheController[string]
+
+	// Upgrade configuration
+	upgradeMaxFailures      int
+	upgradeFailureRateLimit float64
+	upgradeMaxRollback      int
 }
 
 type RecordManagerOption func(*recordManagerImpl)
@@ -64,13 +69,24 @@ func WithProduction() RecordManagerOption {
 	}
 }
 
+func WithUpgradeThresholds(maxFailures int, failureRateLimit float64, maxRollback int) RecordManagerOption {
+	return func(rm *recordManagerImpl) {
+		rm.upgradeMaxFailures = maxFailures
+		rm.upgradeFailureRateLimit = failureRateLimit
+		rm.upgradeMaxRollback = maxRollback
+	}
+}
+
 func NewRecordManager(ferry *Ferry, logger *slog.Logger, opts ...RecordManagerOption) RecordManager {
 	rm := &recordManagerImpl{
-		ferry:    ferry,
-		logger:   logger.WithGroup("record_manager"),
-		registry: make(map[string]reflect.Type),
-		inProd:   false,
-		useCache: false,
+		ferry:                   ferry,
+		logger:                  logger.WithGroup("record_manager"),
+		registry:                make(map[string]reflect.Type),
+		inProd:                  false,
+		useCache:                false,
+		upgradeMaxFailures:      5,
+		upgradeFailureRateLimit: 0.5,
+		upgradeMaxRollback:      10,
 	}
 
 	for _, opt := range opts {
@@ -140,6 +156,10 @@ func (rm *recordManagerImpl) Register(recordType string, example interface{}) er
 	}
 
 	rm.registryMu.Lock()
+	if _, exists := rm.registry[recordType]; exists {
+		rm.registryMu.Unlock()
+		return fmt.Errorf("record type %s is already registered", recordType)
+	}
 	rm.registry[recordType] = typ
 	rm.registryMu.Unlock()
 
@@ -407,7 +427,20 @@ func (rm *recordManagerImpl) SetRecord(ctx context.Context, recordType, instance
 		return fmt.Errorf("failed to compute new checksum: %w", err)
 	}
 
-	// Update the checksum first
+	// Store the fields first, before updating checksum
+	if err := rm.storeRecordFields(ctx, recordType, instanceName, data); err != nil {
+		// If we have a backup, try to restore the fields
+		if hasBackup {
+			rm.logger.Warn("SetRecord failed, attempting to restore fields", "type", recordType, "instance", instanceName, "error", err)
+			if restoreErr := rm.storeRecordFields(ctx, recordType, instanceName, backup); restoreErr != nil {
+				rm.logger.Error("Failed to restore fields during rollback", "type", recordType, "instance", instanceName, "error", restoreErr)
+				return fmt.Errorf("update failed and field restoration failed: update error: %w, restore error: %v", err, restoreErr)
+			}
+		}
+		return fmt.Errorf("failed to store record fields: %w", err)
+	}
+
+	// Now update the checksum after fields are successfully stored
 	var checksumErr error
 	if oldChecksum == "" {
 		// New record, just set it
@@ -425,43 +458,29 @@ func (rm *recordManagerImpl) SetRecord(ctx context.Context, recordType, instance
 		}
 
 		if errors.Is(checksumErr, ErrConflict) {
+			// Record was modified concurrently after we stored fields
+			// Try to restore the old fields if we have a backup
+			if hasBackup {
+				rm.logger.Warn("Record was modified concurrently, attempting to restore fields", "type", recordType, "instance", instanceName)
+				if restoreErr := rm.storeRecordFields(ctx, recordType, instanceName, backup); restoreErr != nil {
+					rm.logger.Error("Failed to restore fields after concurrent modification", "type", recordType, "instance", instanceName, "error", restoreErr)
+				}
+			}
 			return fmt.Errorf("record was modified concurrently, use SetRecordIfMatch for safe updates")
 		}
 	}
 
 	if checksumErr != nil {
-		return fmt.Errorf("failed to update checksum: %w", checksumErr)
-	}
-
-	// Now try to store the fields
-	if err := rm.storeRecordFields(ctx, recordType, instanceName, data); err != nil {
-		// Rollback: restore the old checksum
-		rm.logger.Warn("SetRecord failed, attempting rollback", "type", recordType, "instance", instanceName, "error", err)
-
-		if hasBackup && oldChecksum != "" {
-			// Use safe rollback that checks if record was modified
-			if rollbackErr := rm.safeRollbackRecord(ctx, recordType, instanceName, backup, newChecksum); rollbackErr != nil {
-				rm.logger.Error("Rollback failed", "type", recordType, "instance", instanceName, "error", rollbackErr)
-				return fmt.Errorf("update failed and rollback failed: update error: %w, rollback error: %v", err, rollbackErr)
-			}
-			rm.logger.Info("Successfully rolled back to previous state", "type", recordType, "instance", instanceName)
-		} else if oldChecksum != "" {
-			// Just try to restore the old checksum
-			if rm.useCache {
-				_ = rm.cacheCtrl.CompareAndSwap(ctx, metaKey, newChecksum, oldChecksum)
-			} else {
-				_ = rm.valueCtrl.CompareAndSwap(ctx, metaKey, newChecksum, oldChecksum)
-			}
-		} else {
-			// New record that failed, try to clean up
-			if rm.useCache {
-				_ = rm.cacheCtrl.Delete(ctx, metaKey)
-			} else {
-				_ = rm.valueCtrl.Delete(ctx, metaKey)
+		// Checksum update failed, but fields are already written
+		// Try to restore old fields if we have a backup
+		if hasBackup {
+			rm.logger.Warn("Checksum update failed, attempting to restore fields", "type", recordType, "instance", instanceName, "error", checksumErr)
+			if restoreErr := rm.storeRecordFields(ctx, recordType, instanceName, backup); restoreErr != nil {
+				rm.logger.Error("Failed to restore fields after checksum failure", "type", recordType, "instance", instanceName, "error", restoreErr)
+				return fmt.Errorf("checksum update failed and field restoration failed: checksum error: %w, restore error: %v", checksumErr, restoreErr)
 			}
 		}
-
-		return err
+		return fmt.Errorf("failed to update checksum: %w", checksumErr)
 	}
 
 	// Ensure instance is in the index (important for records created via SetRecord)
@@ -543,12 +562,26 @@ func (rm *recordManagerImpl) SetRecordIfMatch(ctx context.Context, recordType, i
 }
 
 func (rm *recordManagerImpl) computeRecordChecksum(data interface{}) (string, error) {
+	// Use a stable serialization approach by converting to a map first
+	// This ensures consistent ordering of fields
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal record for checksum: %w", err)
 	}
 
-	hash := sha256.Sum256(jsonBytes)
+	// Parse into a map to ensure stable ordering
+	var m map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &m); err != nil {
+		return "", fmt.Errorf("failed to unmarshal for stable ordering: %w", err)
+	}
+
+	// Marshal again with sorted keys (Go's json.Marshal sorts map keys)
+	stableBytes, err := json.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal with stable ordering: %w", err)
+	}
+
+	hash := sha256.Sum256(stableBytes)
 	return hex.EncodeToString(hash[:]), nil
 }
 
@@ -579,21 +612,37 @@ func (rm *recordManagerImpl) storeRecordFields(ctx context.Context, recordType, 
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 			valueStr = fmt.Sprintf("%d", fieldValue.Uint())
 		case reflect.Float32, reflect.Float64:
-			valueStr = fmt.Sprintf("%f", fieldValue.Float())
+			// Use consistent precision for floats
+			valueStr = fmt.Sprintf("%.15g", fieldValue.Float())
 		case reflect.Bool:
 			valueStr = fmt.Sprintf("%t", fieldValue.Bool())
 		case reflect.Struct:
 			if fieldValue.Type() == reflect.TypeOf(time.Time{}) {
 				t := fieldValue.Interface().(time.Time)
-				valueStr = t.Format(time.RFC3339)
+				// Always use RFC3339Nano for maximum precision
+				valueStr = t.Format(time.RFC3339Nano)
 			} else {
+				// For all other structs, use JSON
 				data, err := json.Marshal(fieldValue.Interface())
 				if err != nil {
-					return fmt.Errorf("failed to marshal field %s: %w", field.Name, err)
+					return fmt.Errorf("failed to marshal struct field %s: %w", field.Name, err)
 				}
 				valueStr = string(data)
 			}
+		case reflect.Slice, reflect.Array, reflect.Map, reflect.Interface:
+			// Use JSON for complex types
+			data, err := json.Marshal(fieldValue.Interface())
+			if err != nil {
+				return fmt.Errorf("failed to marshal complex field %s of type %s: %w", field.Name, fieldValue.Kind(), err)
+			}
+			valueStr = string(data)
 		default:
+			// Log warning for unexpected types
+			rm.logger.Warn("Unexpected field type, using JSON marshaling",
+				"field", field.Name,
+				"type", fieldValue.Kind(),
+				"recordType", recordType,
+				"instance", instanceName)
 			data, err := json.Marshal(fieldValue.Interface())
 			if err != nil {
 				return fmt.Errorf("failed to marshal field %s: %w", field.Name, err)
@@ -841,7 +890,6 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 	upgraderValue := reflect.ValueOf(upgrader)
 
 	const batchSize = 100
-	const maxRollbackBatch = 10 // Limit rollback to prevent memory issues
 	offset := 0
 	totalUpgraded := 0
 	totalFailed := 0
@@ -853,7 +901,7 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 		oldChecksum  string
 		newChecksum  string
 	}
-	recentUpgrades := make([]upgradeRecord, 0, maxRollbackBatch)
+	recentUpgrades := make([]upgradeRecord, 0, rm.upgradeMaxRollback)
 
 	for {
 		instances, err := rm.ListInstances(ctx, recordType, offset, batchSize)
@@ -912,10 +960,12 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 				totalFailed++
 
 				// Check if we should stop and rollback recent changes
-				if totalFailed > 5 && totalFailed > totalUpgraded/2 && len(recentUpgrades) > 0 {
+				failureRate := float64(totalFailed) / float64(totalFailed+totalUpgraded)
+				if totalFailed > rm.upgradeMaxFailures && failureRate > rm.upgradeFailureRateLimit && len(recentUpgrades) > 0 {
 					rm.logger.Error("High failure rate detected, rolling back recent upgrades",
 						"failed", totalFailed,
 						"upgraded", totalUpgraded,
+						"failureRate", failureRate,
 						"toRollback", len(recentUpgrades))
 
 					// Rollback only recent upgrades (not all)
@@ -996,7 +1046,7 @@ func (rm *recordManagerImpl) UpgradeRecord(ctx context.Context, recordType strin
 			}
 
 			// Track in recent upgrades (sliding window)
-			if len(recentUpgrades) >= maxRollbackBatch {
+			if len(recentUpgrades) >= rm.upgradeMaxRollback {
 				// Remove oldest
 				recentUpgrades = recentUpgrades[1:]
 			}
@@ -1044,6 +1094,13 @@ func (rm *recordManagerImpl) ListRecordTypes(ctx context.Context) ([]string, err
 }
 
 func (rm *recordManagerImpl) ListAllInstances(ctx context.Context, offset, limit int) (map[string][]string, error) {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		return make(map[string][]string), nil
+	}
+
 	result := make(map[string][]string)
 
 	recordTypes, err := rm.ListRecordTypes(ctx)
@@ -1051,63 +1108,67 @@ func (rm *recordManagerImpl) ListAllInstances(ctx context.Context, offset, limit
 		return nil, err
 	}
 
-	globalPosition := 0
+	// Sort record types for consistent ordering
+	sortedTypes := make([]string, len(recordTypes))
+	copy(sortedTypes, recordTypes)
+	// Sort to ensure consistent ordering across calls
+	for i := 0; i < len(sortedTypes); i++ {
+		for j := i + 1; j < len(sortedTypes); j++ {
+			if sortedTypes[i] > sortedTypes[j] {
+				sortedTypes[i], sortedTypes[j] = sortedTypes[j], sortedTypes[i]
+			}
+		}
+	}
+
+	// Track global position and items collected
+	itemsSkipped := 0
 	itemsCollected := 0
 
-	for _, recordType := range recordTypes {
+	for _, recordType := range sortedTypes {
 		if itemsCollected >= limit {
 			break
 		}
 
-		// For each record type, we need to calculate the local offset
-		// First, get the total count for this type to know if we need to skip it entirely
-		// We'll do this by checking if there are any instances at position 0
-		testInstances, err := rm.ListInstances(ctx, recordType, 0, 1)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check instances for type %s: %w", recordType, err)
+		// Calculate how many items to skip for this type
+		itemsToSkip := 0
+		if itemsSkipped < offset {
+			itemsToSkip = offset - itemsSkipped
 		}
 
-		// If this type has no instances, skip it
-		if len(testInstances) == 0 {
+		// Calculate how many items we need from this type
+		itemsNeeded := limit - itemsCollected
+
+		// Fetch instances with calculated offset and limit
+		// Add a buffer to handle the case where we might skip some
+		fetchLimit := itemsToSkip + itemsNeeded
+		instances, err := rm.ListInstances(ctx, recordType, 0, fetchLimit)
+		if err != nil {
+			rm.logger.Warn("Failed to list instances for type, skipping",
+				"type", recordType,
+				"error", err)
 			continue
 		}
 
-		// Calculate local offset for this record type
-		localOffset := 0
-		if globalPosition < offset {
-			// We need to determine how many items to skip in this record type
-			// Get a batch to count
-			countBatch, err := rm.ListInstances(ctx, recordType, 0, offset-globalPosition+1)
-			if err != nil {
-				return nil, fmt.Errorf("failed to count instances for type %s: %w", recordType, err)
-			}
-
-			if len(countBatch) <= offset-globalPosition {
-				// All instances in this type should be skipped
-				globalPosition += len(countBatch)
-				continue
-			} else {
-				// Some instances should be included
-				localOffset = offset - globalPosition
-			}
+		// If we got fewer instances than itemsToSkip, update our skip count
+		if len(instances) <= itemsToSkip {
+			itemsSkipped += len(instances)
+			continue
 		}
 
-		// Calculate how many items we still need
-		remainingLimit := limit - itemsCollected
-
-		// Fetch instances with proper offset and limit
-		instances, err := rm.ListInstances(ctx, recordType, localOffset, remainingLimit)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list instances for type %s: %w", recordType, err)
+		// Calculate the actual instances to return
+		startIdx := itemsToSkip
+		endIdx := len(instances)
+		if endIdx > startIdx+itemsNeeded {
+			endIdx = startIdx + itemsNeeded
 		}
 
-		if len(instances) > 0 {
-			result[recordType] = instances
-			itemsCollected += len(instances)
-			globalPosition += localOffset + len(instances)
-		} else {
-			globalPosition += localOffset
+		returnInstances := instances[startIdx:endIdx]
+		if len(returnInstances) > 0 {
+			result[recordType] = returnInstances
+			itemsCollected += len(returnInstances)
 		}
+
+		itemsSkipped += startIdx
 	}
 
 	return result, nil
@@ -1185,40 +1246,19 @@ func (rm *recordManagerImpl) setFieldValue(fieldValue reflect.Value, fieldType r
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		var v int64
 		if _, err := fmt.Sscanf(valueStr, "%d", &v); err != nil {
-			// Try parsing as float and truncate (for type changes)
-			var f float64
-			if _, err2 := fmt.Sscanf(valueStr, "%f", &f); err2 == nil {
-				v = int64(f)
-				rm.logger.Warn("Converted float to int during field type change", "value", valueStr, "result", v)
-			} else {
-				return fmt.Errorf("cannot parse %q as int: %w", valueStr, err)
-			}
+			return fmt.Errorf("cannot parse %q as int: %w", valueStr, err)
 		}
 		fieldValue.SetInt(v)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		var v uint64
 		if _, err := fmt.Sscanf(valueStr, "%d", &v); err != nil {
-			// Try parsing as float and truncate (for type changes)
-			var f float64
-			if _, err2 := fmt.Sscanf(valueStr, "%f", &f); err2 == nil && f >= 0 {
-				v = uint64(f)
-				rm.logger.Warn("Converted float to uint during field type change", "value", valueStr, "result", v)
-			} else {
-				return fmt.Errorf("cannot parse %q as uint: %w", valueStr, err)
-			}
+			return fmt.Errorf("cannot parse %q as uint: %w", valueStr, err)
 		}
 		fieldValue.SetUint(v)
 	case reflect.Float32, reflect.Float64:
 		var v float64
-		if _, err := fmt.Sscanf(valueStr, "%f", &v); err != nil {
-			// Try parsing as int (for type changes)
-			var i int64
-			if _, err2 := fmt.Sscanf(valueStr, "%d", &i); err2 == nil {
-				v = float64(i)
-				rm.logger.Warn("Converted int to float during field type change", "value", valueStr, "result", v)
-			} else {
-				return fmt.Errorf("cannot parse %q as float: %w", valueStr, err)
-			}
+		if _, err := fmt.Sscanf(valueStr, "%g", &v); err != nil {
+			return fmt.Errorf("cannot parse %q as float: %w", valueStr, err)
 		}
 		fieldValue.SetFloat(v)
 	case reflect.Bool:
@@ -1233,22 +1273,11 @@ func (rm *recordManagerImpl) setFieldValue(fieldValue reflect.Value, fieldType r
 	case reflect.Struct:
 		// Special handling for time.Time
 		if fieldType == reflect.TypeOf(time.Time{}) {
-			t, err := time.Parse(time.RFC3339, valueStr)
+			// Try RFC3339Nano first (our standard format)
+			t, err := time.Parse(time.RFC3339Nano, valueStr)
 			if err != nil {
-				// Try other common formats
-				for _, format := range []string{
-					time.RFC3339Nano,
-					"2006-01-02T15:04:05",
-					"2006-01-02 15:04:05",
-					"2006-01-02",
-				} {
-					if parsed, err2 := time.Parse(format, valueStr); err2 == nil {
-						t = parsed
-						rm.logger.Warn("Parsed time with alternative format", "value", valueStr, "format", format)
-						err = nil
-						break
-					}
-				}
+				// Fall back to RFC3339 for backward compatibility
+				t, err = time.Parse(time.RFC3339, valueStr)
 				if err != nil {
 					return fmt.Errorf("cannot parse time %q: %w", valueStr, err)
 				}
