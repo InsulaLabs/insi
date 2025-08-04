@@ -222,6 +222,9 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("values"), color.CyanString("set"), color.CyanString("<key>"), color.CyanString("<value>"))
 	fmt.Fprintf(os.Stderr, "    Store a value with the given key\n")
 
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("values"), color.CyanString("setnx"), color.CyanString("<key>"), color.CyanString("<value>"))
+	fmt.Fprintf(os.Stderr, "    Set value only if key doesn't exist (set-if-not-exists)\n")
+
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("values"), color.CyanString("delete"), color.CyanString("<key>"))
 	fmt.Fprintf(os.Stderr, "    Delete a key-value pair\n")
 
@@ -290,6 +293,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  # Value store operations\n")
 	fmt.Fprintf(os.Stderr, "  ferry values set user:123 '{\"name\":\"Alice\",\"age\":30}'\n")
 	fmt.Fprintf(os.Stderr, "  ferry values get user:123\n")
+	fmt.Fprintf(os.Stderr, "  ferry values setnx lock:process \"locked\"\n")
 	fmt.Fprintf(os.Stderr, "  ferry values bump counter 1\n")
 	fmt.Fprintf(os.Stderr, "  ferry values iterate user: 0 50\n")
 	fmt.Fprintf(os.Stderr, "  \n")
@@ -377,6 +381,25 @@ func handleValues(f *ferry.Ferry, args []string) {
 		if err != nil {
 			logger.Error("Set failed", "key", key, "error", err)
 			fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			os.Exit(1)
+		}
+		color.HiGreen("OK")
+
+	case "setnx":
+		if len(subArgs) != 2 {
+			logger.Error("values setnx: requires <key> <value>")
+			printUsage()
+			os.Exit(1)
+		}
+		key, value := subArgs[0], subArgs[1]
+		err := vc.SetNX(ctx, key, value)
+		if err != nil {
+			if err == ferry.ErrConflict {
+				fmt.Fprintf(os.Stderr, "%s Key '%s' already exists.\n", color.RedString("Conflict:"), color.CyanString(key))
+			} else {
+				logger.Error("SetNX failed", "key", key, "error", err)
+				fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+			}
 			os.Exit(1)
 		}
 		color.HiGreen("OK")
