@@ -329,7 +329,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  Direct mode:   Use --public/--private or env vars (no config file)\n")
 	fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
 	fmt.Fprintf(os.Stderr, "  INSI_API_KEY          API key for authentication\n")
-	fmt.Fprintf(os.Stderr, "  INSI_PUBLIC_ADDRESS   Public address (e.g., db-0.insula.dev or https://db-0.insula.dev:443)\n")
+	fmt.Fprintf(os.Stderr, "  INSI_PUBLIC_ADDRESS   Public address (e.g., red.insulalabs.io or https://red.insulalabs.io:443)\n")
 	fmt.Fprintf(os.Stderr, "  INSI_PRIVATE_ADDRESS  Private address (defaults to public if not set)\n")
 	fmt.Fprintf(os.Stderr, "  INSI_INSTANCE_SECRET  Instance secret (required for --root without config)\n")
 	fmt.Fprintf(os.Stderr, "  INSI_SKIP_VERIFY      Set to 'true' to skip TLS verification\n")

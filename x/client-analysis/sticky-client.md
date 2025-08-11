@@ -8,8 +8,8 @@ FIRST
 📡 Subscriber 0 is listening to events from entity entity-33
 📡 Subscriber 1 is listening to events from entity entity-31
 🚀 Stress test started! Duration: 10m0s, Entities: 50 (Chaos Monkey Disabled)
-{"time":"2025-06-20T15:56:37.18645145-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-entities":{"entity-33":{"insi_client":{"url":"wss://db-0.insula.dev:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
-{"time":"2025-06-20T15:56:37.186718572-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-entities":{"entity-31":{"insi_client":{"url":"wss://db-1.insula.dev:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
+{"time":"2025-06-20T15:56:37.18645145-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-entities":{"entity-33":{"insi_client":{"url":"wss://red.insulalabs.io:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
+{"time":"2025-06-20T15:56:37.186718572-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-entities":{"entity-31":{"insi_client":{"url":"wss://blue.insulalabs.io:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
 {"time":"2025-06-20T15:56:37.426526293-04:00","level":"INFO","msg":"Successfully connected to WebSocket. Listening for events...","service":"fwit-t","fwi-entities":{"entity-33":{"insi_client":{"topic":"stress-topic"}}}}
 {"time":"2025-06-20T15:56:37.672761586-04:00","level":"INFO","msg":"Successfully connected to WebSocket. Listening for events...","service":"fwit-t","fwi-entities":{"entity-31":{"insi_client":{"topic":"stress-topic"}}}}
 {"time":"2025-06-20T16:06:37.186438235-04:00","level":"INFO","msg":"Context cancelled, closing WebSocket ping loop.","service":"fwit-t"}
@@ -84,13 +84,13 @@ TOTALS          | 15414 (236.948246ms) | 14376 (61.731462ms) | 14540 (234.251697
 📡 Total Events Received by All Subscribers: 586
 
 --- ❗ Detailed Error Log ---
-[2025-06-20T16:06:37-04:00] Entity 'entity-6': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:06:37-04:00] Entity 'entity-39': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:06:37-04:00] Entity 'entity-30': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:06:37-04:00] Entity 'entity-8': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:06:37-04:00] Entity 'entity-49': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:06:37-04:00] Entity 'entity-27': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:06:37-04:00] Entity 'entity-42': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:06:37-04:00] Entity 'entity-6': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:06:37-04:00] Entity 'entity-39': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:06:37-04:00] Entity 'entity-30': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:06:37-04:00] Entity 'entity-8': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:06:37-04:00] Entity 'entity-49': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:06:37-04:00] Entity 'entity-27': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:06:37-04:00] Entity 'entity-42': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
 
 ✅ Stress test on external cluster complete.
 ➜  build git:(dev) ✗ 
@@ -111,8 +111,8 @@ TOTALS          | 15414 (236.948246ms) | 14376 (61.731462ms) | 14540 (234.251697
 📡 Subscriber 0 is listening to events from entity entity-33
 📡 Subscriber 1 is listening to events from entity entity-25
 🚀 Stress test started! Duration: 10m0s, Entities: 50 (Chaos Monkey Disabled)
-{"time":"2025-06-20T16:16:35.944045935-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-33":{"url":"wss://db-2.insula.dev:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
-{"time":"2025-06-20T16:16:35.94424719-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-25":{"url":"wss://db-2.insula.dev:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
+{"time":"2025-06-20T16:16:35.944045935-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-33":{"url":"wss://green.insulalabs.io:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
+{"time":"2025-06-20T16:16:35.94424719-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-25":{"url":"wss://green.insulalabs.io:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
 {"time":"2025-06-20T16:16:36.118089626-04:00","level":"INFO","msg":"Successfully connected to WebSocket. Listening for events...","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-25":{"topic":"stress-topic"}}}}
 {"time":"2025-06-20T16:16:36.152654028-04:00","level":"INFO","msg":"Successfully connected to WebSocket. Listening for events...","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-33":{"topic":"stress-topic"}}}}
 {"time":"2025-06-20T16:26:35.944101709-04:00","level":"INFO","msg":"Context cancelled, closing WebSocket ping loop.","service":"fwit-t"}
@@ -188,18 +188,18 @@ TOTALS          | 11678 (309.281121ms) | 10754 (128.015309ms) | 10961 (305.27564
 📡 Total Events Received by All Subscribers: 468
 
 --- ❗ Detailed Error Log ---
-[2025-06-20T16:26:35-04:00] Entity 'entity-14': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-21': http request for get blob failed: Get "https://db-2.insula.dev:443/db/api/v1/blob/get?key=stress-blob-397": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-40': http request for get blob failed: Get "https://db-2.insula.dev:443/db/api/v1/blob/get?key=stress-blob-53": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-6': http request for get blob failed: Get "https://db-2.insula.dev:443/db/api/v1/blob/get?key=stress-blob-838": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-34': http request for get blob failed: Get "https://db-2.insula.dev:443/db/api/v1/blob/get?key=stress-blob-677": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-43': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-36': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-17': http request for get blob failed: Get "https://db-2.insula.dev:443/db/api/v1/blob/get?key=stress-blob-182": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-28': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-47': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-33': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:26:35-04:00] Entity 'entity-24': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-14': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-21': http request for get blob failed: Get "https://green.insulalabs.io:443/db/api/v1/blob/get?key=stress-blob-397": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-40': http request for get blob failed: Get "https://green.insulalabs.io:443/db/api/v1/blob/get?key=stress-blob-53": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-6': http request for get blob failed: Get "https://green.insulalabs.io:443/db/api/v1/blob/get?key=stress-blob-838": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-34': http request for get blob failed: Get "https://green.insulalabs.io:443/db/api/v1/blob/get?key=stress-blob-677": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-43': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-36': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-17': http request for get blob failed: Get "https://green.insulalabs.io:443/db/api/v1/blob/get?key=stress-blob-182": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-28': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-47': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-33': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:26:35-04:00] Entity 'entity-24': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
 
 ✅ Stress test on external cluster complete.
 ➜  build git:(dev) ✗ 
@@ -208,8 +208,8 @@ TOTALS          | 11678 (309.281121ms) | 10754 (128.015309ms) | 10961 (305.27564
 
 # With sticky client disabled, but optional (ensuring its still okay)
 
-"time":"2025-06-20T16:41:07.38487412-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-41":{"url":"wss://db-0.insula.dev:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
-{"time":"2025-06-20T16:41:07.385106845-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-31":{"url":"wss://db-0.insula.dev:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
+"time":"2025-06-20T16:41:07.38487412-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-41":{"url":"wss://red.insulalabs.io:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
+{"time":"2025-06-20T16:41:07.385106845-04:00","level":"INFO","msg":"Attempting to connect to WebSocket for event subscription","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-31":{"url":"wss://red.insulalabs.io:443/db/api/v1/events/subscribe?topic=stress-topic"}}}}
 {"time":"2025-06-20T16:41:07.581622068-04:00","level":"INFO","msg":"Successfully connected to WebSocket. Listening for events...","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-31":{"topic":"stress-topic"}}}}
 {"time":"2025-06-20T16:41:07.590537922-04:00","level":"INFO","msg":"Successfully connected to WebSocket. Listening for events...","service":"fwit-t","fwi-root-client":{"insi_client":{"entity-41":{"topic":"stress-topic"}}}}
 
@@ -284,16 +284,16 @@ TOTALS          | 11470 (335.982301ms) | 10534 (71.059313ms) | 10558 (334.008092
 📡 Total Events Received by All Subscribers: 436
 
 --- ❗ Detailed Error Log ---
-[2025-06-20T16:51:07-04:00] Entity 'entity-29': http request for blob upload failed: Post "https://db-0.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:51:07-04:00] Entity 'entity-22': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:51:07-04:00] Entity 'entity-40': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:51:07-04:00] Entity 'entity-42': http request for get blob failed: Get "https://db-0.insula.dev:443/db/api/v1/blob/get?key=stress-blob-552": context deadline exceeded
-[2025-06-20T16:51:07-04:00] Entity 'entity-24': http request for get blob failed: Get "https://db-0.insula.dev:443/db/api/v1/blob/get?key=stress-blob-855": context deadline exceeded
-[2025-06-20T16:51:07-04:00] Entity 'entity-35': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:51:07-04:00] Entity 'entity-30': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:51:07-04:00] Entity 'entity-2': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:51:07-04:00] Entity 'entity-1': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
-[2025-06-20T16:51:07-04:00] Entity 'entity-9': http request for blob upload failed: Post "https://db-2.insula.dev:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-29': http request for blob upload failed: Post "https://red.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-22': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-40': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-42': http request for get blob failed: Get "https://red.insulalabs.io:443/db/api/v1/blob/get?key=stress-blob-552": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-24': http request for get blob failed: Get "https://red.insulalabs.io:443/db/api/v1/blob/get?key=stress-blob-855": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-35': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-30': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-2': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-1': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
+[2025-06-20T16:51:07-04:00] Entity 'entity-9': http request for blob upload failed: Post "https://green.insulalabs.io:443/db/api/v1/blob/set": context deadline exceeded
 
 ✅ Stress test on external cluster complete.
 ➜  build git:(sticky-client) ✗ 

@@ -10,7 +10,7 @@ import (
 
 type Config struct {
 	ApiKey     string
-	Endpoints  []string // example: "db-0.insula.dev:443"
+	Endpoints  []string // example: "red.insulalabs.io:443"
 	SkipVerify bool
 	Timeout    time.Duration
 	Domain     string // If specified, will be used for client connections instead of endpoint host.

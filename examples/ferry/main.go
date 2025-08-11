@@ -207,7 +207,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "\n%s\n", color.YellowString("Configuration:"))
 	fmt.Fprintf(os.Stderr, "  %s --generate %s\n", color.GreenString("ferry"), color.CyanString("\"endpoint1,endpoint2,...\""))
 	fmt.Fprintf(os.Stderr, "    Generate a ferry.yaml configuration file from comma-separated endpoints\n")
-	fmt.Fprintf(os.Stderr, "    Example: ferry --generate \"db-0.insula.dev:443,db-1.insula.dev:443\" > ferry.yaml\n")
+	fmt.Fprintf(os.Stderr, "    Example: ferry --generate \"red.insulalabs.io:443,blue.insulalabs.io:443\" > ferry.yaml\n")
 
 	// Ping
 	fmt.Fprintf(os.Stderr, "\n%s\n", color.YellowString("Connectivity:"))
@@ -285,7 +285,7 @@ func printUsage() {
 	// Examples
 	fmt.Fprintf(os.Stderr, "\n%s\n", color.CyanString("Examples:"))
 	fmt.Fprintf(os.Stderr, "  # Generate configuration\n")
-	fmt.Fprintf(os.Stderr, "  ferry --generate \"db-0.insula.dev:443,db-1.insula.dev:443,db-2.insula.dev:443\" > ferry.yaml\n")
+	fmt.Fprintf(os.Stderr, "  ferry --generate \"red.insulalabs.io:443,blue.insulalabs.io:443,green.insulalabs.io:443\" > ferry.yaml\n")
 	fmt.Fprintf(os.Stderr, "  \n")
 	fmt.Fprintf(os.Stderr, "  # Test connectivity\n")
 	fmt.Fprintf(os.Stderr, "  ferry ping\n")
