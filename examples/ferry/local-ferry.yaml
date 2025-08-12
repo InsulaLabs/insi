@@ -1,7 +1,0 @@
-api_key_env: INSI_API_KEY
-endpoints:
-    - localhost:8443
-    - localhost:8444
-    - localhost:8445
-skip_verify: true
-timeout: 30s
