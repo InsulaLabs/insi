@@ -96,13 +96,7 @@ func (vc *vcImpl[T]) Get(ctx context.Context, key string) (T, error) {
 			return err
 		}
 
-		// Try to unmarshal the JSON value
-		if err := json.Unmarshal([]byte(valueStr), &result); err != nil {
-			vc.logger.Error("Failed to unmarshal value", "key", key, "error", err)
-			result = vc.defaultT
-			return nil
-		}
-
+		result = safeUnmarshal(valueStr, vc.defaultT, vc.logger, key)
 		return nil
 	})
 

@@ -95,12 +95,7 @@ func (cc *ccImpl[T]) Get(ctx context.Context, key string) (T, error) {
 			return err
 		}
 
-		if err := json.Unmarshal([]byte(valueStr), &result); err != nil {
-			cc.logger.Error("Failed to unmarshal value from cache", "key", key, "error", err)
-			result = cc.defaultT
-			return nil
-		}
-
+		result = safeUnmarshal(valueStr, cc.defaultT, cc.logger, key)
 		return nil
 	})
 
