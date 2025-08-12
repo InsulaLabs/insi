@@ -19,6 +19,7 @@ type CacheController[T any] interface {
 
 	Get(ctx context.Context, key string) (T, error)
 	Set(ctx context.Context, key string, value T) error
+	RawSet(ctx context.Context, key string, value string) error
 	SetNX(ctx context.Context, key string, value T) error
 	Delete(ctx context.Context, key string) error
 	CompareAndSwap(ctx context.Context, key string, oldValue, newValue T) error
@@ -111,6 +112,15 @@ func (cc *ccImpl[T]) Set(ctx context.Context, key string, value T) error {
 
 		fullKey := cc.buildPrefix(key)
 		return cc.client.SetCache(fullKey, string(valueBytes))
+	})
+
+	return translateError(err)
+}
+
+func (cc *ccImpl[T]) RawSet(ctx context.Context, key string, value string) error {
+	err := client.WithRetriesVoid(ctx, cc.logger, func() error {
+		fullKey := cc.buildPrefix(key)
+		return cc.client.SetCache(fullKey, value)
 	})
 
 	return translateError(err)

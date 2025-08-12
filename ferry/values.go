@@ -19,6 +19,7 @@ type ValueController[T any] interface {
 
 	Get(ctx context.Context, key string) (T, error)
 	Set(ctx context.Context, key string, value T) error
+	RawSet(ctx context.Context, key string, value string) error
 	SetNX(ctx context.Context, key string, value T) error
 	Delete(ctx context.Context, key string) error
 	CompareAndSwap(ctx context.Context, key string, oldValue, newValue T) error
@@ -114,6 +115,15 @@ func (vc *vcImpl[T]) Set(ctx context.Context, key string, value T) error {
 		fullKey := vc.buildPrefix(key)
 
 		return vc.client.Set(fullKey, string(valueBytes))
+	})
+
+	return translateError(err)
+}
+
+func (vc *vcImpl[T]) RawSet(ctx context.Context, key string, value string) error {
+	err := client.WithRetriesVoid(ctx, vc.logger, func() error {
+		fullKey := vc.buildPrefix(key)
+		return vc.client.Set(fullKey, value)
 	})
 
 	return translateError(err)
