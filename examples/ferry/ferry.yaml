@@ -1,7 +1,0 @@
-api_key_env: INSI_API_KEY
-endpoints:
-    - red.insulalabs.io:443
-    - blue.insulalabs.io:443
-    - green.insulalabs.io:443
-skip_verify: false
-timeout: 30s
