@@ -21,8 +21,10 @@ type CacheController[T any] interface {
 	Set(ctx context.Context, key string, value T) error
 	RawSet(ctx context.Context, key string, value string) error
 	SetNX(ctx context.Context, key string, value T) error
+	RawSetNX(ctx context.Context, key string, value string) error
 	Delete(ctx context.Context, key string) error
 	CompareAndSwap(ctx context.Context, key string, oldValue, newValue T) error
+	RawCompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error
 	IterateByPrefix(ctx context.Context, prefix string, offset, limit int) ([]string, error)
 }
 
@@ -140,6 +142,15 @@ func (cc *ccImpl[T]) SetNX(ctx context.Context, key string, value T) error {
 	return translateError(err)
 }
 
+func (cc *ccImpl[T]) RawSetNX(ctx context.Context, key string, value string) error {
+	err := client.WithRetriesVoid(ctx, cc.logger, func() error {
+		fullKey := cc.buildPrefix(key)
+		return cc.client.SetCacheNX(fullKey, value)
+	})
+
+	return translateError(err)
+}
+
 func (cc *ccImpl[T]) Delete(ctx context.Context, key string) error {
 	err := client.WithRetriesVoid(ctx, cc.logger, func() error {
 		fullKey := cc.buildPrefix(key)
@@ -164,6 +175,15 @@ func (cc *ccImpl[T]) CompareAndSwap(ctx context.Context, key string, oldValue, n
 		fullKey := cc.buildPrefix(key)
 
 		return cc.client.CompareAndSwapCache(fullKey, string(oldValueBytes), string(newValueBytes))
+	})
+
+	return translateError(err)
+}
+
+func (cc *ccImpl[T]) RawCompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error {
+	err := client.WithRetriesVoid(ctx, cc.logger, func() error {
+		fullKey := cc.buildPrefix(key)
+		return cc.client.CompareAndSwapCache(fullKey, oldValue, newValue)
 	})
 
 	return translateError(err)

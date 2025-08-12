@@ -21,8 +21,10 @@ type ValueController[T any] interface {
 	Set(ctx context.Context, key string, value T) error
 	RawSet(ctx context.Context, key string, value string) error
 	SetNX(ctx context.Context, key string, value T) error
+	RawSetNX(ctx context.Context, key string, value string) error
 	Delete(ctx context.Context, key string) error
 	CompareAndSwap(ctx context.Context, key string, oldValue, newValue T) error
+	RawCompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error
 	Bump(ctx context.Context, key string, value int) error
 	IterateByPrefix(ctx context.Context, prefix string, offset, limit int) ([]string, error)
 }
@@ -142,6 +144,15 @@ func (vc *vcImpl[T]) SetNX(ctx context.Context, key string, value T) error {
 	return translateError(err)
 }
 
+func (vc *vcImpl[T]) RawSetNX(ctx context.Context, key string, value string) error {
+	err := client.WithRetriesVoid(ctx, vc.logger, func() error {
+		fullKey := vc.buildPrefix(key)
+		return vc.client.SetNX(fullKey, value)
+	})
+
+	return translateError(err)
+}
+
 func (vc *vcImpl[T]) Delete(ctx context.Context, key string) error {
 	err := client.WithRetriesVoid(ctx, vc.logger, func() error {
 		fullKey := vc.buildPrefix(key)
@@ -167,6 +178,15 @@ func (vc *vcImpl[T]) CompareAndSwap(ctx context.Context, key string, oldValue, n
 		fullKey := vc.buildPrefix(key)
 
 		return vc.client.CompareAndSwap(fullKey, string(oldValueBytes), string(newValueBytes))
+	})
+
+	return translateError(err)
+}
+
+func (vc *vcImpl[T]) RawCompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error {
+	err := client.WithRetriesVoid(ctx, vc.logger, func() error {
+		fullKey := vc.buildPrefix(key)
+		return vc.client.CompareAndSwap(fullKey, oldValue, newValue)
 	})
 
 	return translateError(err)
