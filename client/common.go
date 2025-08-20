@@ -5,8 +5,32 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"os"
+	"strings"
 	"time"
 )
+
+const (
+	DefaultInsiEndpointsList    = "https://red.insulalabs.io:443,https://green.insulalabs.io:443,https://blue.insulalabs.io:443"
+	DefaultSelfHostEndpointList = "https://127.0.0.1:8443,https://127.0.0.1:8444,https://127.0.0.1:8445"
+	DefaultInsiEndpointListVar  = "INSI_ENDPOINTS_LIST"
+	DefaultInsiApiKeyVar        = "INSI_API_KEY"
+	DefaultInsiSkipVerifyVar    = "INSI_SKIP_VERIFY"
+	DefaultInsiIsLocalVar       = "INSI_IS_LOCAL"
+)
+
+/*
+Common retry functions for rate limit handling and error backoff
+*/
+var CONFIG_MAX_VOID_RETRIES = 10
+
+func WithRetriesVoid(ctx context.Context, logger *slog.Logger, fn func() error) error {
+	_, err := WithRetries(ctx, CONFIG_MAX_VOID_RETRIES, logger, func() (any, error) {
+		return nil, fn()
+	})
+	return err
+}
 
 func WithRetries[R any](ctx context.Context, retries int, logger *slog.Logger, fn func() (R, error)) (R, error) {
 
@@ -50,11 +74,91 @@ func WithRetries[R any](ctx context.Context, retries int, logger *slog.Logger, f
 	}
 }
 
-var CONFIG_MAX_VOID_RETRIES = 10
+/*
+Simply load an insi client from the environment without the need
+of a full config file
+*/
+func CreateClientFromEnv(logger *slog.Logger) (*Client, error) {
+	apiKey := os.Getenv(DefaultInsiApiKeyVar)
+	skipVerify := false
+	if skipVerifyEnv := os.Getenv(DefaultInsiSkipVerifyVar); skipVerifyEnv == "true" {
+		skipVerify = true
+	}
 
-func WithRetriesVoid(ctx context.Context, logger *slog.Logger, fn func() error) error {
-	_, err := WithRetries(ctx, CONFIG_MAX_VOID_RETRIES, logger, func() (any, error) {
-		return nil, fn()
+	if apiKey == "" {
+		return nil, fmt.Errorf("%s is not set", DefaultInsiApiKeyVar)
+	}
+
+	insiEndpointsList := os.Getenv(DefaultInsiEndpointListVar)
+	if insiEndpointsList == "" {
+		if isLocalEnv := os.Getenv(DefaultInsiIsLocalVar); isLocalEnv == "true" {
+			insiEndpointsList = DefaultSelfHostEndpointList
+		} else {
+			insiEndpointsList = DefaultInsiEndpointsList
+		}
+	}
+
+	insiEndpoints := strings.Split(insiEndpointsList, ",")
+
+	extractDomain := func(addr string) string {
+		if strings.HasPrefix(addr, "https://") {
+			addr = strings.TrimPrefix(addr, "https://")
+		} else if strings.HasPrefix(addr, "http://") {
+			addr = strings.TrimPrefix(addr, "http://")
+		}
+
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return addr
+		}
+		return host
+	}
+
+	extractHostPort := func(addr string) string {
+		if strings.HasPrefix(addr, "https://") {
+			addr = strings.TrimPrefix(addr, "https://")
+		} else if strings.HasPrefix(addr, "http://") {
+			addr = strings.TrimPrefix(addr, "http://")
+		}
+		return addr
+	}
+
+	insiEndpointDomains := make([]string, len(insiEndpoints))
+	for i, endpoint := range insiEndpoints {
+		insiEndpointDomains[i] = extractDomain(endpoint)
+	}
+
+	endpoints := make([]Endpoint, len(insiEndpoints))
+
+	for i, endpoint := range insiEndpoints {
+		endpoints[i] = Endpoint{
+			PublicBinding:  extractHostPort(endpoint),
+			PrivateBinding: extractHostPort(endpoint),
+			ClientDomain:   insiEndpointDomains[i],
+		}
+	}
+
+	clientLogger := logger.WithGroup("client")
+
+	c, err := NewClient(&Config{
+		ConnectionType: ConnectionTypeDirect,
+		Endpoints:      endpoints,
+		ApiKey:         apiKey,
+		SkipVerify:     skipVerify,
+		Logger:         clientLogger,
 	})
-	return err
+
+	pd, err := c.Ping()
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Debug(
+		"got ping from insi cluster",
+		"connection-info", insiEndpoints,
+		"skip-verify", skipVerify,
+		"ping-data", pd,
+	)
+
+	return c, err
 }
