@@ -28,6 +28,7 @@ var (
 	publicAddress  string
 	privateAddress string
 	maxSize        int
+	useCache       bool
 )
 
 func init() {
@@ -43,6 +44,7 @@ func init() {
 	flag.StringVar(&publicAddress, "public", "", "Public address of the node to connect to. Defaults to INSI_PUBLIC_ADDRESS environment variable.")
 	flag.StringVar(&privateAddress, "private", "", "Private address of the node to connect to. Defaults to INSI_PRIVATE_ADDRESS environment variable.")
 	flag.IntVar(&maxSize, "max-size", 1000, "Maximum number of entries to load for the object map")
+	flag.BoolVar(&useCache, "cache", false, "Use cache endpoints instead of values endpoints. Defaults to false (uses values).")
 }
 
 func loadConfig(path string) (*config.Cluster, error) {
@@ -261,7 +263,7 @@ func main() {
 	ctx := context.Background()
 	objectLogger := logger.WithGroup("object").WithGroup(prefix)
 
-	remoteMap, err := client.RemoteMapFromPrefix(ctx, prefix, objectLogger, cli, maxSize)
+	remoteMap, err := client.RemoteMapFromPrefix(ctx, prefix, objectLogger, cli, maxSize, useCache)
 	if err != nil {
 		logger.Error("Failed to create remote map", "prefix", prefix, "error", err)
 		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)

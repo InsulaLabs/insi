@@ -48,8 +48,10 @@ RemoteMapFromPrefix
 
 	The remote object map provides a window to work with these ranges of key
 	data to facilitate easy operations on the data locally
+
+	If useCache is true, all operations will use the cache endpoints instead of the values endpoints
 */
-func RemoteMapFromPrefix(ctx context.Context, prefix string, logger *slog.Logger, client *Client, maxSize int) (*RemoteMap, error) {
+func RemoteMapFromPrefix(ctx context.Context, prefix string, logger *slog.Logger, client *Client, maxSize int, useCache bool) (*RemoteMap, error) {
 
 	if maxSize <= 0 {
 		return nil, ErrObjectInvalidMaxSize
@@ -59,7 +61,13 @@ func RemoteMapFromPrefix(ctx context.Context, prefix string, logger *slog.Logger
 	// that are invalid, but handleable
 	prefix = strings.TrimSuffix(prefix, "*")
 
-	keysInMap, err := client.IterateByPrefix(prefix, 0, maxSize)
+	var keysInMap []string
+	var err error
+	if useCache {
+		keysInMap, err = client.IterateCacheByPrefix(prefix, 0, maxSize)
+	} else {
+		keysInMap, err = client.IterateByPrefix(prefix, 0, maxSize)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +77,11 @@ func RemoteMapFromPrefix(ctx context.Context, prefix string, logger *slog.Logger
 	for _, key := range keysInMap {
 		var value string
 		if err := WithRetriesVoid(ctx, logger, func() error {
-			value, err = client.Get(key)
+			if useCache {
+				value, err = client.GetCache(key)
+			} else {
+				value, err = client.Get(key)
+			}
 			return err
 		}); err != nil {
 			return nil, err
@@ -78,24 +90,61 @@ func RemoteMapFromPrefix(ctx context.Context, prefix string, logger *slog.Logger
 	}
 
 	return &RemoteMap{
-		fields:  fields,
-		mu:      sync.RWMutex{},
-		ctx:     ctx,
-		client:  client,
-		logger:  logger,
-		prefix:  prefix,
-		maxSize: maxSize,
+		fields:   fields,
+		mu:       sync.RWMutex{},
+		ctx:      ctx,
+		client:   client,
+		logger:   logger,
+		prefix:   prefix,
+		maxSize:  maxSize,
+		useCache: useCache,
 	}, nil
 }
 
 type RemoteMap struct {
-	fields  map[string]string
-	mu      sync.RWMutex
-	ctx     context.Context
-	client  *Client
-	logger  *slog.Logger
-	prefix  string
-	maxSize int
+	fields   map[string]string
+	mu       sync.RWMutex
+	ctx      context.Context
+	client   *Client
+	logger   *slog.Logger
+	prefix   string
+	maxSize  int
+	useCache bool
+}
+
+func (x *RemoteMap) get(key string) (string, error) {
+	if x.useCache {
+		return x.client.GetCache(key)
+	}
+	return x.client.Get(key)
+}
+
+func (x *RemoteMap) setNX(key, value string) error {
+	if x.useCache {
+		return x.client.SetCacheNX(key, value)
+	}
+	return x.client.SetNX(key, value)
+}
+
+func (x *RemoteMap) compareAndSwap(key, oldValue, newValue string) error {
+	if x.useCache {
+		return x.client.CompareAndSwapCache(key, oldValue, newValue)
+	}
+	return x.client.CompareAndSwap(key, oldValue, newValue)
+}
+
+func (x *RemoteMap) delete(key string) error {
+	if x.useCache {
+		return x.client.DeleteCache(key)
+	}
+	return x.client.Delete(key)
+}
+
+func (x *RemoteMap) iterateByPrefix(prefix string, offset, limit int) ([]string, error) {
+	if x.useCache {
+		return x.client.IterateCacheByPrefix(prefix, offset, limit)
+	}
+	return x.client.IterateByPrefix(prefix, offset, limit)
 }
 
 /*
@@ -152,7 +201,7 @@ func (x *RemoteMap) RemoteFromSubset(subsetField string) (*RemoteMap, error) {
 
 	properSubsetField := fmt.Sprintf("%s:%s", x.prefix, subsetField)
 
-	keysInMap, err := x.client.IterateByPrefix(properSubsetField, 0, x.maxSize)
+	keysInMap, err := x.iterateByPrefix(properSubsetField, 0, x.maxSize)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +211,7 @@ func (x *RemoteMap) RemoteFromSubset(subsetField string) (*RemoteMap, error) {
 	for _, key := range keysInMap {
 		var value string
 		if err := WithRetriesVoid(x.ctx, x.logger, func() error {
-			value, err = x.client.Get(key)
+			value, err = x.get(key)
 			return err
 		}); err != nil {
 			return nil, err
@@ -171,13 +220,14 @@ func (x *RemoteMap) RemoteFromSubset(subsetField string) (*RemoteMap, error) {
 	}
 
 	return &RemoteMap{
-		fields:  subsetFields,
-		mu:      sync.RWMutex{},
-		ctx:     x.ctx,
-		client:  x.client,
-		logger:  x.logger.With("subset", subsetField),
-		prefix:  properSubsetField,
-		maxSize: x.maxSize,
+		fields:   subsetFields,
+		mu:       sync.RWMutex{},
+		ctx:      x.ctx,
+		client:   x.client,
+		logger:   x.logger.With("subset", subsetField),
+		prefix:   properSubsetField,
+		maxSize:  x.maxSize,
+		useCache: x.useCache,
 	}, nil
 }
 
@@ -193,7 +243,7 @@ func (x *RemoteMap) CreateUniqueEntry(key, value string) error {
 	fullKey := fmt.Sprintf("%s:%s", x.prefix, key)
 
 	if err := WithRetriesVoid(x.ctx, x.logger, func() error {
-		return x.client.SetNX(fullKey, value)
+		return x.setNX(fullKey, value)
 	}); err != nil {
 		return err
 	}
@@ -209,7 +259,7 @@ func (x *RemoteMap) getCurrentExistingEntryRemote(prefixedKey string) (string, e
 	var value string
 	if err = WithRetriesVoid(x.ctx, x.logger, func() error {
 		// note: it must have the prefix already
-		value, err = x.client.Get(prefixedKey)
+		value, err = x.get(prefixedKey)
 		return err
 	}); err != nil {
 		return "", err
@@ -242,7 +292,7 @@ func (x *RemoteMap) UpdateExistingEntry(key, value string) error {
 		if _, ok := x.fields[fullKey]; !ok {
 			return ErrFieldNotFound
 		}
-		return x.client.CompareAndSwap(fullKey, existingValue, value)
+		return x.compareAndSwap(fullKey, existingValue, value)
 	}); err != nil {
 		return err
 	}
@@ -270,7 +320,7 @@ func (x *RemoteMap) DeleteExistingEntry(key string) error {
 		if _, ok := x.fields[fullKey]; !ok {
 			return ErrFieldNotFound
 		}
-		return x.client.Delete(fullKey)
+		return x.delete(fullKey)
 	}); err != nil {
 		return err
 	}
@@ -397,7 +447,7 @@ func (x *RemoteMap) SyncPull(ctx context.Context, quick bool) error {
 		prefix and then swap the map in place.
 	*/
 
-	keysInMap, err := x.client.IterateByPrefix(x.prefix, 0, x.maxSize)
+	keysInMap, err := x.iterateByPrefix(x.prefix, 0, x.maxSize)
 	if err != nil {
 		return err
 	}
@@ -407,7 +457,7 @@ func (x *RemoteMap) SyncPull(ctx context.Context, quick bool) error {
 	for _, key := range keysInMap {
 		var value string
 		if err := WithRetriesVoid(ctx, x.logger, func() error {
-			value, err = x.client.Get(key)
+			value, err = x.get(key)
 			return err
 		}); err != nil {
 			return err
