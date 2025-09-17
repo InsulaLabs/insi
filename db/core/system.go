@@ -872,7 +872,7 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	// Set the limits in the FSM
 	if req.Limits.BytesOnDisk != nil {
 		if err := c.fsm.Set(models.KVPayload{
-			Key:   WithApiKeyMaxDiskUsage(target.KeyUUID),
+			Key:   WithApiKeyMaxDiskUsage(target.DataScopeUUID),
 			Value: fmt.Sprintf("%d", *req.Limits.BytesOnDisk),
 		}); err != nil {
 			c.logger.Error("failed to set disk limit", "error", err)
@@ -882,7 +882,7 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Limits.BytesInMemory != nil {
 		if err := c.fsm.Set(models.KVPayload{
-			Key:   WithApiKeyMaxMemoryUsage(target.KeyUUID),
+			Key:   WithApiKeyMaxMemoryUsage(target.DataScopeUUID),
 			Value: fmt.Sprintf("%d", *req.Limits.BytesInMemory),
 		}); err != nil {
 			c.logger.Error("failed to set memory limit", "error", err)
@@ -892,7 +892,7 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Limits.EventsEmitted != nil {
 		if err := c.fsm.Set(models.KVPayload{
-			Key:   WithApiKeyMaxEvents(target.KeyUUID),
+			Key:   WithApiKeyMaxEvents(target.DataScopeUUID),
 			Value: fmt.Sprintf("%d", *req.Limits.EventsEmitted),
 		}); err != nil {
 			c.logger.Error("failed to set events limit", "error", err)
@@ -902,7 +902,7 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Limits.Subscribers != nil {
 		if err := c.fsm.Set(models.KVPayload{
-			Key:   WithApiKeyMaxSubscriptions(target.KeyUUID),
+			Key:   WithApiKeyMaxSubscriptions(target.DataScopeUUID),
 			Value: fmt.Sprintf("%d", *req.Limits.Subscribers),
 		}); err != nil {
 			c.logger.Error("failed to set subscribers limit", "error", err)
@@ -913,7 +913,7 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if req.Limits.RPSDataLimit != nil {
 		if err := c.fsm.Set(models.KVPayload{
-			Key:   WithApiKeyRPSDataLimit(target.KeyUUID),
+			Key:   WithApiKeyRPSDataLimit(target.DataScopeUUID),
 			Value: fmt.Sprintf("%d", *req.Limits.RPSDataLimit),
 		}); err != nil {
 			c.logger.Error("failed to set RPS data limit", "error", err)
@@ -923,13 +923,17 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Limits.RPSEventLimit != nil {
 		if err := c.fsm.Set(models.KVPayload{
-			Key:   WithApiKeyRPSEventLimit(target.KeyUUID),
+			Key:   WithApiKeyRPSEventLimit(target.DataScopeUUID),
 			Value: fmt.Sprintf("%d", *req.Limits.RPSEventLimit),
 		}); err != nil {
 			c.logger.Error("failed to set RPS event limit", "error", err)
 			http.Error(w, "failed to set RPS event limit", http.StatusInternalServerError)
 			return
 		}
+	}
+
+	if req.Limits.RPSDataLimit != nil || req.Limits.RPSEventLimit != nil {
+		c.entityRateLimiters.Delete(target.DataScopeUUID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -962,7 +966,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ensure theres no tombstone (deleted key)
-	tombstoneKey := WithApiKeyTombstone(td.KeyUUID)
+	tombstoneKey := WithApiKeyTombstone(td.DataScopeUUID)
 	_, err = c.fsm.Get(tombstoneKey)
 	if err == nil {
 		c.logger.Error("Tombstone found for key (marked for deletion)", "key", td.KeyUUID)
@@ -979,7 +983,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if the key exists before proceeding.
-	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.DataScopeUUID)
 	if _, err := c.fsm.Get(fsmStorageKey); err != nil {
 		c.logger.Warn("Attempt to get limits for non-existent API key", "key_uuid", td.KeyUUID, "error", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -992,7 +996,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the limit for disk usage
-	diskLimitForKey, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	diskLimitForKey, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get limit for disk usage", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -1005,7 +1009,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	memLimitForKey, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	memLimitForKey, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get limit for memory usage", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -1018,7 +1022,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	eventsLimitForKey, err := c.fsm.Get(WithApiKeyMaxEvents(td.KeyUUID))
+	eventsLimitForKey, err := c.fsm.Get(WithApiKeyMaxEvents(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get limit for events usage", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -1031,7 +1035,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subscribersLimitForKey, err := c.fsm.Get(WithApiKeyMaxSubscriptions(td.KeyUUID))
+	subscribersLimitForKey, err := c.fsm.Get(WithApiKeyMaxSubscriptions(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get limit for subscribers usage", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -1045,7 +1049,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the current usage for disk
-	diskUsage, err := c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
+	diskUsage, err := c.fsm.Get(WithApiKeyDiskUsage(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get current disk usage", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -1059,7 +1063,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the current usage for memory
-	memUsage, err := c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
+	memUsage, err := c.fsm.Get(WithApiKeyMemoryUsage(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get current memory usage", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -1073,7 +1077,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the current usage for events
-	eventsUsage, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	eventsUsage, err := c.fsm.Get(WithApiKeyEvents(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get current events usage", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -1087,7 +1091,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the current usage for subscribers
-	subscribersUsage, err := c.fsm.Get(WithApiKeySubscriptions(td.KeyUUID))
+	subscribersUsage, err := c.fsm.Get(WithApiKeySubscriptions(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get current subscribers usage", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -1101,7 +1105,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the KEYUUID SET VALUE FROM ABOVE
-	rpsDataLimitForKey, err := c.fsm.Get(WithApiKeyRPSDataLimit(td.KeyUUID))
+	rpsDataLimitForKey, err := c.fsm.Get(WithApiKeyRPSDataLimit(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get current RPS data limit", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -1114,7 +1118,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rpsEventLimitForKey, err := c.fsm.Get(WithApiKeyRPSEventLimit(td.KeyUUID))
+	rpsEventLimitForKey, err := c.fsm.Get(WithApiKeyRPSEventLimit(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get current RPS event limit", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
