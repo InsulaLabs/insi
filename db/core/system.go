@@ -966,7 +966,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ensure theres no tombstone (deleted key)
-	tombstoneKey := WithApiKeyTombstone(td.DataScopeUUID)
+	tombstoneKey := WithApiKeyTombstone(td.KeyUUID)
 	_, err = c.fsm.Get(tombstoneKey)
 	if err == nil {
 		c.logger.Error("Tombstone found for key (marked for deletion)", "key", td.KeyUUID)
@@ -983,7 +983,7 @@ func (c *Core) specificLimitsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if the key exists before proceeding.
-	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.DataScopeUUID)
+	fsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
 	if _, err := c.fsm.Get(fsmStorageKey); err != nil {
 		c.logger.Warn("Attempt to get limits for non-existent API key", "key_uuid", td.KeyUUID, "error", err)
 		w.Header().Set("Content-Type", "application/json")
