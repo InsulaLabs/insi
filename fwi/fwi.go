@@ -833,6 +833,12 @@ func (f *fwiImpl) UpdateEntityLimits(
 	if newLimits.Subscribers != nil {
 		mergedLimits.Subscribers = newLimits.Subscribers
 	}
+	if newLimits.RPSEventLimit != nil {
+		mergedLimits.RPSEventLimit = newLimits.RPSEventLimit
+	}
+	if newLimits.RPSDataLimit != nil {
+		mergedLimits.RPSDataLimit = newLimits.RPSDataLimit
+	}
 
 	// Validate the merged limits.
 	if mergedLimits.BytesInMemory != nil && mergedLimits.BytesOnDisk != nil {
