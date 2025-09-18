@@ -694,13 +694,7 @@ type subscriptionSlotRequest struct {
 
 func (c *Core) getSubscriptionUsage(dataScopeUUID string) (limit, current int64, err error) {
 
-	// get datascope for key uuid
-	dsUUID, err := c.fsm.Get(withApiKeyDataScope(dataScopeUUID))
-	if err != nil {
-		return 0, 0, fmt.Errorf("could not get data scope: %w", err)
-	}
-
-	limitStr, err := c.fsm.Get(WithApiKeyMaxSubscriptions(dsUUID))
+	limitStr, err := c.fsm.Get(WithApiKeyMaxSubscriptions(dataScopeUUID))
 	if err != nil {
 		return 0, 0, fmt.Errorf("could not get max subscribers limit: %w", err)
 	}
@@ -709,7 +703,7 @@ func (c *Core) getSubscriptionUsage(dataScopeUUID string) (limit, current int64,
 		return 0, 0, fmt.Errorf("could not parse max subscribers limit: %w", err)
 	}
 
-	currentSubsStr, err := c.fsm.Get(WithApiKeySubscriptions(dsUUID))
+	currentSubsStr, err := c.fsm.Get(WithApiKeySubscriptions(dataScopeUUID))
 	if err != nil && !tkv.IsErrKeyNotFound(err) {
 		return 0, 0, fmt.Errorf("could not get current subscribers: %w", err)
 	}
