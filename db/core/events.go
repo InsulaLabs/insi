@@ -33,8 +33,9 @@ type eventSession struct {
 	send chan []byte
 	// Service pointer to access logger, etc.
 	service *Core
-	// The UUID of the API key that created the session.
-	keyUUID string
+
+	// The key and data scope uuid of the API key that created the session.
+	td models.TokenData
 }
 
 type eventSubsystem struct {
@@ -249,7 +250,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 	if topic == "" {
 		c.logger.Warn("WebSocket connection attempt without topic")
 		http.Error(w, "Missing topic", http.StatusBadRequest)
-		c.releaseSubscriptionSlot(td.KeyUUID) // Release the slot
+		c.releaseSubscriptionSlot(td.DataScopeUUID) // Release the slot
 		return
 	}
 
@@ -262,7 +263,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 		c.wsConnectionLock.Unlock()
 		c.logger.Warn("Max WebSocket connections reached, rejecting new connection", "current", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections)
 		http.Error(w, "Too many connections", http.StatusServiceUnavailable)
-		c.releaseSubscriptionSlot(td.KeyUUID) // Release the slot
+		c.releaseSubscriptionSlot(td.DataScopeUUID) // Release the slot
 		return
 	}
 	// Incrementing will be done in registerSubscriber after successful upgrade
@@ -271,7 +272,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := c.wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		c.logger.Error("Failed to upgrade WebSocket connection, releasing slot", "error", err, "topic", prefixedTopic, "key_uuid", td.KeyUUID)
-		c.releaseSubscriptionSlot(td.KeyUUID) // Release the slot
+		c.releaseSubscriptionSlot(td.DataScopeUUID) // Release the slot
 		return
 	}
 	c.logger.Info("WebSocket connection upgraded", "remote_addr", conn.RemoteAddr().String(), "topic", prefixedTopic)
@@ -281,7 +282,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 		topic:   prefixedTopic,
 		send:    make(chan []byte, sendBufferSize),
 		service: c,
-		keyUUID: td.KeyUUID,
+		td:      td,
 	}
 
 	c.registerSubscriber(session)
@@ -301,7 +302,7 @@ func (c *Core) registerSubscriber(session *eventSession) {
 	if c.activeWsConnections >= int32(c.cfg.Sessions.MaxConnections) {
 		c.logger.Error("Attempted to register subscriber when max connections already met or exceeded, releasing slot", "active", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections, "key_uuid", session.keyUUID)
 		go session.conn.Close()
-		c.releaseSubscriptionSlot(session.keyUUID)
+		c.releaseSubscriptionSlot(session.td.DataScopeUUID)
 		return
 	}
 	c.activeWsConnections++
@@ -327,7 +328,7 @@ func (c *Core) unregisterSubscriber(session *eventSession) {
 			c.logger.Info("Subscriber unregistered, releasing slot", "topic", session.topic, "remote_addr", session.conn.RemoteAddr().String())
 
 			// Release the subscription slot on the leader
-			c.releaseSubscriptionSlot(session.keyUUID)
+			c.releaseSubscriptionSlot(session.td.DataScopeUUID)
 
 			// Decrement connection count only if we actually found and removed the session
 			if c.activeWsConnections > 0 {
@@ -590,19 +591,19 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	currentEventsStr, err := c.fsm.Get(WithApiKeyEvents(td.KeyUUID))
+	currentEventsStr, err := c.fsm.Get(WithApiKeyEvents(td.DataScopeUUID))
 	if err != nil && !tkv.IsErrKeyNotFound(err) {
-		c.logger.Error("Could not get current events", "key", td.KeyUUID, "error", err)
+		c.logger.Error("Could not get current events", "key", td.KeyUUID, "ds", td.DataScopeUUID, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	currentEvents, _ := strconv.ParseInt(currentEventsStr, 10, 64)
 
 	if currentEvents >= limit {
-		lastResetStr, err := c.fsm.Get(WithApiKeyEventLastReset(td.KeyUUID))
+		lastResetStr, err := c.fsm.Get(WithApiKeyEventLastReset(td.DataScopeUUID))
 		if err != nil {
 			if !tkv.IsErrKeyNotFound(err) {
-				c.logger.Error("Could not get last reset time", "key", td.KeyUUID, "error", err)
+				c.logger.Error("Could not get last reset time", "key", td.KeyUUID, "ds", td.DataScopeUUID, "error", err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
@@ -610,10 +611,10 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 			// Key not found: this is the first time they have hit the limit.
 			// Set the timestamp and reject this event. The reset cycle will start now.
 			if err := c.fsm.Set(models.KVPayload{
-				Key:   WithApiKeyEventLastReset(td.KeyUUID),
+				Key:   WithApiKeyEventLastReset(td.DataScopeUUID),
 				Value: time.Now().UTC().Format(time.RFC3339),
 			}); err != nil {
-				c.logger.Error("Could not set initial last reset time", "key", td.KeyUUID, "error", err)
+				c.logger.Error("Could not set initial last reset time", "key", td.KeyUUID, "ds", td.DataScopeUUID, "error", err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
@@ -626,7 +627,7 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 
 		lastResetTime, err := time.Parse(time.RFC3339, lastResetStr)
 		if err != nil {
-			c.logger.Error("Could not parse last reset time", "key", td.KeyUUID, "lastReset", lastResetStr, "error", err)
+			c.logger.Error("Could not parse last reset time", "key", td.KeyUUID, "ds", td.DataScopeUUID, "lastReset", lastResetStr, "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -641,19 +642,19 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		// It has been more than 24 hours. Reset the counters and proceed with the event.
 		// 1. Reset the usage tracker to "0". It will be bumped to 1 after this event is published.
 		if err := c.fsm.Set(models.KVPayload{
-			Key:   WithApiKeyEvents(td.KeyUUID),
+			Key:   WithApiKeyEvents(td.DataScopeUUID),
 			Value: "0",
 		}); err != nil {
-			c.logger.Error("Could not reset events tracker", "key", td.KeyUUID, "error", err)
+			c.logger.Error("Could not reset events tracker", "key", td.KeyUUID, "ds", td.DataScopeUUID, "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 		// 2. Reset the last reset time to now.
 		if err := c.fsm.Set(models.KVPayload{
-			Key:   WithApiKeyEventLastReset(td.KeyUUID),
+			Key:   WithApiKeyEventLastReset(td.DataScopeUUID),
 			Value: time.Now().UTC().Format(time.RFC3339),
 		}); err != nil {
-			c.logger.Error("Could not set last reset time", "key", td.KeyUUID, "error", err)
+			c.logger.Error("Could not set last reset time", "key", td.KeyUUID, "ds", td.DataScopeUUID, "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -680,7 +681,7 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		This will update the value considered the "usage" tracker,
 		which is what we compare their max limit to (set by admin)
 	*/
-	if err := c.fsm.BumpInteger(WithApiKeyEvents(td.KeyUUID), 1); err != nil {
+	if err := c.fsm.BumpInteger(WithApiKeyEvents(td.DataScopeUUID), 1); err != nil {
 		c.logger.Error("Could not bump integer via FSM for events", "error", err)
 		// Don't fail the whole request, but log it.
 	}
@@ -691,10 +692,10 @@ type subscriptionSlotRequest struct {
 	DataScopeUUID string `json:"data_scope_uuid"`
 }
 
-func (c *Core) getSubscriptionUsage(keyUUID string) (limit, current int64, err error) {
+func (c *Core) getSubscriptionUsage(dataScopeUUID string) (limit, current int64, err error) {
 
 	// get datascope for key uuid
-	dsUUID, err := c.fsm.Get(withApiKeyDataScope(keyUUID))
+	dsUUID, err := c.fsm.Get(withApiKeyDataScope(dataScopeUUID))
 	if err != nil {
 		return 0, 0, fmt.Errorf("could not get data scope: %w", err)
 	}
@@ -741,11 +742,12 @@ func (c *Core) eventPurgeHandler(w http.ResponseWriter, r *http.Request) {
 	c.eventSubscribersLock.Lock()
 	for topic, subscribers := range c.eventSubscribers {
 		for session := range subscribers {
-			if session.keyUUID == td.KeyUUID {
+			if session.td.DataScopeUUID == td.DataScopeUUID {
 				sessionsToDisconnect = append(sessionsToDisconnect, session)
 				c.logger.Info("Found subscriber to purge",
 					"topic", topic,
 					"key_uuid", td.KeyUUID,
+					"ds", td.DataScopeUUID,
 					"remote_addr", session.conn.RemoteAddr().String())
 			}
 		}
@@ -769,6 +771,7 @@ func (c *Core) eventPurgeHandler(w http.ResponseWriter, r *http.Request) {
 
 	c.logger.Info("Purged event subscriptions",
 		"key_uuid", td.KeyUUID,
+		"ds", td.DataScopeUUID,
 		"disconnected_count", disconnectedCount)
 
 	// Return success with count of disconnected sessions
