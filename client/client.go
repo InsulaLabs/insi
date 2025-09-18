@@ -199,6 +199,10 @@ type Config struct {
 	// Defaults to false (stickiness disabled).
 	// Note - This has some performance trade-offs. Read the docs for more info.
 	EnableLeaderStickiness bool
+
+	// DisableFindNode disables automatic failover to other endpoints when connection fails.
+	// Defaults to false (failover enabled).
+	DisableFindNode bool
 }
 
 type ErrorResponse struct {
@@ -218,6 +222,7 @@ type Client struct {
 	endpoints              []Endpoint
 	endpointMu             sync.RWMutex
 	enableLeaderStickiness bool
+	disableFindNode        bool
 }
 
 /*
@@ -243,6 +248,7 @@ func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 		redirectCoutner:        atomic.Uint64{},
 		endpoints:              c.endpoints,
 		enableLeaderStickiness: c.enableLeaderStickiness,
+		disableFindNode:        c.disableFindNode,
 	}
 }
 
@@ -378,6 +384,7 @@ func NewClient(cfg *Config) (*Client, error) {
 		redirectCoutner:        atomic.Uint64{},
 		endpoints:              cfg.Endpoints,
 		enableLeaderStickiness: cfg.EnableLeaderStickiness,
+		disableFindNode:        cfg.DisableFindNode,
 	}, nil
 }
 
@@ -385,36 +392,105 @@ func (c *Client) ResetAccumulatedRedirects() {
 	c.redirectCoutner.Store(0)
 }
 
+// isConnectionError checks if the error is a connection error that should trigger failover
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for URL errors that contain network errors
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		// Check if the underlying error is a network error
+		var netErr *net.OpError
+		if errors.As(urlErr.Err, &netErr) {
+			return true
+		}
+		// Check for other connection-related errors in the error string
+		errStr := err.Error()
+		return strings.Contains(errStr, "connection refused") ||
+			strings.Contains(errStr, "connection reset") ||
+			strings.Contains(errStr, "no such host") ||
+			strings.Contains(errStr, "network is unreachable") ||
+			strings.Contains(errStr, "no route to host")
+	}
+
+	return false
+}
+
 func isPrivatePath(path string) bool {
 	return strings.HasPrefix(path, "db/api/v1/join") || strings.HasPrefix(path, "db/api/v1/admin/")
+}
+
+// getNextEndpoint returns URLs for the next endpoint to try, cycling through available endpoints
+func (c *Client) getNextEndpoint(currentPublicHost string) (*url.URL, *url.URL, error) {
+	c.endpointMu.RLock()
+	defer c.endpointMu.RUnlock()
+
+	if len(c.endpoints) <= 1 {
+		return nil, nil, fmt.Errorf("no alternative endpoints available")
+	}
+
+	// Find current endpoint index
+	currentIndex := -1
+	for i, ep := range c.endpoints {
+		pubURL, err := createBaseURLHelper(ep.PublicBinding, ep.ClientDomain)
+		if err != nil {
+			continue
+		}
+		if pubURL.Host == currentPublicHost {
+			currentIndex = i
+			break
+		}
+	}
+
+	// If we couldn't find the current endpoint, start from the beginning
+	if currentIndex == -1 {
+		currentIndex = 0
+	}
+
+	// Try next endpoints in order
+	for i := 1; i < len(c.endpoints); i++ {
+		nextIndex := (currentIndex + i) % len(c.endpoints)
+		nextEndpoint := c.endpoints[nextIndex]
+
+		publicURL, err := createBaseURLHelper(nextEndpoint.PublicBinding, nextEndpoint.ClientDomain)
+		if err != nil {
+			continue
+		}
+
+		privateURL, err := createBaseURLHelper(nextEndpoint.PrivateBinding, nextEndpoint.ClientDomain)
+		if err != nil {
+			continue
+		}
+
+		return publicURL, privateURL, nil
+	}
+
+	return nil, nil, fmt.Errorf("no valid alternative endpoints found")
+}
+
+// createBaseURLHelper is a helper function to create base URLs
+func createBaseURLHelper(binding, clientDomain string) (*url.URL, error) {
+	host, port, err := net.SplitHostPort(binding)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse binding '%s': %w", binding, err)
+	}
+
+	connectHost := host
+	if clientDomain != "" {
+		connectHost = clientDomain
+	}
+
+	finalConnectAddress := net.JoinHostPort(connectHost, port)
+	baseURLStr := fmt.Sprintf("https://%s", finalConnectAddress)
+	return url.Parse(baseURLStr)
 }
 
 func (c *Client) doRequest(method, path string, queryParams map[string]string, body interface{}, target interface{}) error {
 
 	// Save original method to preserve it across redirects
 	originalMethod := method
-
-	c.endpointMu.RLock()
-	var baseURL *url.URL
-	if isPrivatePath(path) {
-		baseURL = c.privateBaseURL // Administration route or internal data route
-	} else {
-		baseURL = c.publicBaseURL // Public route (authorized actors)
-	}
-	c.endpointMu.RUnlock()
-
-	// Construct the initial URL
-	initialPathURL := &url.URL{Path: path}
-	currentReqURL := baseURL.ResolveReference(initialPathURL)
-
-	// Apply query parameters
-	if len(queryParams) > 0 {
-		q := currentReqURL.Query()
-		for k, v := range queryParams {
-			q.Set(k, v)
-		}
-		currentReqURL.RawQuery = q.Encode()
-	}
 
 	var reqBodyBytes []byte
 	var err error
@@ -434,343 +510,438 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 		}
 	}
 
-	var lastResp *http.Response
+	// Keep track of which endpoints we've tried
+	triedEndpoints := make(map[string]bool)
+	var lastConnectionErr error
 
-	for redirects := 0; redirects < MaximumRedirects; redirects++ {
-		reqBodyReader := bytes.NewBuffer(reqBodyBytes)
-
-		req, err := http.NewRequest(originalMethod, currentReqURL.String(), reqBodyReader)
-		if err != nil {
-			c.logger.Error(
-				"Failed to create new HTTP request",
-				"method", originalMethod,
-				"url", currentReqURL.String(),
-				"error", err,
-			)
-			return fmt.Errorf(
-				"failed to create request %s %s: %w", originalMethod, currentReqURL.String(), err,
-			)
+	// Try current endpoint first, then failover to others if needed
+	for endpointAttempt := 0; endpointAttempt < len(c.endpoints); endpointAttempt++ {
+		c.endpointMu.RLock()
+		var baseURL *url.URL
+		currentPublicHost := c.publicBaseURL.Host
+		if isPrivatePath(path) {
+			baseURL = c.privateBaseURL // Administration route or internal data route
+		} else {
+			baseURL = c.publicBaseURL // Public route (authorized actors)
 		}
+		c.endpointMu.RUnlock()
 
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", c.apiKey)
+		// Skip if we've already tried this endpoint
+		if triedEndpoints[baseURL.Host] {
+			continue
+		}
+		triedEndpoints[baseURL.Host] = true
 
-		c.logger.Debug(
-			"Sending request",
-			"method", originalMethod,
-			"url", currentReqURL.String(),
-			"attempt", redirects+1,
-		)
+		// Construct the initial URL
+		initialPathURL := &url.URL{Path: path}
+		currentReqURL := baseURL.ResolveReference(initialPathURL)
 
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			c.logger.Error(
-				"HTTP request failed",
-				"method", originalMethod,
-				"url", currentReqURL.String(),
-				"error", err,
-			)
-			// Close previous response body if any, though `err` here means `resp` is likely nil
-			if lastResp != nil && lastResp.Body != nil {
-				lastResp.Body.Close()
+		// Apply query parameters
+		if len(queryParams) > 0 {
+			q := currentReqURL.Query()
+			for k, v := range queryParams {
+				q.Set(k, v)
 			}
-			return fmt.Errorf("http request %s %s failed: %w", originalMethod, currentReqURL.String(), err)
+			currentReqURL.RawQuery = q.Encode()
 		}
-		if lastResp != nil && lastResp.Body != nil {
-			lastResp.Body.Close()
-		}
-		lastResp = resp
 
-		// Check for redirect status codes
-		switch resp.StatusCode {
-		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, // 301, 302, 303
-			http.StatusTemporaryRedirect, http.StatusPermanentRedirect: // 307, 308
+		var lastResp *http.Response
 
-			loc := resp.Header.Get("Location")
-			if loc == "" {
-				resp.Body.Close()
-				c.logger.Error("Redirect response missing Location header", "status_code", resp.StatusCode, "url", currentReqURL.String())
-				return fmt.Errorf("redirect (status %d) missing Location header from %s", resp.StatusCode, currentReqURL.String())
-			}
+		for redirects := 0; redirects < MaximumRedirects; redirects++ {
+			reqBodyReader := bytes.NewBuffer(reqBodyBytes)
 
-			// Resolve Location relative to currentReqURL
-			redirectURL, err := currentReqURL.Parse(loc)
+			req, err := http.NewRequest(originalMethod, currentReqURL.String(), reqBodyReader)
 			if err != nil {
-				resp.Body.Close()
-				c.logger.Error("Failed to parse redirect Location header", "location", loc, "error", err)
-				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
-			}
-
-			c.logger.Debug("Request redirected",
-				"from_url", currentReqURL.String(),
-				"to_url", redirectURL.String(),
-				"status_code", resp.StatusCode,
-				"method", originalMethod)
-
-			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
-				c.redirectCoutner.Add(1)
-				// This is a leader redirect. Update the client to stick to the new leader for future requests.
-				if c.enableLeaderStickiness {
-					if err := c.setLeader(redirectURL); err != nil {
-						// Log the error but continue; the redirect will be handled for this single request anyway.
-						c.logger.Warn("Failed to set sticky leader from redirect", "error", err)
-					}
-				}
-			}
-
-			currentReqURL = redirectURL // Update URL for the next iteration
-			resp.Body.Close()           // Close current redirect response body before continuing
-			continue                    // Continue to the next iteration of the loop for the redirect
-		}
-
-		// Not a redirect, or unhandled status by the loop; this is the final response to process.
-		defer resp.Body.Close() // Ensure this final response body is closed when function returns
-
-		// Check for rate limiting first
-		if resp.StatusCode == http.StatusTooManyRequests {
-			retryAfterStr := resp.Header.Get("Retry-After")
-			limitStr := resp.Header.Get("X-RateLimit-Limit")
-			burstStr := resp.Header.Get("X-RateLimit-Burst")
-
-			var retryAfter time.Duration
-			if seconds, err := strconv.ParseFloat(retryAfterStr, 64); err == nil {
-				retryAfter = time.Duration(seconds * float64(time.Second))
-			} else {
-				// Fallback if parsing fails
-				retryAfter = 1 * time.Second // Default to 1s if header is missing or invalid
-				c.logger.Debug(
-					"Could not parse Retry-After header, defaulting",
-					"value", retryAfterStr,
-					"default", retryAfter,
+				c.logger.Error(
+					"Failed to create new HTTP request",
+					"method", originalMethod,
+					"url", currentReqURL.String(),
 					"error", err,
+				)
+				return fmt.Errorf(
+					"failed to create request %s %s: %w", originalMethod, currentReqURL.String(), err,
 				)
 			}
 
-			limit, _ := strconv.Atoi(limitStr)
-			burst, _ := strconv.Atoi(burstStr)
-
-			bodyBytes, _ := io.ReadAll(resp.Body)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", c.apiKey)
 
 			c.logger.Debug(
-				"Request was rate limited",
+				"Sending request",
+				"method", originalMethod,
 				"url", currentReqURL.String(),
-				"retry_after", retryAfter,
-				"limit", limit,
-				"burst", burst,
+				"attempt", redirects+1,
 			)
 
-			return &ErrRateLimited{
-				RetryAfter: retryAfter,
-				Limit:      limit,
-				Burst:      burst,
-				Message:    strings.TrimSpace(string(bodyBytes)),
+			resp, err := c.httpClient.Do(req)
+			if err != nil {
+				// Check if this is a connection error and we should failover
+				if isConnectionError(err) && !c.disableFindNode && endpointAttempt < len(c.endpoints)-1 {
+					lastConnectionErr = err
+					c.logger.Warn(
+						"Connection failed, will try next endpoint",
+						"method", originalMethod,
+						"url", currentReqURL.String(),
+						"error", err,
+						"endpoint_attempt", endpointAttempt+1,
+					)
+					// Close previous response body if any
+					if lastResp != nil && lastResp.Body != nil {
+						lastResp.Body.Close()
+					}
+					// Break out of redirect loop to try next endpoint
+					break
+				}
+
+				c.logger.Error(
+					"HTTP request failed",
+					"method", originalMethod,
+					"url", currentReqURL.String(),
+					"error", err,
+				)
+				// Close previous response body if any, though `err` here means `resp` is likely nil
+				if lastResp != nil && lastResp.Body != nil {
+					lastResp.Body.Close()
+				}
+				return fmt.Errorf("http request %s %s failed: %w", originalMethod, currentReqURL.String(), err)
 			}
-		}
+			if lastResp != nil && lastResp.Body != nil {
+				lastResp.Body.Close()
+			}
+			lastResp = resp
 
-		if resp.StatusCode == http.StatusBadRequest {
-			bodyBytes, _ := io.ReadAll(resp.Body)
+			// Check for redirect status codes
+			switch resp.StatusCode {
+			case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, // 301, 302, 303
+				http.StatusTemporaryRedirect, http.StatusPermanentRedirect: // 307, 308
 
-			// Check for resource limit headers first, as they are a specific type of bad request.
+				loc := resp.Header.Get("Location")
+				if loc == "" {
+					resp.Body.Close()
+					c.logger.Error("Redirect response missing Location header", "status_code", resp.StatusCode, "url", currentReqURL.String())
+					return fmt.Errorf("redirect (status %d) missing Location header from %s", resp.StatusCode, currentReqURL.String())
+				}
 
-			/*
-				Disk usage cap reached
-			*/
-			if currentDiskUsageStr := resp.Header.Get("X-Current-Disk-Usage"); currentDiskUsageStr != "" {
-				limitStr := resp.Header.Get("X-Disk-Usage-Limit")
-				current, _ := strconv.ParseInt(currentDiskUsageStr, 10, 64)
-				limit, _ := strconv.ParseInt(limitStr, 10, 64)
-				return &ErrDiskLimitExceeded{
-					CurrentUsage: current,
-					Limit:        limit,
-					Message:      strings.TrimSpace(string(bodyBytes)),
+				// Resolve Location relative to currentReqURL
+				redirectURL, err := currentReqURL.Parse(loc)
+				if err != nil {
+					resp.Body.Close()
+					c.logger.Error("Failed to parse redirect Location header", "location", loc, "error", err)
+					return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
+				}
+
+				c.logger.Debug("Request redirected",
+					"from_url", currentReqURL.String(),
+					"to_url", redirectURL.String(),
+					"status_code", resp.StatusCode,
+					"method", originalMethod)
+
+				if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+					c.redirectCoutner.Add(1)
+					// This is a leader redirect. Update the client to stick to the new leader for future requests.
+					if c.enableLeaderStickiness {
+						if err := c.setLeader(redirectURL); err != nil {
+							// Log the error but continue; the redirect will be handled for this single request anyway.
+							c.logger.Warn("Failed to set sticky leader from redirect", "error", err)
+						}
+					}
+				}
+
+				currentReqURL = redirectURL // Update URL for the next iteration
+				resp.Body.Close()           // Close current redirect response body before continuing
+				continue                    // Continue to the next iteration of the loop for the redirect
+			}
+
+			// Not a redirect, or unhandled status by the loop; this is the final response to process.
+			defer resp.Body.Close() // Ensure this final response body is closed when function returns
+
+			// Check for rate limiting first
+			if resp.StatusCode == http.StatusTooManyRequests {
+				retryAfterStr := resp.Header.Get("Retry-After")
+				limitStr := resp.Header.Get("X-RateLimit-Limit")
+				burstStr := resp.Header.Get("X-RateLimit-Burst")
+
+				var retryAfter time.Duration
+				if seconds, err := strconv.ParseFloat(retryAfterStr, 64); err == nil {
+					retryAfter = time.Duration(seconds * float64(time.Second))
+				} else {
+					// Fallback if parsing fails
+					retryAfter = 1 * time.Second // Default to 1s if header is missing or invalid
+					c.logger.Debug(
+						"Could not parse Retry-After header, defaulting",
+						"value", retryAfterStr,
+						"default", retryAfter,
+						"error", err,
+					)
+				}
+
+				limit, _ := strconv.Atoi(limitStr)
+				burst, _ := strconv.Atoi(burstStr)
+
+				bodyBytes, _ := io.ReadAll(resp.Body)
+
+				c.logger.Debug(
+					"Request was rate limited",
+					"url", currentReqURL.String(),
+					"retry_after", retryAfter,
+					"limit", limit,
+					"burst", burst,
+				)
+
+				return &ErrRateLimited{
+					RetryAfter: retryAfter,
+					Limit:      limit,
+					Burst:      burst,
+					Message:    strings.TrimSpace(string(bodyBytes)),
 				}
 			}
 
-			/*
-				Memory usage cap reached
-			*/
-			if currentMemoryUsageStr := resp.Header.Get("X-Current-Memory-Usage"); currentMemoryUsageStr != "" {
-				limitStr := resp.Header.Get("X-Memory-Usage-Limit")
-				current, _ := strconv.ParseInt(currentMemoryUsageStr, 10, 64)
-				limit, _ := strconv.ParseInt(limitStr, 10, 64)
-				return &ErrMemoryLimitExceeded{
-					CurrentUsage: current,
-					Limit:        limit,
-					Message:      strings.TrimSpace(string(bodyBytes)),
-				}
-			}
+			if resp.StatusCode == http.StatusBadRequest {
+				bodyBytes, _ := io.ReadAll(resp.Body)
 
-			/*
-				Events emitter cap reached
-			*/
-			if currentEventsStr := resp.Header.Get("X-Current-Events"); currentEventsStr != "" {
-				limitStr := resp.Header.Get("X-Events-Limit")
-				current, _ := strconv.ParseInt(currentEventsStr, 10, 64)
-				limit, _ := strconv.ParseInt(limitStr, 10, 64)
-				return &ErrEventsLimitExceeded{
-					CurrentUsage: current,
-					Limit:        limit,
-					Message:      strings.TrimSpace(string(bodyBytes)),
-				}
-			}
+				// Check for resource limit headers first, as they are a specific type of bad request.
 
-			/*
-				Structured error response
-			*/
-			var errorResp ErrorResponse
-			if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
-				return fmt.Errorf("server error (status 400): %s - %s", errorResp.ErrorType, errorResp.Message)
-			}
-
-			/*
-				Generic error response
-			*/
-			return fmt.Errorf("server returned status 400 Bad Request: %s", string(bodyBytes))
-		}
-
-		if resp.StatusCode == http.StatusNotFound {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-
-			var errorResp ErrorResponse
-			if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
 				/*
-					Check for specific error types returned with a 404 status
+					Disk usage cap reached
 				*/
-				if errorResp.ErrorType == "API_KEY_NOT_FOUND" {
-					return ErrAPIKeyNotFound
+				if currentDiskUsageStr := resp.Header.Get("X-Current-Disk-Usage"); currentDiskUsageStr != "" {
+					limitStr := resp.Header.Get("X-Disk-Usage-Limit")
+					current, _ := strconv.ParseInt(currentDiskUsageStr, 10, 64)
+					limit, _ := strconv.ParseInt(limitStr, 10, 64)
+					return &ErrDiskLimitExceeded{
+						CurrentUsage: current,
+						Limit:        limit,
+						Message:      strings.TrimSpace(string(bodyBytes)),
+					}
 				}
-				return fmt.Errorf("server error (status 404): %s - %s", errorResp.ErrorType, errorResp.Message)
-			}
 
-			/*
-				For specific GET operations, a 404 is a semantic "not found" for the resource key in the URL.
+				/*
+					Memory usage cap reached
+				*/
+				if currentMemoryUsageStr := resp.Header.Get("X-Current-Memory-Usage"); currentMemoryUsageStr != "" {
+					limitStr := resp.Header.Get("X-Memory-Usage-Limit")
+					current, _ := strconv.ParseInt(currentMemoryUsageStr, 10, 64)
+					limit, _ := strconv.ParseInt(limitStr, 10, 64)
+					return &ErrMemoryLimitExceeded{
+						CurrentUsage: current,
+						Limit:        limit,
+						Message:      strings.TrimSpace(string(bodyBytes)),
+					}
+				}
 
-				Here, we convert 404 to ErrKeyNotFound to be more informative.
-			*/
-			isDataGetOperation := method == http.MethodGet &&
-				(strings.HasPrefix(path, "db/api/v1/get") ||
-					strings.HasPrefix(path, "db/api/v1/cache/get") ||
-					strings.HasPrefix(path, "db/api/v1/iterate") ||
-					strings.HasPrefix(path, "db/api/v1/blob/iterate"))
+				/*
+					Events emitter cap reached
+				*/
+				if currentEventsStr := resp.Header.Get("X-Current-Events"); currentEventsStr != "" {
+					limitStr := resp.Header.Get("X-Events-Limit")
+					current, _ := strconv.ParseInt(currentEventsStr, 10, 64)
+					limit, _ := strconv.ParseInt(limitStr, 10, 64)
+					return &ErrEventsLimitExceeded{
+						CurrentUsage: current,
+						Limit:        limit,
+						Message:      strings.TrimSpace(string(bodyBytes)),
+					}
+				}
 
-			if isDataGetOperation {
-				return ErrKeyNotFound
-			}
-
-			/*
-				For all other operations (POST, DELETE, other GETs),
-					a 404 implies the endpoint itself was not found.
-			*/
-			return fmt.Errorf("endpoint not found (404) at %s: %s", currentReqURL.String(), string(bodyBytes))
-		}
-
-		/*
-			Atomic operations (CAS, SetNX) can fail with a 409 Conflict or 412 Precondition Failed.
-			These are a semantic way to indicate that the operation failed due to a conflict.
-			So we return ErrConflict in these cases.
-		*/
-		if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusPreconditionFailed {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			c.logger.Warn(
-				"Conflict/Precondition failed response from server",
-				"url", currentReqURL.String(),
-				"status", resp.StatusCode,
-				"body", string(bodyBytes),
-			)
-			return ErrConflict
-		}
-
-		/*
-			All other non-2xx status codes are errors.
-		*/
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			c.logger.Warn("Received non-2xx status code", "method", originalMethod, "url", currentReqURL.String(), "status_code", resp.StatusCode)
-			/*
-				Attempt to read error body for more details
-			*/
-			var errorResp ErrorResponse
-			bodyBytes, readErr := io.ReadAll(resp.Body)
-			if readErr == nil {
+				/*
+					Structured error response
+				*/
+				var errorResp ErrorResponse
 				if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
-					c.logger.Debug("Parsed JSON error response from server", "error_type", errorResp.ErrorType, "message", errorResp.Message)
+					return fmt.Errorf("server error (status 400): %s - %s", errorResp.ErrorType, errorResp.Message)
+				}
+
+				/*
+					Generic error response
+				*/
+				return fmt.Errorf("server returned status 400 Bad Request: %s", string(bodyBytes))
+			}
+
+			if resp.StatusCode == http.StatusNotFound {
+				bodyBytes, _ := io.ReadAll(resp.Body)
+
+				var errorResp ErrorResponse
+				if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
 					/*
-						We acheive an auth no-op by pinging a server with a value to check if its a valid key
-						and/or to see if the server is online. To distinguish between the two
-						we check real quick to see if the error response from the server indicates
-						anything about the API key itself not being found vs us not being authorized.
+						Check for specific error types returned with a 404 status
 					*/
 					if errorResp.ErrorType == "API_KEY_NOT_FOUND" {
 						return ErrAPIKeyNotFound
 					}
-					/*
-						Return a generic error with the server's message if available
-					*/
+					return fmt.Errorf("server error (status 404): %s - %s", errorResp.ErrorType, errorResp.Message)
+				}
+
+				/*
+					For specific GET operations, a 404 is a semantic "not found" for the resource key in the URL.
+
+					Here, we convert 404 to ErrKeyNotFound to be more informative.
+				*/
+				isDataGetOperation := method == http.MethodGet &&
+					(strings.HasPrefix(path, "db/api/v1/get") ||
+						strings.HasPrefix(path, "db/api/v1/cache/get") ||
+						strings.HasPrefix(path, "db/api/v1/iterate") ||
+						strings.HasPrefix(path, "db/api/v1/blob/iterate"))
+
+				if isDataGetOperation {
+					return ErrKeyNotFound
+				}
+
+				/*
+					For all other operations (POST, DELETE, other GETs),
+						a 404 implies the endpoint itself was not found.
+				*/
+				return fmt.Errorf("endpoint not found (404) at %s: %s", currentReqURL.String(), string(bodyBytes))
+			}
+
+			/*
+				Atomic operations (CAS, SetNX) can fail with a 409 Conflict or 412 Precondition Failed.
+				These are a semantic way to indicate that the operation failed due to a conflict.
+				So we return ErrConflict in these cases.
+			*/
+			if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusPreconditionFailed {
+				bodyBytes, _ := io.ReadAll(resp.Body)
+				c.logger.Warn(
+					"Conflict/Precondition failed response from server",
+					"url", currentReqURL.String(),
+					"status", resp.StatusCode,
+					"body", string(bodyBytes),
+				)
+				return ErrConflict
+			}
+
+			/*
+				All other non-2xx status codes are errors.
+			*/
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				c.logger.Warn("Received non-2xx status code", "method", originalMethod, "url", currentReqURL.String(), "status_code", resp.StatusCode)
+				/*
+					Attempt to read error body for more details
+				*/
+				var errorResp ErrorResponse
+				bodyBytes, readErr := io.ReadAll(resp.Body)
+				if readErr == nil {
+					if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
+						c.logger.Debug("Parsed JSON error response from server", "error_type", errorResp.ErrorType, "message", errorResp.Message)
+						/*
+							We acheive an auth no-op by pinging a server with a value to check if its a valid key
+							and/or to see if the server is online. To distinguish between the two
+							we check real quick to see if the error response from the server indicates
+							anything about the API key itself not being found vs us not being authorized.
+						*/
+						if errorResp.ErrorType == "API_KEY_NOT_FOUND" {
+							return ErrAPIKeyNotFound
+						}
+						/*
+							Return a generic error with the server's message if available
+						*/
+						return fmt.Errorf(
+							"server error (status %d): %s - %s",
+							resp.StatusCode,
+							errorResp.ErrorType,
+							errorResp.Message,
+						)
+					}
+					// If JSON unmarshal fails, we have a raw text body.
+					// We should return it.
 					return fmt.Errorf(
-						"server error (status %d): %s - %s",
+						"server returned status %d for %s %s: %s",
 						resp.StatusCode,
-						errorResp.ErrorType,
-						errorResp.Message,
+						originalMethod,
+						currentReqURL.String(),
+						strings.TrimSpace(string(bodyBytes)),
 					)
 				}
-				// If JSON unmarshal fails, we have a raw text body.
-				// We should return it.
 				return fmt.Errorf(
-					"server returned status %d for %s %s: %s",
+					"server returned status %d for %s %s (and could not read body)",
 					resp.StatusCode,
 					originalMethod,
 					currentReqURL.String(),
-					strings.TrimSpace(string(bodyBytes)),
 				)
 			}
-			return fmt.Errorf(
-				"server returned status %d for %s %s (and could not read body)",
-				resp.StatusCode,
-				originalMethod,
-				currentReqURL.String(),
+
+			/*
+				Decode the response body into the target interface if provided.
+			*/
+			if target != nil {
+				if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+					c.logger.Error(
+						"Failed to decode response body",
+						"method", originalMethod,
+						"url", currentReqURL.String(),
+						"status_code", resp.StatusCode,
+						"error", err,
+					)
+					return fmt.Errorf(
+						"failed to decode response body for %s %s (status %d): %w",
+						originalMethod, currentReqURL.String(), resp.StatusCode, err,
+					)
+				}
+			}
+			c.logger.Debug(
+				"Request successful",
+				"method", originalMethod,
+				"url", currentReqURL.String(),
+				"status_code", resp.StatusCode,
 			)
+			return nil
 		}
 
 		/*
-			Decode the response body into the target interface if provided.
+			If loop finishes, check if we broke out due to connection error or too many redirects.
 		*/
-		if target != nil {
-			if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		if lastResp != nil && lastResp.Body != nil {
+			lastResp.Body.Close()
+		}
+
+		// If we have a connection error and haven't tried all endpoints yet, try the next one
+		if lastConnectionErr != nil && !c.disableFindNode && endpointAttempt < len(c.endpoints)-1 {
+			// Get the next endpoint to try
+			publicURL, privateURL, err := c.getNextEndpoint(currentPublicHost)
+			if err != nil {
 				c.logger.Error(
-					"Failed to decode response body",
-					"method", originalMethod,
-					"url", currentReqURL.String(),
-					"status_code", resp.StatusCode,
+					"Failed to get next endpoint for failover",
 					"error", err,
 				)
-				return fmt.Errorf(
-					"failed to decode response body for %s %s (status %d): %w",
-					originalMethod, currentReqURL.String(), resp.StatusCode, err,
-				)
+				return fmt.Errorf("all endpoints failed, last error: %w", lastConnectionErr)
 			}
+
+			// Update the client URLs to point to the next endpoint
+			c.endpointMu.Lock()
+			c.publicBaseURL = publicURL
+			c.privateBaseURL = privateURL
+			c.endpointMu.Unlock()
+
+			c.logger.Info(
+				"Failing over to next endpoint",
+				"new_endpoint", publicURL.Host,
+			)
+
+			// Continue to the next iteration of the endpoint loop
+			continue
 		}
-		c.logger.Debug(
-			"Request successful",
-			"method", originalMethod,
-			"url", currentReqURL.String(),
-			"status_code", resp.StatusCode,
-		)
-		return nil
+
+		// If we got here due to too many redirects (not a connection error)
+		if lastConnectionErr == nil {
+			c.logger.Error(
+				"Too many redirects",
+				"final_url_attempt", currentReqURL.String(),
+				"original_method", originalMethod,
+			)
+			return fmt.Errorf(
+				"stopped after %d redirects, last URL: %s", MaximumRedirects, currentReqURL.String(),
+			)
+		}
+
+		// Connection error and we've tried all endpoints
+		return fmt.Errorf("all endpoints failed, last error: %w", lastConnectionErr)
 	}
 
-	/*
-		If loop finishes, it means too many redirects.
-	*/
-	if lastResp != nil && lastResp.Body != nil {
-		lastResp.Body.Close()
+	// If we've tried all endpoints and still failing
+	if lastConnectionErr != nil {
+		return fmt.Errorf("all endpoints failed after trying %d endpoints, last error: %w", len(c.endpoints), lastConnectionErr)
 	}
-	c.logger.Error(
-		"Too many redirects",
-		"final_url_attempt", currentReqURL.String(),
-		"original_method", originalMethod,
-	)
-	return fmt.Errorf(
-		"stopped after %d redirects, last URL: %s", MaximumRedirects, currentReqURL.String(),
-	)
+
+	return fmt.Errorf("unexpected error: no successful response and no connection error recorded")
 }
 
 // --- Value Operations ---
