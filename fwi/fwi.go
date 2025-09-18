@@ -629,6 +629,16 @@ func (f *fwiImpl) CreateEntity(
 		*maxlimits.Subscribers = 100
 	}
 
+	if maxlimits.RPSDataLimit == nil {
+		maxlimits.RPSDataLimit = new(int64)
+		*maxlimits.RPSDataLimit = models.DefaultRPSDataLimit
+	}
+
+	if maxlimits.RPSEventLimit == nil {
+		maxlimits.RPSEventLimit = new(int64)
+		*maxlimits.RPSEventLimit = models.DefaultRPSEventLimit
+	}
+
 	// set the limits on the entity key
 	if err := withRetriesVoid(ctx, f.logger, func() error {
 		return f.rootInsiClient.SetLimits(key.Key, maxlimits)

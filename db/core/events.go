@@ -80,13 +80,13 @@ func (es *eventSubsystem) Receive(topic string, data any) error {
 // requestSubscriptionSlot attempts to reserve a subscription slot for the given key.
 // It performs the action directly if the node is the leader, otherwise it calls the leader's internal API.
 // Returns true if the slot was granted, false if the limit was reached, and an error for other failures.
-func (c *Core) requestSubscriptionSlot(keyUUID string) (bool, error) {
+func (c *Core) requestSubscriptionSlot(dataScopeUUID string) (bool, error) {
 	if c.fsm.IsLeader() {
 		// We are the leader, perform the atomic check-and-increment locally.
 		c.subscriptionSlotLock.Lock()
 		defer c.subscriptionSlotLock.Unlock()
 
-		limit, current, err := c.getSubscriptionUsage(keyUUID)
+		limit, current, err := c.getSubscriptionUsage(dataScopeUUID)
 		if err != nil {
 			return false, fmt.Errorf("could not get subscription usage on leader: %w", err)
 		}
@@ -95,10 +95,10 @@ func (c *Core) requestSubscriptionSlot(keyUUID string) (bool, error) {
 			return false, nil // Limit reached
 		}
 
-		if err := c.fsm.BumpInteger(WithApiKeySubscriptions(keyUUID), 1); err != nil {
+		if err := c.fsm.BumpInteger(WithApiKeySubscriptions(dataScopeUUID), 1); err != nil {
 			return false, fmt.Errorf("failed to bump subscription count on leader: %w", err)
 		}
-		c.logger.Info("Subscription slot granted locally by leader", "key_uuid", keyUUID)
+		c.logger.Info("Subscription slot granted locally by leader", "ds", dataScopeUUID)
 		return true, nil // Slot granted
 	}
 
@@ -108,7 +108,7 @@ func (c *Core) requestSubscriptionSlot(keyUUID string) (bool, error) {
 		return false, fmt.Errorf("follower could not get leader's address: %w", err)
 	}
 
-	payload := subscriptionSlotRequest{KeyUUID: keyUUID}
+	payload := subscriptionSlotRequest{DataScopeUUID: dataScopeUUID}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal slot request payload: %w", err)
@@ -152,11 +152,11 @@ func (c *Core) requestSubscriptionSlot(keyUUID string) (bool, error) {
 }
 
 // releaseSubscriptionSlot tells the leader to decrement the subscription count.
-func (c *Core) releaseSubscriptionSlot(keyUUID string) {
+func (c *Core) releaseSubscriptionSlot(dataScopeUUID string) {
 	if c.fsm.IsLeader() {
 		// We are the leader, decrement locally.
-		if err := c.fsm.BumpInteger(WithApiKeySubscriptions(keyUUID), -1); err != nil {
-			c.logger.Error("Failed to decrement subscription count on leader", "key_uuid", keyUUID, "error", err)
+		if err := c.fsm.BumpInteger(WithApiKeySubscriptions(dataScopeUUID), -1); err != nil {
+			c.logger.Error("Failed to decrement subscription count on leader", "ds", dataScopeUUID, "error", err)
 		}
 		return
 	}
@@ -170,7 +170,7 @@ func (c *Core) releaseSubscriptionSlot(keyUUID string) {
 			return
 		}
 
-		payload := subscriptionSlotRequest{KeyUUID: keyUUID}
+		payload := subscriptionSlotRequest{DataScopeUUID: dataScopeUUID}
 		body, err := json.Marshal(payload)
 		if err != nil {
 			c.logger.Error("Failed to marshal slot release payload", "error", err)
@@ -230,7 +230,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Request a subscription slot. This is an atomic operation on the leader.
-	slotGranted, err := c.requestSubscriptionSlot(td.KeyUUID)
+	slotGranted, err := c.requestSubscriptionSlot(td.DataScopeUUID)
 	if err != nil {
 		c.logger.Error("Failed to request subscription slot", "key_uuid", td.KeyUUID, "error", err)
 		http.Error(w, "internal server error during slot request", http.StatusInternalServerError)
@@ -468,8 +468,8 @@ func (c *Core) requestSubscriptionSlotHandler(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.KeyUUID == "" {
-		http.Error(w, "key_uuid is missing", http.StatusBadRequest)
+	if req.DataScopeUUID == "" {
+		http.Error(w, "data_scope_uuid is missing", http.StatusBadRequest)
 		return
 	}
 
@@ -477,27 +477,27 @@ func (c *Core) requestSubscriptionSlotHandler(w http.ResponseWriter, r *http.Req
 	c.subscriptionSlotLock.Lock()
 	defer c.subscriptionSlotLock.Unlock()
 
-	limit, current, err := c.getSubscriptionUsage(req.KeyUUID)
+	limit, current, err := c.getSubscriptionUsage(req.DataScopeUUID)
 	if err != nil {
-		c.logger.Error("Could not get subscription usage", "key_uuid", req.KeyUUID, "error", err)
+		c.logger.Error("Could not get subscription usage", "ds", req.DataScopeUUID, "error", err)
 		http.Error(w, "failed to check usage", http.StatusInternalServerError)
 		return
 	}
 
 	if current >= limit {
-		c.logger.Warn("Subscription slot request denied, limit reached", "key_uuid", req.KeyUUID, "current", current, "limit", limit)
+		c.logger.Warn("Subscription slot request denied, limit reached", "ds", req.DataScopeUUID, "current", current, "limit", limit)
 		http.Error(w, "subscriber limit exceeded", http.StatusServiceUnavailable)
 		return
 	}
 
 	// Limit not reached, grant slot by incrementing
-	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(req.KeyUUID), 1); err != nil {
-		c.logger.Error("Failed to bump subscription count", "key_uuid", req.KeyUUID, "error", err)
+	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(req.DataScopeUUID), 1); err != nil {
+		c.logger.Error("Failed to bump subscription count", "ds", req.DataScopeUUID, "error", err)
 		http.Error(w, "failed to update usage", http.StatusInternalServerError)
 		return
 	}
 
-	c.logger.Info("Subscription slot granted", "key_uuid", req.KeyUUID)
+	c.logger.Info("Subscription slot granted", "ds", req.DataScopeUUID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -522,18 +522,18 @@ func (c *Core) releaseSubscriptionSlotHandler(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.KeyUUID == "" {
-		http.Error(w, "key_uuid is missing", http.StatusBadRequest)
+	if req.DataScopeUUID == "" {
+		http.Error(w, "data_scope_uuid is missing", http.StatusBadRequest)
 		return
 	}
 
 	// Decrement the count. We don't need to lock for a simple decrement,
 	// and we log errors but don't fail the request to prevent blocking.
-	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(req.KeyUUID), -1); err != nil {
-		c.logger.Error("Failed to decrement subscription count", "key_uuid", req.KeyUUID, "error", err)
+	if err := c.fsm.BumpInteger(WithApiKeySubscriptions(req.DataScopeUUID), -1); err != nil {
+		c.logger.Error("Failed to decrement subscription count", "ds", req.DataScopeUUID, "error", err)
 	}
 
-	c.logger.Info("Subscription slot released", "key_uuid", req.KeyUUID)
+	c.logger.Info("Subscription slot released", "ds", req.DataScopeUUID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -577,15 +577,15 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limitStr, err := c.fsm.Get(WithApiKeyMaxEvents(td.KeyUUID))
+	limitStr, err := c.fsm.Get(WithApiKeyMaxEvents(td.DataScopeUUID))
 	if err != nil {
-		c.logger.Error("Could not get limit for events", "key", td.KeyUUID, "error", err)
+		c.logger.Error("Could not get limit for events", "ds", td.DataScopeUUID, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	limit, err := strconv.ParseInt(limitStr, 10, 64)
 	if err != nil {
-		c.logger.Error("Could not parse limit for events", "key", td.KeyUUID, "limit", limitStr, "error", err)
+		c.logger.Error("Could not parse limit for events", "key", td.KeyUUID, "ds", td.DataScopeUUID, "limit", limitStr, "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -688,11 +688,18 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type subscriptionSlotRequest struct {
-	KeyUUID string `json:"key_uuid"`
+	DataScopeUUID string `json:"data_scope_uuid"`
 }
 
 func (c *Core) getSubscriptionUsage(keyUUID string) (limit, current int64, err error) {
-	limitStr, err := c.fsm.Get(WithApiKeyMaxSubscriptions(keyUUID))
+
+	// get datascope for key uuid
+	dsUUID, err := c.fsm.Get(withApiKeyDataScope(keyUUID))
+	if err != nil {
+		return 0, 0, fmt.Errorf("could not get data scope: %w", err)
+	}
+
+	limitStr, err := c.fsm.Get(WithApiKeyMaxSubscriptions(dsUUID))
 	if err != nil {
 		return 0, 0, fmt.Errorf("could not get max subscribers limit: %w", err)
 	}
@@ -701,7 +708,7 @@ func (c *Core) getSubscriptionUsage(keyUUID string) (limit, current int64, err e
 		return 0, 0, fmt.Errorf("could not parse max subscribers limit: %w", err)
 	}
 
-	currentSubsStr, err := c.fsm.Get(WithApiKeySubscriptions(keyUUID))
+	currentSubsStr, err := c.fsm.Get(WithApiKeySubscriptions(dsUUID))
 	if err != nil && !tkv.IsErrKeyNotFound(err) {
 		return 0, 0, fmt.Errorf("could not get current subscribers: %w", err)
 	}
