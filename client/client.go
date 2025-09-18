@@ -1320,24 +1320,6 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 		return fmt.Errorf("topic cannot be empty")
 	}
 
-	wsScheme := "ws"
-	if c.publicBaseURL.Scheme == "https" {
-		wsScheme = "wss"
-	}
-
-	c.endpointMu.RLock()
-	// Initial URL construction
-	currentWsURL := &url.URL{
-		Scheme: wsScheme,
-		Host:   c.publicBaseURL.Host,
-		Path:   "/db/api/v1/events/subscribe",
-	}
-	c.endpointMu.RUnlock()
-
-	query := currentWsURL.Query()
-	query.Set("topic", topic)
-	currentWsURL.RawQuery = query.Encode()
-
 	header := http.Header{}
 	header.Set("Authorization", c.apiKey)
 
@@ -1349,76 +1331,160 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 		},
 	}
 
+	// Keep track of which endpoints we've tried
+	triedEndpoints := make(map[string]bool)
+	var lastConnectionErr error
 	var conn *websocket.Conn
-	var err error
 
-	for redirects := 0; redirects < MaximumRedirects; redirects++ {
-		c.logger.Info("Attempting to connect to WebSocket for event subscription", "url", currentWsURL.String(), "attempt", redirects+1)
-		var resp *http.Response
-		conn, resp, err = dialer.Dial(currentWsURL.String(), header)
-		if err == nil {
-			// Success
-			break
+	// Try current endpoint first, then failover to others if needed
+	for endpointAttempt := 0; endpointAttempt < len(c.endpoints); endpointAttempt++ {
+		c.endpointMu.RLock()
+		currentPublicHost := c.publicBaseURL.Host
+		wsScheme := "ws"
+		if c.publicBaseURL.Scheme == "https" {
+			wsScheme = "wss"
 		}
-
-		if resp == nil {
-			c.logger.Error("WebSocket dial error with no response", "url", currentWsURL.String(), "error", err)
-			return fmt.Errorf("failed to dial websocket %s: %w", currentWsURL.String(), err)
+		// Initial URL construction
+		currentWsURL := &url.URL{
+			Scheme: wsScheme,
+			Host:   c.publicBaseURL.Host,
+			Path:   "/db/api/v1/events/subscribe",
 		}
-		defer resp.Body.Close()
+		c.endpointMu.RUnlock()
 
-		switch resp.StatusCode {
-		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-			loc := resp.Header.Get("Location")
-			if loc == "" {
-				return fmt.Errorf("redirect response missing Location header from %s", currentWsURL.String())
+		// Skip if we've already tried this endpoint
+		if triedEndpoints[currentWsURL.Host] {
+			continue
+		}
+		triedEndpoints[currentWsURL.Host] = true
+
+		query := currentWsURL.Query()
+		query.Set("topic", topic)
+		currentWsURL.RawQuery = query.Encode()
+
+		var err error
+
+		for redirects := 0; redirects < MaximumRedirects; redirects++ {
+			c.logger.Info("Attempting to connect to WebSocket for event subscription", "url", currentWsURL.String(), "attempt", redirects+1)
+			var resp *http.Response
+			conn, resp, err = dialer.Dial(currentWsURL.String(), header)
+			if err == nil {
+				// Success - break out of both loops
+				goto connected
 			}
 
-			redirectURL, parseErr := currentWsURL.Parse(loc)
-			if parseErr != nil {
-				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, parseErr)
+			if resp == nil {
+				// Check if this is a connection error and we should failover
+				if isConnectionError(err) && !c.disableFindNode && endpointAttempt < len(c.endpoints)-1 {
+					lastConnectionErr = err
+					c.logger.Warn(
+						"WebSocket connection failed, will try next endpoint",
+						"url", currentWsURL.String(),
+						"error", err,
+						"endpoint_attempt", endpointAttempt+1,
+					)
+					// Break out of redirect loop to try next endpoint
+					break
+				}
+
+				c.logger.Error("WebSocket dial error with no response", "url", currentWsURL.String(), "error", err)
+				return fmt.Errorf("failed to dial websocket %s: %w", currentWsURL.String(), err)
 			}
+			defer resp.Body.Close()
 
-			c.logger.Debug("WebSocket subscription redirected",
-				"from_url", currentWsURL.String(),
-				"to_url", redirectURL.String(),
-				"status_code", resp.StatusCode)
+			switch resp.StatusCode {
+			case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+				loc := resp.Header.Get("Location")
+				if loc == "" {
+					return fmt.Errorf("redirect response missing Location header from %s", currentWsURL.String())
+				}
 
-			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
-				c.redirectCoutner.Add(1)
-				if c.enableLeaderStickiness {
-					if stickErr := c.setLeader(redirectURL); stickErr != nil {
-						c.logger.Debug("Failed to set sticky leader from WebSocket redirect", "error", stickErr)
+				redirectURL, parseErr := currentWsURL.Parse(loc)
+				if parseErr != nil {
+					return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, parseErr)
+				}
+
+				c.logger.Debug("WebSocket subscription redirected",
+					"from_url", currentWsURL.String(),
+					"to_url", redirectURL.String(),
+					"status_code", resp.StatusCode)
+
+				if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+					c.redirectCoutner.Add(1)
+					if c.enableLeaderStickiness {
+						if stickErr := c.setLeader(redirectURL); stickErr != nil {
+							c.logger.Debug("Failed to set sticky leader from WebSocket redirect", "error", stickErr)
+						}
 					}
 				}
+
+				*currentWsURL = *redirectURL
+				if currentWsURL.Scheme == "http" {
+					currentWsURL.Scheme = "ws"
+				} else if currentWsURL.Scheme == "https" {
+					currentWsURL.Scheme = "wss"
+				}
+				continue
+
+			default:
+				if resp.StatusCode == http.StatusServiceUnavailable {
+					bodyBytes, _ := io.ReadAll(resp.Body)
+					return &ErrSubscriberLimitExceeded{Message: strings.TrimSpace(string(bodyBytes))}
+				}
+
+				c.logger.Error(
+					"WebSocket dial error with response",
+					"url", currentWsURL.String(),
+					"status", resp.Status,
+					"error", err,
+				)
+				return fmt.Errorf("failed to dial websocket %s: %w", currentWsURL.String(), err)
+			}
+		}
+
+		// If we have a connection error and haven't tried all endpoints yet, try the next one
+		if lastConnectionErr != nil && !c.disableFindNode && endpointAttempt < len(c.endpoints)-1 {
+			// Get the next endpoint to try
+			publicURL, privateURL, err := c.getNextEndpoint(currentPublicHost)
+			if err != nil {
+				c.logger.Error(
+					"Failed to get next endpoint for WebSocket failover",
+					"error", err,
+				)
+				return fmt.Errorf("all WebSocket endpoints failed, last error: %w", lastConnectionErr)
 			}
 
-			*currentWsURL = *redirectURL
-			if currentWsURL.Scheme == "http" {
-				currentWsURL.Scheme = "ws"
-			} else if currentWsURL.Scheme == "https" {
-				currentWsURL.Scheme = "wss"
-			}
-			continue
+			// Update the client URLs to point to the next endpoint
+			c.endpointMu.Lock()
+			c.publicBaseURL = publicURL
+			c.privateBaseURL = privateURL
+			c.endpointMu.Unlock()
 
-		default:
-			if resp.StatusCode == http.StatusServiceUnavailable {
-				bodyBytes, _ := io.ReadAll(resp.Body)
-				return &ErrSubscriberLimitExceeded{Message: strings.TrimSpace(string(bodyBytes))}
-			}
-
-			c.logger.Error(
-				"WebSocket dial error with response",
-				"url", currentWsURL.String(),
-				"status", resp.Status,
-				"error", err,
+			c.logger.Info(
+				"Failing over WebSocket to next endpoint",
+				"new_endpoint", publicURL.Host,
 			)
-			return fmt.Errorf("failed to dial websocket %s: %w", currentWsURL.String(), err)
+
+			// Continue to the next iteration of the endpoint loop
+			continue
+		}
+
+		// If we got here and still have an error, all endpoints failed
+		if err != nil {
+			if lastConnectionErr != nil {
+				return fmt.Errorf("all WebSocket endpoints failed after trying %d endpoints, last error: %w", len(c.endpoints), lastConnectionErr)
+			}
+			return fmt.Errorf("failed to connect to websocket after %d redirects, last url: %s, error: %w", MaximumRedirects, currentWsURL.String(), err)
 		}
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to connect to websocket after %d redirects, last url: %s, error: %w", MaximumRedirects, currentWsURL.String(), err)
+connected:
+	// If we still don't have a connection, all endpoints failed
+	if conn == nil {
+		if lastConnectionErr != nil {
+			return fmt.Errorf("all WebSocket endpoints failed, last connection error: %w", lastConnectionErr)
+		}
+		return fmt.Errorf("failed to establish WebSocket connection to any endpoint")
 	}
 
 	defer conn.Close()
@@ -1542,6 +1608,7 @@ func (c *Client) PurgeEventSubscriptionsAllNodes() (int, error) {
 			Timeout:                c.httpClient.Timeout,
 			Logger:                 c.logger,
 			EnableLeaderStickiness: false, // Don't need stickiness for this operation
+			DisableFindNode:        true,  // Don't need failover for direct endpoint connections
 		}
 
 		tempClient, err := NewClient(cfg)
@@ -1609,106 +1676,181 @@ func (c *Client) UploadBlob(ctx context.Context, key string, data io.Reader, fil
 		return fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
-	// Prepare request
-	baseURL := c.publicBaseURL
-	pathURL := &url.URL{Path: "db/api/v1/blob/set"}
-	currentReqURL := baseURL.ResolveReference(pathURL)
 	contentType := writer.FormDataContentType()
 
-	var lastResp *http.Response
+	// Keep track of which endpoints we've tried
+	triedEndpoints := make(map[string]bool)
+	var lastConnectionErr error
 
-	for redirects := 0; redirects < MaximumRedirects; redirects++ {
-		// We need a new reader for the body on each request attempt
-		bodyReader := bytes.NewReader(body.Bytes())
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, currentReqURL.String(), bodyReader)
-		if err != nil {
-			return fmt.Errorf("failed to create upload request: %w", err)
+	// Try current endpoint first, then failover to others if needed
+	for endpointAttempt := 0; endpointAttempt < len(c.endpoints); endpointAttempt++ {
+		c.endpointMu.RLock()
+		currentPublicHost := c.publicBaseURL.Host
+		baseURL := c.publicBaseURL
+		c.endpointMu.RUnlock()
+
+		// Skip if we've already tried this endpoint
+		if triedEndpoints[baseURL.Host] {
+			continue
 		}
-		req.Header.Set("Authorization", c.apiKey)
-		req.Header.Set("Content-Type", contentType)
+		triedEndpoints[baseURL.Host] = true
 
-		c.logger.Debug("Sending blob upload request", "url", currentReqURL.String())
+		pathURL := &url.URL{Path: "db/api/v1/blob/set"}
+		currentReqURL := baseURL.ResolveReference(pathURL)
 
-		resp, err := c.objectClient.Do(req)
-		if err != nil {
+		var lastResp *http.Response
+
+		for redirects := 0; redirects < MaximumRedirects; redirects++ {
+			// We need a new reader for the body on each request attempt
+			bodyReader := bytes.NewReader(body.Bytes())
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, currentReqURL.String(), bodyReader)
+			if err != nil {
+				return fmt.Errorf("failed to create upload request: %w", err)
+			}
+			req.Header.Set("Authorization", c.apiKey)
+			req.Header.Set("Content-Type", contentType)
+
+			c.logger.Debug("Sending blob upload request", "url", currentReqURL.String())
+
+			resp, err := c.objectClient.Do(req)
+			if err != nil {
+				// Check if this is a connection error and we should failover
+				if isConnectionError(err) && !c.disableFindNode && endpointAttempt < len(c.endpoints)-1 {
+					lastConnectionErr = err
+					c.logger.Warn(
+						"Blob upload connection failed, will try next endpoint",
+						"url", currentReqURL.String(),
+						"error", err,
+						"endpoint_attempt", endpointAttempt+1,
+					)
+					// Close previous response body if any
+					if lastResp != nil && lastResp.Body != nil {
+						lastResp.Body.Close()
+					}
+					// Break out of redirect loop to try next endpoint
+					break
+				}
+
+				if lastResp != nil && lastResp.Body != nil {
+					lastResp.Body.Close()
+				}
+				return fmt.Errorf("http request for blob upload failed: %w", err)
+			}
 			if lastResp != nil && lastResp.Body != nil {
 				lastResp.Body.Close()
 			}
-			return fmt.Errorf("http request for blob upload failed: %w", err)
-		}
-		if lastResp != nil && lastResp.Body != nil {
-			lastResp.Body.Close()
-		}
-		lastResp = resp
+			lastResp = resp
 
-		// Handle redirects
-		switch resp.StatusCode {
-		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-			loc := resp.Header.Get("Location")
-			if loc == "" {
+			// Handle redirects
+			switch resp.StatusCode {
+			case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+				loc := resp.Header.Get("Location")
+				if loc == "" {
+					resp.Body.Close()
+					return fmt.Errorf("redirect response missing Location header from %s", currentReqURL.String())
+				}
+				redirectURL, err := currentReqURL.Parse(loc)
+				if err != nil {
+					resp.Body.Close()
+					return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
+				}
+				c.logger.Debug("Blob upload request redirected", "to", redirectURL.String())
+				currentReqURL = redirectURL
 				resp.Body.Close()
-				return fmt.Errorf("redirect response missing Location header from %s", currentReqURL.String())
-			}
-			redirectURL, err := currentReqURL.Parse(loc)
-			if err != nil {
-				resp.Body.Close()
-				return fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
-			}
-			c.logger.Debug("Blob upload request redirected", "to", redirectURL.String())
-			currentReqURL = redirectURL
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
-				c.redirectCoutner.Add(1)
-				// This is a leader redirect. Update the client to stick to the new leader for future requests.
-				if c.enableLeaderStickiness {
-					if err := c.setLeader(redirectURL); err != nil {
-						// Log the error but continue; the redirect will be handled for this single request anyway.
-						c.logger.Warn("Failed to set sticky leader from blob redirect", "error", err)
+				if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+					c.redirectCoutner.Add(1)
+					// This is a leader redirect. Update the client to stick to the new leader for future requests.
+					if c.enableLeaderStickiness {
+						if err := c.setLeader(redirectURL); err != nil {
+							// Log the error but continue; the redirect will be handled for this single request anyway.
+							c.logger.Warn("Failed to set sticky leader from blob redirect", "error", err)
+						}
 					}
 				}
+				continue
 			}
+
+			// Process final response
+			defer resp.Body.Close()
+
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil // Success
+			}
+
+			// Handle specific errors like in doRequest
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode == http.StatusBadRequest {
+				if currentDiskUsageStr := resp.Header.Get("X-Current-Disk-Usage"); currentDiskUsageStr != "" {
+					limitStr := resp.Header.Get("X-Disk-Usage-Limit")
+					current, _ := strconv.ParseInt(currentDiskUsageStr, 10, 64)
+					limit, _ := strconv.ParseInt(limitStr, 10, 64)
+					return &ErrDiskLimitExceeded{
+						CurrentUsage: current,
+						Limit:        limit,
+						Message:      strings.TrimSpace(string(bodyBytes)),
+					}
+				}
+
+				// Server was upgraded to deny direct overwrite of blobs
+				if resp.Header.Get("X-Blob-Already-Exists") == "true" {
+					return ErrConflict
+				}
+
+				// Force waiting until the tombstone is deleted
+				if resp.Header.Get("X-Blob-Tombstone-Exists") == "true" {
+					return ErrConflict
+				}
+			}
+
+			return fmt.Errorf("blob upload failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		// If we have a connection error and haven't tried all endpoints yet, try the next one
+		if lastConnectionErr != nil && !c.disableFindNode && endpointAttempt < len(c.endpoints)-1 {
+			// Get the next endpoint to try
+			publicURL, privateURL, err := c.getNextEndpoint(currentPublicHost)
+			if err != nil {
+				c.logger.Error(
+					"Failed to get next endpoint for blob upload failover",
+					"error", err,
+				)
+				return fmt.Errorf("all blob upload endpoints failed, last error: %w", lastConnectionErr)
+			}
+
+			// Update the client URLs to point to the next endpoint
+			c.endpointMu.Lock()
+			c.publicBaseURL = publicURL
+			c.privateBaseURL = privateURL
+			c.endpointMu.Unlock()
+
+			c.logger.Info(
+				"Failing over blob upload to next endpoint",
+				"new_endpoint", publicURL.Host,
+			)
+
+			// Continue to the next iteration of the endpoint loop
 			continue
 		}
 
-		// Process final response
-		defer resp.Body.Close()
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil // Success
+		if lastResp != nil && lastResp.Body != nil {
+			lastResp.Body.Close()
 		}
 
-		// Handle specific errors like in doRequest
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusBadRequest {
-			if currentDiskUsageStr := resp.Header.Get("X-Current-Disk-Usage"); currentDiskUsageStr != "" {
-				limitStr := resp.Header.Get("X-Disk-Usage-Limit")
-				current, _ := strconv.ParseInt(currentDiskUsageStr, 10, 64)
-				limit, _ := strconv.ParseInt(limitStr, 10, 64)
-				return &ErrDiskLimitExceeded{
-					CurrentUsage: current,
-					Limit:        limit,
-					Message:      strings.TrimSpace(string(bodyBytes)),
-				}
-			}
-
-			// Server was upgraded to deny direct overwrite of blobs
-			if resp.Header.Get("X-Blob-Already-Exists") == "true" {
-				return ErrConflict
-			}
-
-			// Force waiting until the tombstone is deleted
-			if resp.Header.Get("X-Blob-Tombstone-Exists") == "true" {
-				return ErrConflict
-			}
+		// If we got here due to too many redirects (not a connection error)
+		if lastConnectionErr == nil {
+			return fmt.Errorf("stopped after %d redirects for blob upload, last URL: %s", MaximumRedirects, currentReqURL.String())
 		}
 
-		return fmt.Errorf("blob upload failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		// Connection error and we've tried all endpoints
+		return fmt.Errorf("all blob upload endpoints failed, last error: %w", lastConnectionErr)
 	}
 
-	if lastResp != nil && lastResp.Body != nil {
-		lastResp.Body.Close()
+	// If we've tried all endpoints and still failing
+	if lastConnectionErr != nil {
+		return fmt.Errorf("all blob upload endpoints failed after trying %d endpoints, last error: %w", len(c.endpoints), lastConnectionErr)
 	}
-	return fmt.Errorf("stopped after %d redirects for blob upload, last URL: %s", MaximumRedirects, currentReqURL.String())
+
+	return fmt.Errorf("unexpected error in blob upload: no successful response and no connection error recorded")
 }
 
 // GetBlob retrieves a blob as an io.ReadCloser. The caller MUST close the reader.
@@ -1717,84 +1859,159 @@ func (c *Client) GetBlob(ctx context.Context, key string) (io.ReadCloser, error)
 		return nil, fmt.Errorf("key cannot be empty")
 	}
 
-	baseURL := c.publicBaseURL
-	pathURL := &url.URL{Path: "db/api/v1/blob/get"}
-	currentReqURL := baseURL.ResolveReference(pathURL)
-	q := currentReqURL.Query()
-	q.Set("key", key)
-	currentReqURL.RawQuery = q.Encode()
+	// Keep track of which endpoints we've tried
+	triedEndpoints := make(map[string]bool)
+	var lastConnectionErr error
 
-	var lastResp *http.Response
+	// Try current endpoint first, then failover to others if needed
+	for endpointAttempt := 0; endpointAttempt < len(c.endpoints); endpointAttempt++ {
+		c.endpointMu.RLock()
+		currentPublicHost := c.publicBaseURL.Host
+		baseURL := c.publicBaseURL
+		c.endpointMu.RUnlock()
 
-	for redirects := 0; redirects < MaximumRedirects; redirects++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, currentReqURL.String(), nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create get blob request: %w", err)
+		// Skip if we've already tried this endpoint
+		if triedEndpoints[baseURL.Host] {
+			continue
 		}
-		req.Header.Set("Authorization", c.apiKey)
+		triedEndpoints[baseURL.Host] = true
 
-		c.logger.Debug("Sending get blob request", "url", currentReqURL.String())
+		pathURL := &url.URL{Path: "db/api/v1/blob/get"}
+		currentReqURL := baseURL.ResolveReference(pathURL)
+		q := currentReqURL.Query()
+		q.Set("key", key)
+		currentReqURL.RawQuery = q.Encode()
 
-		resp, err := c.objectClient.Do(req)
-		if err != nil {
+		var lastResp *http.Response
+
+		for redirects := 0; redirects < MaximumRedirects; redirects++ {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, currentReqURL.String(), nil)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create get blob request: %w", err)
+			}
+			req.Header.Set("Authorization", c.apiKey)
+
+			c.logger.Debug("Sending get blob request", "url", currentReqURL.String())
+
+			resp, err := c.objectClient.Do(req)
+			if err != nil {
+				// Check if this is a connection error and we should failover
+				if isConnectionError(err) && !c.disableFindNode && endpointAttempt < len(c.endpoints)-1 {
+					lastConnectionErr = err
+					c.logger.Warn(
+						"Get blob connection failed, will try next endpoint",
+						"url", currentReqURL.String(),
+						"error", err,
+						"endpoint_attempt", endpointAttempt+1,
+					)
+					// Close previous response body if any
+					if lastResp != nil && lastResp.Body != nil {
+						lastResp.Body.Close()
+					}
+					// Break out of redirect loop to try next endpoint
+					break
+				}
+
+				if lastResp != nil && lastResp.Body != nil {
+					lastResp.Body.Close()
+				}
+				return nil, fmt.Errorf("http request for get blob failed: %w", err)
+			}
 			if lastResp != nil && lastResp.Body != nil {
 				lastResp.Body.Close()
 			}
-			return nil, fmt.Errorf("http request for get blob failed: %w", err)
-		}
-		if lastResp != nil && lastResp.Body != nil {
-			lastResp.Body.Close()
-		}
-		lastResp = resp
+			lastResp = resp
 
-		switch resp.StatusCode {
-		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-			loc := resp.Header.Get("Location")
-			if loc == "" {
+			switch resp.StatusCode {
+			case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+				loc := resp.Header.Get("Location")
+				if loc == "" {
+					resp.Body.Close()
+					return nil, fmt.Errorf("redirect response missing Location header from %s", currentReqURL.String())
+				}
+				redirectURL, err := currentReqURL.Parse(loc)
+				if err != nil {
+					resp.Body.Close()
+					return nil, fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
+				}
+				c.logger.Debug("Get blob redirected", "to", redirectURL.String())
+				currentReqURL = redirectURL
 				resp.Body.Close()
-				return nil, fmt.Errorf("redirect response missing Location header from %s", currentReqURL.String())
-			}
-			redirectURL, err := currentReqURL.Parse(loc)
-			if err != nil {
-				resp.Body.Close()
-				return nil, fmt.Errorf("failed to parse redirect Location '%s': %w", loc, err)
-			}
-			c.logger.Debug("Get blob redirected", "to", redirectURL.String())
-			currentReqURL = redirectURL
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
-				c.redirectCoutner.Add(1)
-				// This is a leader redirect. Update the client to stick to the new leader for future requests.
-				if c.enableLeaderStickiness {
-					if err := c.setLeader(redirectURL); err != nil {
-						// Log the error but continue; the redirect will be handled for this single request anyway.
-						c.logger.Warn("Failed to set sticky leader from blob redirect", "error", err)
+				if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
+					c.redirectCoutner.Add(1)
+					// This is a leader redirect. Update the client to stick to the new leader for future requests.
+					if c.enableLeaderStickiness {
+						if err := c.setLeader(redirectURL); err != nil {
+							// Log the error but continue; the redirect will be handled for this single request anyway.
+							c.logger.Warn("Failed to set sticky leader from blob redirect", "error", err)
+						}
 					}
 				}
+				continue
 			}
+
+			// Process final response
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return resp.Body, nil
+			}
+
+			// It's not a success status, so we need to handle it as an error.
+			defer resp.Body.Close()
+			bodyBytes, _ := io.ReadAll(resp.Body)
+
+			if resp.StatusCode == http.StatusNotFound {
+				return nil, ErrKeyNotFound
+			}
+
+			return nil, fmt.Errorf("get blob failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		// If we have a connection error and haven't tried all endpoints yet, try the next one
+		if lastConnectionErr != nil && !c.disableFindNode && endpointAttempt < len(c.endpoints)-1 {
+			// Get the next endpoint to try
+			publicURL, privateURL, err := c.getNextEndpoint(currentPublicHost)
+			if err != nil {
+				c.logger.Error(
+					"Failed to get next endpoint for get blob failover",
+					"error", err,
+				)
+				return nil, fmt.Errorf("all get blob endpoints failed, last error: %w", lastConnectionErr)
+			}
+
+			// Update the client URLs to point to the next endpoint
+			c.endpointMu.Lock()
+			c.publicBaseURL = publicURL
+			c.privateBaseURL = privateURL
+			c.endpointMu.Unlock()
+
+			c.logger.Info(
+				"Failing over get blob to next endpoint",
+				"new_endpoint", publicURL.Host,
+			)
+
+			// Continue to the next iteration of the endpoint loop
 			continue
 		}
 
-		// Process final response
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return resp.Body, nil
+		if lastResp != nil && lastResp.Body != nil {
+			lastResp.Body.Close()
 		}
 
-		// It's not a success status, so we need to handle it as an error.
-		defer resp.Body.Close()
-		bodyBytes, _ := io.ReadAll(resp.Body)
-
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, ErrKeyNotFound
+		// If we got here due to too many redirects (not a connection error)
+		if lastConnectionErr == nil {
+			return nil, fmt.Errorf("stopped after %d redirects for get blob, last URL: %s", MaximumRedirects, currentReqURL.String())
 		}
 
-		return nil, fmt.Errorf("get blob failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		// Connection error and we've tried all endpoints
+		return nil, fmt.Errorf("all get blob endpoints failed, last error: %w", lastConnectionErr)
 	}
 
-	if lastResp != nil && lastResp.Body != nil {
-		lastResp.Body.Close()
+	// If we've tried all endpoints and still failing
+	if lastConnectionErr != nil {
+		return nil, fmt.Errorf("all get blob endpoints failed after trying %d endpoints, last error: %w", len(c.endpoints), lastConnectionErr)
 	}
-	return nil, fmt.Errorf("stopped after %d redirects for get blob, last URL: %s", MaximumRedirects, currentReqURL.String())
+
+	return nil, fmt.Errorf("unexpected error in get blob: no successful response and no connection error recorded")
 }
 
 // DeleteBlob deletes a blob by key.
