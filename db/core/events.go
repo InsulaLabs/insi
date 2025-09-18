@@ -300,7 +300,7 @@ func (c *Core) registerSubscriber(session *eventSession) {
 	defer c.wsConnectionLock.Unlock()
 
 	if c.activeWsConnections >= int32(c.cfg.Sessions.MaxConnections) {
-		c.logger.Error("Attempted to register subscriber when max connections already met or exceeded, releasing slot", "active", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections, "key_uuid", session.keyUUID)
+		c.logger.Error("Attempted to register subscriber when max connections already met or exceeded, releasing slot", "active", c.activeWsConnections, "max", c.cfg.Sessions.MaxConnections, "key_uuid", session.td.KeyUUID, "ds", session.td.DataScopeUUID)
 		go session.conn.Close()
 		c.releaseSubscriptionSlot(session.td.DataScopeUUID)
 		return
