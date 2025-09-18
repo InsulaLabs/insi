@@ -307,54 +307,57 @@ func (c *Core) spawnNewApiKey(keyName string) (string, error) {
 		return "", fmt.Errorf("failed to set API key in FSM for %s: %w", keyName, err)
 	}
 
+	// Map key uuid to actual key
 	c.fsm.Set(models.KVPayload{
 		Key:   withApiKeyRef(keyUUID),
 		Value: actualKey,
 	})
 
+	// Map key uuid to data scope uuid
 	c.fsm.Set(models.KVPayload{
 		Key:   withApiKeyDataScope(keyUUID),
 		Value: dsUUID,
 	})
 
+	// For usage and limits we set the limits via the data scope UUID
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeyMemoryUsage(keyUUID),
+		Key:   WithApiKeyMemoryUsage(dsUUID),
 		Value: "0",
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeyDiskUsage(keyUUID),
+		Key:   WithApiKeyDiskUsage(dsUUID),
 		Value: "0",
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeyEvents(keyUUID),
+		Key:   WithApiKeyEvents(dsUUID),
 		Value: "0",
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeySubscriptions(keyUUID),
+		Key:   WithApiKeySubscriptions(dsUUID),
 		Value: "0",
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeyMaxMemoryUsage(keyUUID),
+		Key:   WithApiKeyMaxMemoryUsage(dsUUID),
 		Value: fmt.Sprintf("%d", ApiDefaultMaxMemoryUsage),
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeyMaxDiskUsage(keyUUID),
+		Key:   WithApiKeyMaxDiskUsage(dsUUID),
 		Value: fmt.Sprintf("%d", ApiDefaultMaxDiskUsage),
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeyMaxEvents(keyUUID),
+		Key:   WithApiKeyMaxEvents(dsUUID),
 		Value: fmt.Sprintf("%d", ApiDefaultMaxEvents),
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeyMaxSubscriptions(keyUUID),
+		Key:   WithApiKeyMaxSubscriptions(dsUUID),
 		Value: fmt.Sprintf("%d", ApiDefaultMaxSubscriptions),
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeyRPSDataLimit(keyUUID),
+		Key:   WithApiKeyRPSDataLimit(dsUUID),
 		Value: fmt.Sprintf("%d", ApiDefaultRPSDataLimit),
 	})
 	c.fsm.Set(models.KVPayload{
-		Key:   WithApiKeyRPSEventLimit(keyUUID),
+		Key:   WithApiKeyRPSEventLimit(dsUUID),
 		Value: fmt.Sprintf("%d", ApiDefaultRPSEventLimit),
 	})
 
@@ -454,6 +457,8 @@ func (c *Core) deleteApiKeyDirectly(key string) error {
 
 	apiKeyFsmStorageKey := fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, td.KeyUUID)
 
+	// Note: We dont have to do anything extra here. tombstone cleanup will handle other cleanups
+
 	if err := c.fsm.Delete(apiKeyFsmStorageKey); err != nil {
 		c.logger.Error("Could not delete api key from fsm directly", "key", apiKeyFsmStorageKey, "error", err)
 		return fmt.Errorf("could not delete api key from fsm directly: %w", err)
@@ -504,22 +509,26 @@ func (c *Core) decrypt(data []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-func (c *Core) CheckRateLimit(w http.ResponseWriter, r *http.Request, keyUUID string, lType limiterType) bool {
+func (c *Core) CheckRateLimit(w http.ResponseWriter, r *http.Request, td models.TokenData, lType limiterType) bool {
 
 	// Root key has no rate limits
-	if keyUUID == c.cfg.RootPrefix {
+	if td.KeyUUID == c.cfg.RootPrefix {
 		return true
 	}
 
-	item := c.entityRateLimiters.Get(keyUUID)
+	// NOTE: Right now we do per-key. The key UUID is different for aliases so this casues a bug. We need to orient the rate limiting aroung
+	// the data scope UUID instead. This means we also need to STORE it in the data scope as well.
+	// That, OR we inherit limits from the root - but I think for our purposes limiting at data scope (shared space) is optimal.
+
+	item := c.entityRateLimiters.Get(td.DataScopeUUID)
 	if item == nil {
-		rpse, err := c.fsm.Get(WithApiKeyRPSEventLimit(keyUUID))
+		rpse, err := c.fsm.Get(WithApiKeyRPSEventLimit(td.DataScopeUUID))
 		if err != nil {
 			c.logger.Error("Could not get RPS event limit", "error", err)
 			return false
 		}
 
-		rpsd, err := c.fsm.Get(WithApiKeyRPSDataLimit(keyUUID))
+		rpsd, err := c.fsm.Get(WithApiKeyRPSDataLimit(td.DataScopeUUID))
 		if err != nil {
 			c.logger.Error("Could not get RPS data limit", "error", err)
 			return false
@@ -541,7 +550,7 @@ func (c *Core) CheckRateLimit(w http.ResponseWriter, r *http.Request, keyUUID st
 			events: rate.NewLimiter(rate.Limit(rpseInt), int(rpseInt)),
 			data:   rate.NewLimiter(rate.Limit(rpsdInt), int(rpsdInt)),
 		}
-		c.entityRateLimiters.Set(keyUUID, limiter, time.Minute*1)
+		c.entityRateLimiters.Set(td.DataScopeUUID, limiter, time.Minute*1)
 		// The first request is always allowed to create the limiter. Subsequent requests will be checked.
 		return true
 	}
@@ -930,10 +939,6 @@ func (c *Core) setLimitsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to set RPS event limit", http.StatusInternalServerError)
 			return
 		}
-	}
-
-	if req.Limits.RPSDataLimit != nil || req.Limits.RPSEventLimit != nil {
-		c.entityRateLimiters.Delete(target.DataScopeUUID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

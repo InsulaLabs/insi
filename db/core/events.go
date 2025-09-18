@@ -225,7 +225,7 @@ func (c *Core) eventSubscribeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeEvents) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeEvents) {
 		return
 	}
 
@@ -553,7 +553,7 @@ func (c *Core) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeEvents) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeEvents) {
 		return
 	}
 
@@ -724,7 +724,7 @@ func (c *Core) eventPurgeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeEvents) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeEvents) {
 		return
 	}
 

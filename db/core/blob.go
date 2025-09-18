@@ -460,7 +460,7 @@ func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -659,7 +659,7 @@ func (c *Core) getBlobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -701,7 +701,7 @@ func (c *Core) deleteBlobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -772,7 +772,7 @@ func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
