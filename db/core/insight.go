@@ -106,14 +106,16 @@ func (c *Core) GetEntity(rootApiKey string) (models.Entity, error) {
 }
 
 func (c *Core) GetEntities(offset, limit int) ([]models.Entity, error) {
-	keys, err := c.fsm.Iterate(ApiTrackMemoryPrefix, offset, limit, "")
+
+	// Use the apiKeyRefPrefix to get the actual Key UUID. Others use data scope uuid which can not be mapped back to a key.
+	keys, err := c.fsm.Iterate(apiKeyRefPrefix, offset, limit, "")
 	if err != nil {
 		return nil, err
 	}
 
 	var entities []models.Entity
 	for _, key := range keys {
-		keyUUID := strings.TrimPrefix(key, ApiTrackMemoryPrefix+":")
+		keyUUID := strings.TrimPrefix(key, apiKeyRefPrefix+":")
 		entity, err := c.GetEntityByKeyUUID(keyUUID)
 		if err != nil {
 			c.logger.Warn("could not get entity for key uuid during iteration", "key_uuid", keyUUID, "error", err)
