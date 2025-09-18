@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -283,7 +284,7 @@ func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.
 	}
 
 	downloadURL := fmt.Sprintf("https://%s/db/internal/v1/blob/download?key=%s&scope=%s",
-		net.JoinHostPort(connectHost, port), blobMeta.Key, blobMeta.DataScopeUUID)
+		net.JoinHostPort(connectHost, port), url.QueryEscape(blobMeta.Key), url.QueryEscape(blobMeta.DataScopeUUID))
 
 	req, err := http.NewRequestWithContext(
 		ctx,
