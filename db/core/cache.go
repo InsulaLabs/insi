@@ -25,7 +25,7 @@ func (c *Core) getCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -66,7 +66,7 @@ func (c *Core) setCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -162,7 +162,7 @@ func (c *Core) deleteCacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -234,7 +234,7 @@ func (c *Core) setCacheNXHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -308,7 +308,7 @@ func (c *Core) compareAndSwapCacheHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -420,7 +420,7 @@ func (c *Core) iterateCacheKeysByPrefixHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 

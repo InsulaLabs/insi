@@ -26,7 +26,7 @@ func (c *Core) getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -68,7 +68,7 @@ func (c *Core) iterateKeysByPrefixHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -140,7 +140,7 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -234,7 +234,7 @@ func (c *Core) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -307,7 +307,7 @@ func (c *Core) setNXHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -384,7 +384,7 @@ func (c *Core) compareAndSwapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -479,7 +479,7 @@ func (c *Core) bumpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 

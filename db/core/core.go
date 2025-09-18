@@ -750,7 +750,7 @@ func (c *Core) ensureRootKeyTrackersExist() {
 }
 
 func (c *Core) CheckDiskUsage(td models.TokenData, bytes int64) (ok bool, current string, limit string) {
-	limit, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.KeyUUID))
+	limit, err := c.fsm.Get(WithApiKeyMaxDiskUsage(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get limit for disk usage", "error", err)
 		return false, "0", "0"
@@ -761,7 +761,7 @@ func (c *Core) CheckDiskUsage(td models.TokenData, bytes int64) (ok bool, curren
 		return false, "0", limit
 	}
 
-	current, err = c.fsm.Get(WithApiKeyDiskUsage(td.KeyUUID))
+	current, err = c.fsm.Get(WithApiKeyDiskUsage(td.DataScopeUUID))
 	if err != nil {
 		if tkv.IsErrKeyNotFound(err) {
 			current = "0"
@@ -784,7 +784,7 @@ func (c *Core) CheckDiskUsage(td models.TokenData, bytes int64) (ok bool, curren
 }
 
 func (c *Core) CheckMemoryUsage(td models.TokenData, bytes int64) (ok bool, current string, limit string) {
-	limit, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.KeyUUID))
+	limit, err := c.fsm.Get(WithApiKeyMaxMemoryUsage(td.DataScopeUUID))
 	if err != nil {
 		c.logger.Error("Could not get limit for memory usage", "error", err)
 		return false, "0", "0"
@@ -795,7 +795,7 @@ func (c *Core) CheckMemoryUsage(td models.TokenData, bytes int64) (ok bool, curr
 		return false, "0", limit
 	}
 
-	current, err = c.fsm.Get(WithApiKeyMemoryUsage(td.KeyUUID))
+	current, err = c.fsm.Get(WithApiKeyMemoryUsage(td.DataScopeUUID))
 	if err != nil {
 		if tkv.IsErrKeyNotFound(err) {
 			current = "0"
@@ -820,12 +820,12 @@ func (c *Core) CheckMemoryUsage(td models.TokenData, bytes int64) (ok bool, curr
 func (c *Core) AssignBytesToTD(td models.TokenData, target StorageTarget, bytes int64) error {
 	switch target {
 	case StorageTargetDisk:
-		if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.KeyUUID), int(bytes)); err != nil {
+		if err := c.fsm.BumpInteger(WithApiKeyDiskUsage(td.DataScopeUUID), int(bytes)); err != nil {
 			c.logger.Error("Could not bump disk usage", "error", err)
 			return err
 		}
 	case StorageTargetMemory:
-		if err := c.fsm.BumpInteger(WithApiKeyMemoryUsage(td.KeyUUID), int(bytes)); err != nil {
+		if err := c.fsm.BumpInteger(WithApiKeyMemoryUsage(td.DataScopeUUID), int(bytes)); err != nil {
 			c.logger.Error("Could not bump memory usage", "error", err)
 			return err
 		}
@@ -963,22 +963,24 @@ func (c *Core) execTombstoneDeletion() {
 		c.logger.Info("All user data deleted for key. Deleting metadata.", "key_uuid", keyUUID)
 
 		metaKeysToDelete := []string{
-			// Trackers
-			WithApiKeyMemoryUsage(keyUUID),
-			WithApiKeyDiskUsage(keyUUID),
-			WithApiKeyEvents(keyUUID),
-			WithApiKeySubscriptions(keyUUID),
-			// Limits
-			WithApiKeyMaxMemoryUsage(keyUUID),
-			WithApiKeyMaxDiskUsage(keyUUID),
-			WithApiKeyMaxEvents(keyUUID),
-			WithApiKeyMaxSubscriptions(keyUUID),
+
 			// Insight refs
 			withApiKeyRef(keyUUID),
 			withApiKeyDataScope(keyUUID),
+
+			// Trackers
+			WithApiKeyMemoryUsage(dataScopeUUID),
+			WithApiKeyDiskUsage(dataScopeUUID),
+			WithApiKeyEvents(dataScopeUUID),
+			WithApiKeySubscriptions(dataScopeUUID),
+			// Limits - tied to data scope, not key scope
+			WithApiKeyMaxMemoryUsage(dataScopeUUID),
+			WithApiKeyMaxDiskUsage(dataScopeUUID),
+			WithApiKeyMaxEvents(dataScopeUUID),
+			WithApiKeyMaxSubscriptions(dataScopeUUID),
 			// RPS limits
-			WithApiKeyRPSDataLimit(keyUUID),
-			WithApiKeyRPSEventLimit(keyUUID),
+			WithApiKeyRPSDataLimit(dataScopeUUID),
+			WithApiKeyRPSEventLimit(dataScopeUUID),
 
 			// The API key itself
 			fmt.Sprintf("%s:api:key:%s", c.cfg.RootPrefix, keyUUID),

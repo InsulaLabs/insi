@@ -99,7 +99,7 @@ var (
 
 var (
 	ErrKeyNotFound    = errors.New("key not found")
-	ErrConflict       = errors.New("operation failed due to a conflict (e.g., key exists for setnx, or cas failed)")
+	ErrConflict       = errors.New("operation failed due to a conflict (e.g., key exists for blob, setnx, or cas failed)")
 	ErrTokenNotFound  = errors.New("token not found")
 	ErrTokenInvalid   = errors.New("token invalid")
 	ErrAPIKeyNotFound = errors.New("api key not found")
@@ -1518,6 +1518,16 @@ func (c *Client) UploadBlob(ctx context.Context, key string, data io.Reader, fil
 					Limit:        limit,
 					Message:      strings.TrimSpace(string(bodyBytes)),
 				}
+			}
+
+			// Server was upgraded to deny direct overwrite of blobs
+			if resp.Header.Get("X-Blob-Already-Exists") == "true" {
+				return ErrConflict
+			}
+
+			// Force waiting until the tombstone is deleted
+			if resp.Header.Get("X-Blob-Tombstone-Exists") == "true" {
+				return ErrConflict
 			}
 		}
 

@@ -70,14 +70,14 @@ func (c *Core) getEntity(keyUUID, apiKey, dataScopeUUID string) (models.Entity, 
 		return &val
 	}
 
-	usage.CurrentUsage.BytesInMemory = getUsagePtr(WithApiKeyMemoryUsage(keyUUID), 0)
-	usage.MaxLimits.BytesInMemory = getUsagePtr(WithApiKeyMaxMemoryUsage(keyUUID), ApiDefaultMaxMemoryUsage)
-	usage.CurrentUsage.BytesOnDisk = getUsagePtr(WithApiKeyDiskUsage(keyUUID), 0)
-	usage.MaxLimits.BytesOnDisk = getUsagePtr(WithApiKeyMaxDiskUsage(keyUUID), ApiDefaultMaxDiskUsage)
-	usage.CurrentUsage.EventsEmitted = getUsagePtr(WithApiKeyEvents(keyUUID), 0)
-	usage.MaxLimits.EventsEmitted = getUsagePtr(WithApiKeyMaxEvents(keyUUID), ApiDefaultMaxEvents)
-	usage.CurrentUsage.Subscribers = getUsagePtr(WithApiKeySubscriptions(keyUUID), 0)
-	usage.MaxLimits.Subscribers = getUsagePtr(WithApiKeyMaxSubscriptions(keyUUID), ApiDefaultMaxSubscriptions)
+	usage.CurrentUsage.BytesInMemory = getUsagePtr(WithApiKeyMemoryUsage(dataScopeUUID), 0)
+	usage.MaxLimits.BytesInMemory = getUsagePtr(WithApiKeyMaxMemoryUsage(dataScopeUUID), ApiDefaultMaxMemoryUsage)
+	usage.CurrentUsage.BytesOnDisk = getUsagePtr(WithApiKeyDiskUsage(dataScopeUUID), 0)
+	usage.MaxLimits.BytesOnDisk = getUsagePtr(WithApiKeyMaxDiskUsage(dataScopeUUID), ApiDefaultMaxDiskUsage)
+	usage.CurrentUsage.EventsEmitted = getUsagePtr(WithApiKeyEvents(dataScopeUUID), 0)
+	usage.MaxLimits.EventsEmitted = getUsagePtr(WithApiKeyMaxEvents(dataScopeUUID), ApiDefaultMaxEvents)
+	usage.CurrentUsage.Subscribers = getUsagePtr(WithApiKeySubscriptions(dataScopeUUID), 0)
+	usage.MaxLimits.Subscribers = getUsagePtr(WithApiKeyMaxSubscriptions(dataScopeUUID), ApiDefaultMaxSubscriptions)
 
 	entity := models.Entity{
 		RootApiKey:    apiKey,
@@ -106,14 +106,16 @@ func (c *Core) GetEntity(rootApiKey string) (models.Entity, error) {
 }
 
 func (c *Core) GetEntities(offset, limit int) ([]models.Entity, error) {
-	keys, err := c.fsm.Iterate(ApiTrackMemoryPrefix, offset, limit, "")
+
+	// Use the apiKeyRefPrefix to get the actual Key UUID. Others use data scope uuid which can not be mapped back to a key.
+	keys, err := c.fsm.Iterate(apiKeyRefPrefix, offset, limit, "")
 	if err != nil {
 		return nil, err
 	}
 
 	var entities []models.Entity
 	for _, key := range keys {
-		keyUUID := strings.TrimPrefix(key, ApiTrackMemoryPrefix+":")
+		keyUUID := strings.TrimPrefix(key, apiKeyRefPrefix+":")
 		entity, err := c.GetEntityByKeyUUID(keyUUID)
 		if err != nil {
 			c.logger.Warn("could not get entity for key uuid during iteration", "key_uuid", keyUUID, "error", err)

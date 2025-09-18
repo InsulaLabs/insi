@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -79,6 +80,8 @@ type blobService struct {
 	identity   badge.Badge // this nodes crypto identity
 	peers      []peer
 	core       *Core
+
+	lastTombstoneCycleEnd time.Time
 }
 
 func newBlobService(logger *slog.Logger, core *Core, insiClient *client.Client, identity badge.Badge, peers []client.Endpoint) (*blobService, error) {
@@ -281,7 +284,7 @@ func (x *blobService) downloadBlobFromPeer(ctx context.Context, blobMeta models.
 	}
 
 	downloadURL := fmt.Sprintf("https://%s/db/internal/v1/blob/download?key=%s&scope=%s",
-		net.JoinHostPort(connectHost, port), blobMeta.Key, blobMeta.DataScopeUUID)
+		net.JoinHostPort(connectHost, port), url.QueryEscape(blobMeta.Key), url.QueryEscape(blobMeta.DataScopeUUID))
 
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -349,6 +352,7 @@ func (x *blobService) startTombstoneSystem(ctx context.Context) {
 	ticker := time.NewTicker(TombstoneCycleFrequency)
 	defer ticker.Stop()
 
+	x.lastTombstoneCycleEnd = time.Time{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -359,8 +363,16 @@ func (x *blobService) startTombstoneSystem(ctx context.Context) {
 			}
 			x.logger.Info("Blob tombstone runner executing deletion cycle")
 			x.execTombstoneDeletion()
+			x.lastTombstoneCycleEnd = time.Now()
 		}
 	}
+}
+
+func (x *blobService) timeUntilNextTombstoneCycle() time.Duration {
+	if x.lastTombstoneCycleEnd.IsZero() {
+		return 0
+	}
+	return TombstoneCycleFrequency - time.Since(x.lastTombstoneCycleEnd)
 }
 
 func (x *blobService) execTombstoneDeletion() {
@@ -449,7 +461,7 @@ func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -470,6 +482,30 @@ func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing key parameter", http.StatusBadRequest)
 		return
 	}
+
+	// Ensure blob doesn't exist already by checking the metadata
+
+	metadataKey := blobMetadataKey(td.DataScopeUUID, key)
+	if _, err := c.fsm.Get(metadataKey); err == nil {
+		w.Header().Set("X-Blob-Already-Exists", "true")
+		http.Error(w, "Blob already exists", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("X-Blob-Already-Exists", "false")
+
+	// See if it has a tombstone, and deny until the tombstone is deleted
+	tombstoneKey := KeyPrimitiveBlobTombstone + metadataKey
+	if _, err := c.fsm.Get(tombstoneKey); err == nil {
+		w.Header().Set("X-Blob-Tombstone-Exists", "true")
+
+		// This is safe to call because the leader is the only one that can set the tombstone,
+		// and we know we are the leader so the time.Time val will be correct.
+		cooldown := c.blobService.timeUntilNextTombstoneCycle()
+		w.Header().Set("X-Time-Until-Next-Tombstone-Cycle", cooldown.String())
+		http.Error(w, "Blob is tombstoned and will be deleted in "+cooldown.String()+" seconds", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("X-Blob-Tombstone-Exists", "false")
 
 	file, handler, err := r.FormFile("blob")
 	if err != nil {
@@ -542,7 +578,6 @@ func (c *Core) uploadBlobHandler(w http.ResponseWriter, r *http.Request) {
 		OriginalName:     handler.Filename,
 	}
 
-	metadataKey := blobMetadataKey(td.DataScopeUUID, key)
 	metadataValue, err := json.Marshal(blobMetadata)
 	if err != nil {
 		c.logger.Error("Could not marshal blob metadata", "error", err)
@@ -625,7 +660,7 @@ func (c *Core) getBlobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -667,7 +702,7 @@ func (c *Core) deleteBlobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
@@ -738,7 +773,7 @@ func (c *Core) iterateBlobKeysByPrefixHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td.KeyUUID, limiterTypeData) {
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
 		return
 	}
 
