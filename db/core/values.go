@@ -140,16 +140,17 @@ func (c *Core) setHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
-		return
-	}
-
 	c.logger.Debug("SetHandler", "entity", td.Entity)
 
 	if !c.fsm.IsLeader() {
 		c.redirectToLeader(w, r, r.URL.RequestURI(), rcPublic)
 		return
 	}
+
+	if !c.CheckRateLimit(w, r, td, limiterTypeData) {
+		return
+	}
+
 	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
