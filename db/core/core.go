@@ -27,6 +27,7 @@ import (
 )
 
 type RouteProvider interface {
+	ReceiveInsightInterface(panel EntityInsight)
 	BindPublicRoutes(mux *http.ServeMux)
 	BindPrivateRoutes(mux *http.ServeMux)
 }
@@ -567,6 +568,10 @@ func (c *Core) Run() {
 			mux:     c.privMux,
 			server:  nil,
 		}
+	}
+
+	for _, rp := range c.routeProviders {
+		rp.ReceiveInsightInterface(c)
 	}
 
 	httpListenAddr := c.nodeCfg.PublicBinding
