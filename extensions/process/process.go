@@ -10,7 +10,9 @@ import (
 	"github.com/InsulaLabs/insi/badge"
 	"github.com/InsulaLabs/insi/db/core"
 	"github.com/InsulaLabs/insi/extensions"
+	processModels "github.com/InsulaLabs/insi/extensions/process/models"
 	"github.com/InsulaLabs/insi/extensions/process/procman"
+	"github.com/google/uuid"
 )
 
 const (
@@ -29,7 +31,7 @@ type Extension struct {
 	nodeIdentity badge.Badge
 	nodeName     string
 
-	processRegistry map[string]*Process
+	processRegistry map[string]*processModels.Process
 	registryMutex   sync.RWMutex
 }
 
@@ -53,13 +55,14 @@ func (e *Extension) ReceiveInsightInterface(insight core.EntityInsight) {
 
 func (e *Extension) BindPublicRoutes(mux *http.ServeMux) {
 
-	// GET - offset and limit in url params
-	mux.HandleFunc("/db/api/v1/extension/process/list", e.withMiddlwares(e.listProcesses))
 }
 
 func (e *Extension) BindPrivateRoutes(mux *http.ServeMux) {
 
+	// GET - offset and limit in url params
+	mux.HandleFunc("/db/api/v1/extension/process/list", e.withMiddlwares(e.listProcesses))
 	// POST
+	mux.HandleFunc("/db/api/v1/extension/process/register", e.withMiddlwares(e.registerProcessHandler))
 	mux.HandleFunc("/db/api/v1/extension/process/start", e.withMiddlwares(e.startProcess))
 	mux.HandleFunc("/db/api/v1/extension/process/stop", e.withMiddlwares(e.stopProcess))
 	mux.HandleFunc("/db/api/v1/extension/process/restart", e.withMiddlwares(e.restartProcess))
@@ -78,7 +81,7 @@ func NewExtension(logger *slog.Logger, rootApiKey string) *Extension {
 		logger:          logger,
 		rootApiKey:      rootApiKey,
 		host:            procman.NewHost(logger.WithGroup("procman")),
-		processRegistry: make(map[string]*Process),
+		processRegistry: make(map[string]*processModels.Process),
 	}
 }
 
@@ -108,9 +111,9 @@ func (e *Extension) updateProcessStatus(uuid string, running bool) {
 
 	if proc, exists := e.processRegistry[uuid]; exists {
 		if running {
-			proc.Status = ProcessStatusRunning
+			proc.Status = processModels.ProcessStatusRunning
 		} else {
-			proc.Status = ProcessStatusStopped
+			proc.Status = processModels.ProcessStatusStopped
 		}
 		e.logger.Info("process status updated", "uuid", uuid, "running", running)
 	}
@@ -124,10 +127,10 @@ func (e *Extension) registerProcess(uuid, name, targetPath string, args []string
 		return nil
 	}
 
-	e.processRegistry[uuid] = &Process{
+	e.processRegistry[uuid] = &processModels.Process{
 		UUID:     uuid,
 		Name:     name,
-		Status:   ProcessStatusStopped,
+		Status:   processModels.ProcessStatusStopped,
 		NodeName: e.nodeName,
 		NodeID:   e.nodeIdentity.GetID(),
 	}
@@ -169,14 +172,14 @@ func (e *Extension) listProcesses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e.registryMutex.RLock()
-	processes := make([]Process, 0, len(e.processRegistry))
+	processes := make([]processModels.Process, 0, len(e.processRegistry))
 	for _, proc := range e.processRegistry {
 		processes = append(processes, *proc)
 	}
 	e.registryMutex.RUnlock()
 
 	if offset >= len(processes) {
-		processes = []Process{}
+		processes = []processModels.Process{}
 	} else {
 		end := offset + limit
 		if end > len(processes) {
@@ -185,9 +188,9 @@ func (e *Extension) listProcesses(w http.ResponseWriter, r *http.Request) {
 		processes = processes[offset:end]
 	}
 
-	response := MsgListProcessResponse{
+	response := processModels.ProcessListResponse{
 		Processes: processes,
-		NodeInfo: NodeInfo{
+		NodeInfo: processModels.ProcessNodeInfo{
 			NodeName: e.nodeName,
 			NodeID:   e.nodeIdentity.GetID(),
 		},
@@ -207,7 +210,7 @@ func (e *Extension) startProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cmd MsgProcCommand
+	var cmd processModels.ProcessCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -227,9 +230,20 @@ func (e *Extension) startProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If already running, return success without starting again
+	if e.processRegistry[cmd.UUID].Status == processModels.ProcessStatusRunning {
+		response := processModels.ProcessCommandResponse{
+			ReturnCode: 0,
+			Message:    "Process already running",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	if err := e.host.StartApp(cmd.UUID); err != nil {
 		e.logger.Error("failed to start process", "uuid", cmd.UUID, "error", err)
-		response := MsgProcCommandResponse{
+		response := processModels.ProcessCommandResponse{
 			ReturnCode: 1,
 			Message:    err.Error(),
 		}
@@ -238,7 +252,7 @@ func (e *Extension) startProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := MsgProcCommandResponse{
+	response := processModels.ProcessCommandResponse{
 		ReturnCode: 0,
 		Message:    "Process started successfully",
 	}
@@ -252,7 +266,7 @@ func (e *Extension) stopProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cmd MsgProcCommand
+	var cmd processModels.ProcessCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -264,7 +278,7 @@ func (e *Extension) stopProcess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e.registryMutex.RLock()
-	_, exists := e.processRegistry[cmd.UUID]
+	proc, exists := e.processRegistry[cmd.UUID]
 	e.registryMutex.RUnlock()
 
 	if !exists {
@@ -272,9 +286,20 @@ func (e *Extension) stopProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If not running, return success without stopping
+	if proc.Status != processModels.ProcessStatusRunning {
+		response := processModels.ProcessCommandResponse{
+			ReturnCode: 0,
+			Message:    "Process already stopped",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	if err := e.host.StopApp(cmd.UUID); err != nil {
 		e.logger.Error("failed to stop process", "uuid", cmd.UUID, "error", err)
-		response := MsgProcCommandResponse{
+		response := processModels.ProcessCommandResponse{
 			ReturnCode: 1,
 			Message:    err.Error(),
 		}
@@ -283,7 +308,7 @@ func (e *Extension) stopProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := MsgProcCommandResponse{
+	response := processModels.ProcessCommandResponse{
 		ReturnCode: 0,
 		Message:    "Process stopped successfully",
 	}
@@ -297,7 +322,7 @@ func (e *Extension) restartProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cmd MsgProcCommand
+	var cmd processModels.ProcessCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -309,11 +334,22 @@ func (e *Extension) restartProcess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e.registryMutex.RLock()
-	_, exists := e.processRegistry[cmd.UUID]
+	proc, exists := e.processRegistry[cmd.UUID]
 	e.registryMutex.RUnlock()
 
 	if !exists {
 		http.Error(w, "Process not found", http.StatusNotFound)
+		return
+	}
+
+	// If not running, return success without restarting
+	if proc.Status != processModels.ProcessStatusRunning {
+		response := processModels.ProcessCommandResponse{
+			ReturnCode: 0,
+			Message:    "Process already stopped",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -323,7 +359,7 @@ func (e *Extension) restartProcess(w http.ResponseWriter, r *http.Request) {
 
 	if err := e.host.StartApp(cmd.UUID); err != nil {
 		e.logger.Error("failed to start process after restart", "uuid", cmd.UUID, "error", err)
-		response := MsgProcCommandResponse{
+		response := processModels.ProcessCommandResponse{
 			ReturnCode: 1,
 			Message:    err.Error(),
 		}
@@ -332,7 +368,7 @@ func (e *Extension) restartProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := MsgProcCommandResponse{
+	response := processModels.ProcessCommandResponse{
 		ReturnCode: 0,
 		Message:    "Process restarted successfully",
 	}
@@ -346,7 +382,7 @@ func (e *Extension) statusProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cmd MsgProcCommand
+	var cmd processModels.ProcessCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -368,4 +404,51 @@ func (e *Extension) statusProcess(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(*proc)
+}
+
+func (e *Extension) registerProcessHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req processModels.ProcessRegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" {
+		http.Error(w, "Name is required", http.StatusBadRequest)
+		return
+	}
+	if req.TargetPath == "" {
+		http.Error(w, "TargetPath is required", http.StatusBadRequest)
+		return
+	}
+
+	// Generate a unique UUID for this process
+	uuid := uuid.New().String()
+
+	err := e.registerProcess(uuid, req.Name, req.TargetPath, req.Args)
+	if err != nil {
+		e.logger.Error("failed to register process", "uuid", uuid, "error", err)
+		response := processModels.ProcessRegisterResponse{
+			Success: false,
+			UUID:    "",
+			Message: err.Error(),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	response := processModels.ProcessRegisterResponse{
+		Success: true,
+		UUID:    uuid,
+		Message: "Process registered successfully",
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

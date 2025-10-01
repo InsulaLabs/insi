@@ -77,6 +77,8 @@ import (
 
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/gorilla/websocket"
+
+	processModels "github.com/InsulaLabs/insi/extensions/process/models"
 )
 
 const (
@@ -199,6 +201,10 @@ type Config struct {
 	// Defaults to false (stickiness disabled).
 	// Note - This has some performance trade-offs. Read the docs for more info.
 	EnableLeaderStickiness bool
+
+	// Set to true to disable following redirects. This is useful when you want
+	// operations to be handled by a specific node (e.g., process management).
+	DisableRedirects bool
 }
 
 type ErrorResponse struct {
@@ -218,6 +224,7 @@ type Client struct {
 	endpoints              []Endpoint
 	endpointMu             sync.RWMutex
 	enableLeaderStickiness bool
+	disableRedirects       bool
 }
 
 /*
@@ -243,6 +250,7 @@ func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 		redirectCoutner:        atomic.Uint64{},
 		endpoints:              c.endpoints,
 		enableLeaderStickiness: c.enableLeaderStickiness,
+		disableRedirects:       c.disableRedirects,
 	}
 }
 
@@ -378,6 +386,7 @@ func NewClient(cfg *Config) (*Client, error) {
 		redirectCoutner:        atomic.Uint64{},
 		endpoints:              cfg.Endpoints,
 		enableLeaderStickiness: cfg.EnableLeaderStickiness,
+		disableRedirects:       cfg.DisableRedirects,
 	}, nil
 }
 
@@ -386,7 +395,9 @@ func (c *Client) ResetAccumulatedRedirects() {
 }
 
 func isPrivatePath(path string) bool {
-	return strings.HasPrefix(path, "db/api/v1/join") || strings.HasPrefix(path, "db/api/v1/admin/")
+	return strings.HasPrefix(path, "db/api/v1/join") ||
+		strings.HasPrefix(path, "db/api/v1/admin/") ||
+		strings.HasPrefix(path, "db/api/v1/extension/")
 }
 
 func (c *Client) doRequest(method, path string, queryParams map[string]string, body interface{}, target interface{}) error {
@@ -460,6 +471,9 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 			"method", originalMethod,
 			"url", currentReqURL.String(),
 			"attempt", redirects+1,
+			"path", path,
+			"isPrivate", isPrivatePath(path),
+			"disableRedirects", c.disableRedirects,
 		)
 
 		resp, err := c.httpClient.Do(req)
@@ -485,6 +499,14 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 		switch resp.StatusCode {
 		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, // 301, 302, 303
 			http.StatusTemporaryRedirect, http.StatusPermanentRedirect: // 307, 308
+
+			if c.disableRedirects {
+				resp.Body.Close()
+				c.logger.Debug("Request would redirect but redirects are disabled (direct connection mode)",
+					"status_code", resp.StatusCode,
+					"url", currentReqURL.String())
+				return fmt.Errorf("request redirected with status %d but redirects are disabled in direct connection mode", resp.StatusCode)
+			}
 
 			loc := resp.Header.Get("Location")
 			if loc == "" {
@@ -1198,6 +1220,10 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 
 		switch resp.StatusCode {
 		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			if c.disableRedirects {
+				return fmt.Errorf("websocket connection redirected with status %d but redirects are disabled in direct connection mode", resp.StatusCode)
+			}
+
 			loc := resp.Header.Get("Location")
 			if loc == "" {
 				return fmt.Errorf("redirect response missing Location header from %s", currentWsURL.String())
@@ -1473,6 +1499,11 @@ func (c *Client) UploadBlob(ctx context.Context, key string, data io.Reader, fil
 		// Handle redirects
 		switch resp.StatusCode {
 		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			if c.disableRedirects {
+				resp.Body.Close()
+				return fmt.Errorf("blob upload redirected with status %d but redirects are disabled in direct connection mode", resp.StatusCode)
+			}
+
 			loc := resp.Header.Get("Location")
 			if loc == "" {
 				resp.Body.Close()
@@ -1578,6 +1609,11 @@ func (c *Client) GetBlob(ctx context.Context, key string) (io.ReadCloser, error)
 
 		switch resp.StatusCode {
 		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			if c.disableRedirects {
+				resp.Body.Close()
+				return nil, fmt.Errorf("blob download redirected with status %d but redirects are disabled in direct connection mode", resp.StatusCode)
+			}
+
 			loc := resp.Header.Get("Location")
 			if loc == "" {
 				resp.Body.Close()
@@ -1736,6 +1772,107 @@ func (c *Client) DeleteAlias(alias string) error {
 func (c *Client) ListAliases() (*models.ListAliasesResponse, error) {
 	var response models.ListAliasesResponse
 	err := c.doRequest(http.MethodGet, "db/api/v1/alias/list", nil, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// --- Process Extension Operations ---
+
+// RegisterProcess registers a new process with the process extension.
+// This creates a new process entry that can then be started/stopped.
+// The server will generate a unique UUID for the process.
+// Requires root API key.
+func (c *Client) RegisterProcess(name, targetPath string, args []string) (*processModels.ProcessRegisterResponse, error) {
+	if name == "" {
+		return nil, fmt.Errorf("name cannot be empty")
+	}
+	if targetPath == "" {
+		return nil, fmt.Errorf("targetPath cannot be empty")
+	}
+	req := processModels.ProcessRegisterRequest{
+		Name:       name,
+		TargetPath: targetPath,
+		Args:       args,
+	}
+	var response processModels.ProcessRegisterResponse
+	err := c.doRequest(http.MethodPost, "db/api/v1/extension/process/register", nil, req, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// ListProcesses retrieves a list of processes from the process extension.
+// This is a public endpoint that doesn't require root privileges.
+func (c *Client) ListProcesses(offset, limit int) (*processModels.ProcessListResponse, error) {
+	params := map[string]string{
+		"offset": strconv.Itoa(offset),
+		"limit":  strconv.Itoa(limit),
+	}
+	var response processModels.ProcessListResponse
+	err := c.doRequest(http.MethodGet, "db/api/v1/extension/process/list", params, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// StartProcess starts an existing process by UUID.
+// Requires root API key.
+func (c *Client) StartProcess(uuid string) (*processModels.ProcessCommandResponse, error) {
+	if uuid == "" {
+		return nil, fmt.Errorf("uuid cannot be empty")
+	}
+	cmd := processModels.ProcessCommand{UUID: uuid}
+	var response processModels.ProcessCommandResponse
+	err := c.doRequest(http.MethodPost, "db/api/v1/extension/process/start", nil, cmd, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// StopProcess stops a running process by UUID.
+// Requires root API key.
+func (c *Client) StopProcess(uuid string) (*processModels.ProcessCommandResponse, error) {
+	if uuid == "" {
+		return nil, fmt.Errorf("uuid cannot be empty")
+	}
+	cmd := processModels.ProcessCommand{UUID: uuid}
+	var response processModels.ProcessCommandResponse
+	err := c.doRequest(http.MethodPost, "db/api/v1/extension/process/stop", nil, cmd, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// RestartProcess restarts a process by UUID.
+// Requires root API key.
+func (c *Client) RestartProcess(uuid string) (*processModels.ProcessCommandResponse, error) {
+	if uuid == "" {
+		return nil, fmt.Errorf("uuid cannot be empty")
+	}
+	cmd := processModels.ProcessCommand{UUID: uuid}
+	var response processModels.ProcessCommandResponse
+	err := c.doRequest(http.MethodPost, "db/api/v1/extension/process/restart", nil, cmd, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// GetProcessStatus retrieves the status of a process by UUID.
+// Requires root API key.
+func (c *Client) GetProcessStatus(uuid string) (*processModels.Process, error) {
+	if uuid == "" {
+		return nil, fmt.Errorf("uuid cannot be empty")
+	}
+	cmd := processModels.ProcessCommand{UUID: uuid}
+	var response processModels.Process
+	err := c.doRequest(http.MethodPost, "db/api/v1/extension/process/status", nil, cmd, &response)
 	if err != nil {
 		return nil, err
 	}

@@ -9,9 +9,14 @@ import (
 
 	"github.com/InsulaLabs/insi/extensions/process"
 	"github.com/InsulaLabs/insi/runtime"
+	"github.com/google/uuid"
 )
 
 var ctx = context.Background()
+
+func init() {
+	uuid.EnableRandPool()
+}
 
 func main() {
 	// misconfigured logger in raft bbolt backend
