@@ -91,6 +91,14 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 		}
 	}
 
+	clientIP := c.getRemoteAddress(r)
+	if existingForwardedFor := proxyReq.Header.Get("X-Forwarded-For"); existingForwardedFor != "" {
+		proxyReq.Header.Set("X-Forwarded-For", existingForwardedFor+", "+clientIP)
+	} else {
+		proxyReq.Header.Set("X-Forwarded-For", clientIP)
+	}
+	proxyReq.Header.Set("X-Real-IP", clientIP)
+
 	client := &http.Client{
 		Timeout: time.Second * 30,
 	}
