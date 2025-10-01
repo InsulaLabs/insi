@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -39,13 +40,13 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 	leaderInfo, err := c.fsm.LeaderHTTPAddress()
 	if err != nil {
 		c.logger.Error(
-			"Failed to get leader's connect address for redirection",
+			"Failed to get leader's connect address for forwarding",
 			"original_path", originalPath,
 			"error", err,
 		)
 		http.Error(
 			w,
-			"Failed to determine cluster leader for redirection: "+err.Error(),
+			"Failed to determine cluster leader for forwarding: "+err.Error(),
 			http.StatusServiceUnavailable,
 		)
 		return
@@ -61,30 +62,58 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 		leaderConnectAddress = leaderInfo.PrivateBinding
 	}
 
-	// parse the public and private bindings
 	_, port, err := net.SplitHostPort(leaderConnectAddress)
 
-	// determine the address to return based on the client domain
-	// essentially, if a "domain" is provided, we use it to construct the
-	// address as "domain:port" rather than "ip:port"
 	if err == nil && leaderInfo.ClientDomain != "" {
 		leaderConnectAddress = net.JoinHostPort(leaderInfo.ClientDomain, port)
 	}
 
-	redirectURL := "https://" + leaderConnectAddress + originalPath
+	forwardURL := "https://" + leaderConnectAddress + originalPath
 	if r.URL.RawQuery != "" {
-		redirectURL += "?" + r.URL.RawQuery
+		forwardURL += "?" + r.URL.RawQuery
 	}
 
-	// DBG because this is a lot of noise
-	c.logger.Debug("Issuing redirect to leader",
+	c.logger.Debug("Forwarding request to leader",
 		"current_node_is_follower", true,
 		"leader_connect_address_from_fsm", leaderConnectAddress,
-		"final_redirect_url", redirectURL)
+		"final_forward_url", forwardURL)
 
-	// The client caller should follow this Location header
-	// and make the request to the leader
-	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
+	proxyReq, err := http.NewRequest(r.Method, forwardURL, r.Body)
+	if err != nil {
+		c.logger.Error("Failed to create proxy request to leader", "error", err)
+		http.Error(w, "Failed to forward request to leader", http.StatusInternalServerError)
+		return
+	}
+
+	for key, values := range r.Header {
+		for _, value := range values {
+			proxyReq.Header.Add(key, value)
+		}
+	}
+
+	client := &http.Client{
+		Timeout: time.Second * 30,
+	}
+
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		c.logger.Error("Failed to forward request to leader", "error", err)
+		http.Error(w, "Failed to forward request to leader", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	w.WriteHeader(resp.StatusCode)
+
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		c.logger.Error("Failed to copy response body from leader", "error", err)
+	}
 }
 
 func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {
