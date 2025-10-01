@@ -26,10 +26,21 @@ import (
 	"golang.org/x/time/rate"
 )
 
-type RouteProvider interface {
+type ExtensionMiddlwares interface {
+	GetIPPublicFilterMiddleware() func(next http.Handler) http.Handler
+}
+
+type ExtensionPanel interface {
+	ValidateToken(r *http.Request, rootOnly AccessEntity) (models.TokenData, bool)
+
+	GetExtensionMiddlwares() ExtensionMiddlwares
+}
+
+type Extension interface {
 	ReceiveInsightInterface(panel EntityInsight)
 	BindPublicRoutes(mux *http.ServeMux)
 	BindPrivateRoutes(mux *http.ServeMux)
+	OnInsiReady(ep ExtensionPanel)
 }
 
 type AccessEntity bool
@@ -122,8 +133,10 @@ type Core struct {
 
 	entityRateLimiters *ttlcache.Cache[string, *endpointKeyRateLimiters]
 
-	routeProviders []RouteProvider
+	extensions []Extension
 }
+
+var _ ExtensionPanel = &Core{}
 
 type serverInstance struct {
 	binding string
@@ -466,14 +479,22 @@ func (c *Core) ipPrivateFilterMiddleware() func(next http.Handler) http.Handler 
 	return c.getIpFilterMiddleware(true)
 }
 
-func (c *Core) WithRouteProvider(rp RouteProvider) *Core {
-	c.routeProviders = append(c.routeProviders, rp)
+func (c *Core) WithRouteProvider(rp Extension) *Core {
+	c.extensions = append(c.extensions, rp)
 	return c
 }
 
-func (c *Core) WithRouteProviders(rps ...RouteProvider) *Core {
-	c.routeProviders = append(c.routeProviders, rps...)
+func (c *Core) WithRouteProviders(rps ...Extension) *Core {
+	c.extensions = append(c.extensions, rps...)
 	return c
+}
+
+func (c *Core) GetExtensionMiddlwares() ExtensionMiddlwares {
+	return c
+}
+
+func (c *Core) GetIPPublicFilterMiddleware() func(next http.Handler) http.Handler {
+	return c.ipPublicFilterMiddleware()
 }
 
 // Run forever until the context is cancelled
@@ -521,7 +542,7 @@ func (c *Core) Run() {
 		// List is so they can get a list of all the aliases they have set for the purpose of deleting or debugging
 		c.pubMux.Handle("/db/api/v1/alias/list", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.listAliasesHandler), "system")))
 
-		for _, rp := range c.routeProviders {
+		for _, rp := range c.extensions {
 			rp.BindPublicRoutes(c.pubMux)
 		}
 
@@ -559,7 +580,7 @@ func (c *Core) Run() {
 
 		c.privMux.Handle("/db/api/v1/admin/metrics/ops", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.opsPerSecondHandler), "system")))
 
-		for _, rp := range c.routeProviders {
+		for _, rp := range c.extensions {
 			rp.BindPrivateRoutes(c.privMux)
 		}
 
@@ -570,7 +591,7 @@ func (c *Core) Run() {
 		}
 	}
 
-	for _, rp := range c.routeProviders {
+	for _, rp := range c.extensions {
 		rp.ReceiveInsightInterface(c)
 	}
 
@@ -614,6 +635,13 @@ func (c *Core) Run() {
 			after the root key trackers exist.
 		*/
 		go c.tombstoneRunner()
+
+		// TODO: get the instance of the node (id) so the extension
+		// can be aware of who they are relative to the node cluster
+
+		for _, rp := range c.extensions {
+			go rp.OnInsiReady(c)
+		}
 	}()
 
 	/*

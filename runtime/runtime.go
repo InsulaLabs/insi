@@ -53,7 +53,7 @@ type Runtime struct {
 	currentLogLevel slog.Level
 	keySetupOnce    sync.Once
 
-	routeProviders []core.RouteProvider
+	extensions []core.Extension
 }
 
 // New creates a new Runtime instance.
@@ -184,13 +184,13 @@ func (r *Runtime) GetPublicMux() *http.ServeMux {
 	return r.service.GetPublicMux()
 }
 
-func (r *Runtime) WithRouteProvider(rp core.RouteProvider) *Runtime {
-	r.routeProviders = append(r.routeProviders, rp)
+func (r *Runtime) WithExtension(rp core.Extension) *Runtime {
+	r.extensions = append(r.extensions, rp)
 	return r
 }
 
-func (r *Runtime) WithRouteProviders(rps ...core.RouteProvider) *Runtime {
-	r.routeProviders = append(r.routeProviders, rps...)
+func (r *Runtime) WithExtensions(rps ...core.Extension) *Runtime {
+	r.extensions = append(r.extensions, rps...)
 	return r
 }
 
@@ -346,7 +346,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		os.Exit(1)
 	}
 
-	r.service.WithRouteProviders(r.routeProviders...)
+	r.service.WithRouteProviders(r.extensions...)
 
 	r.service.Run()
 }

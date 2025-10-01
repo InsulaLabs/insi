@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/InsulaLabs/insi/extensions/process"
 	"github.com/InsulaLabs/insi/runtime"
 )
 
@@ -18,6 +19,12 @@ func main() {
 	// to raft snapshot store that isn't directly used by us
 	log.SetOutput(io.Discard)
 
+	extensionLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	processExtension := process.NewExtension(extensionLogger.WithGroup("process"), "root")
+
 	remainingArgs := os.Args[1:]
 
 	// The default config file path can be set here
@@ -27,6 +34,8 @@ func main() {
 		slog.Error("Failed to initialize runtime", "error", err)
 		os.Exit(1)
 	}
+
+	rt = rt.WithExtension(processExtension)
 
 	if err := rt.Run(); err != nil {
 		slog.Error("Runtime exited with error", "error", err)
