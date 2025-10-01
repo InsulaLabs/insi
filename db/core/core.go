@@ -398,6 +398,11 @@ func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Hand
 			return
 		}
 
+		if r.Header.Get("X-Cluster-Internal-Forward") == "true" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		limiter := c.getRateLimiter(category, r)
 		res := limiter.Reserve()
 		if delay := res.Delay(); delay > 0 {

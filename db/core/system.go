@@ -98,6 +98,7 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 		proxyReq.Header.Set("X-Forwarded-For", clientIP)
 	}
 	proxyReq.Header.Set("X-Real-IP", clientIP)
+	proxyReq.Header.Set("X-Cluster-Internal-Forward", "true")
 
 	client := &http.Client{
 		Timeout: time.Second * 30,
