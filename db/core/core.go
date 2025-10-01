@@ -387,17 +387,25 @@ func (c *Core) getRateLimiter(category string, r *http.Request) *rate.Limiter {
 func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		token := authHeader
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			token = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+
+		if token == c.authToken {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		limiter := c.getRateLimiter(category, r)
 		res := limiter.Reserve()
-		// If there's a delay, the request is rate-limited.
 		if delay := res.Delay(); delay > 0 {
-			// We're not proceeding, so cancel the reservation to return the token.
 			res.Cancel()
 			c.logger.Warn("Rate limit exceeded", "category", category, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
 
-			// Set headers to inform the client about the rate limit.
 			retryAfterSeconds := math.Ceil(delay.Seconds())
-			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfterSeconds)) // Correctly format seconds.
+			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfterSeconds))
 			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%v", limiter.Limit()))
 			w.Header().Set("X-RateLimit-Burst", fmt.Sprintf("%d", limiter.Burst()))
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
