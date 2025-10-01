@@ -78,6 +78,9 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 		"leader_connect_address_from_fsm", leaderConnectAddress,
 		"final_forward_url", forwardURL)
 
+	// for testing:
+	time.Sleep(time.Millisecond * 128)
+
 	proxyReq, err := http.NewRequest(r.Method, forwardURL, r.Body)
 	if err != nil {
 		c.logger.Error("Failed to create proxy request to leader", "error", err)
