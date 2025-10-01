@@ -34,6 +34,9 @@ type ExtensionPanel interface {
 	ValidateToken(r *http.Request, rootOnly AccessEntity) (models.TokenData, bool)
 
 	GetExtensionMiddlwares() ExtensionMiddlwares
+
+	GetNodeIdentity() badge.Badge
+	GetNodeName() string
 }
 
 type Extension interface {
@@ -495,6 +498,14 @@ func (c *Core) GetExtensionMiddlwares() ExtensionMiddlwares {
 
 func (c *Core) GetIPPublicFilterMiddleware() func(next http.Handler) http.Handler {
 	return c.ipPublicFilterMiddleware()
+}
+
+func (c *Core) GetNodeIdentity() badge.Badge {
+	return c.identity
+}
+
+func (c *Core) GetNodeName() string {
+	return c.nodeName
 }
 
 // Run forever until the context is cancelled

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/InsulaLabs/insi/badge"
 	"github.com/InsulaLabs/insi/db/core"
 	"github.com/InsulaLabs/insi/extensions"
 	"github.com/InsulaLabs/insi/extensions/process/procman"
@@ -24,6 +25,9 @@ type Extension struct {
 	insight    core.EntityInsight
 	panel      core.ExtensionPanel
 	host       *procman.Host
+
+	nodeIdentity badge.Badge
+	nodeName     string
 
 	processRegistry map[string]*Process
 	registryMutex   sync.RWMutex
@@ -64,7 +68,9 @@ func (e *Extension) BindPrivateRoutes(mux *http.ServeMux) {
 
 func (e *Extension) OnInsiReady(panel core.ExtensionPanel) {
 	e.panel = panel
-	e.logger.Info("Insi ready")
+	e.nodeIdentity = panel.GetNodeIdentity()
+	e.nodeName = panel.GetNodeName()
+	e.logger.Info("Insi ready", "node_name", e.nodeName, "node_id", e.nodeIdentity.GetID())
 }
 
 func NewExtension(logger *slog.Logger, rootApiKey string) *Extension {
@@ -119,9 +125,11 @@ func (e *Extension) registerProcess(uuid, name, targetPath string, args []string
 	}
 
 	e.processRegistry[uuid] = &Process{
-		UUID:   uuid,
-		Name:   name,
-		Status: ProcessStatusStopped,
+		UUID:     uuid,
+		Name:     name,
+		Status:   ProcessStatusStopped,
+		NodeName: e.nodeName,
+		NodeID:   e.nodeIdentity.GetID(),
 	}
 
 	app := procman.NewHostedApp(procman.HostedAppOpt{
@@ -179,6 +187,10 @@ func (e *Extension) listProcesses(w http.ResponseWriter, r *http.Request) {
 
 	response := MsgListProcessResponse{
 		Processes: processes,
+		NodeInfo: NodeInfo{
+			NodeName: e.nodeName,
+			NodeID:   e.nodeIdentity.GetID(),
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
