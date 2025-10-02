@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/db/models"
@@ -25,46 +24,6 @@ var (
 	// errEntityNotFound is returned when an entity cannot be found by name after a full scan.
 	errEntityNotFound = errors.New("entity not found")
 )
-
-func withRetries[R any](ctx context.Context, logger *slog.Logger, fn func() (R, error)) (R, error) {
-	for {
-		result, err := fn()
-		if err == nil {
-			return result, nil // Success
-		}
-
-		var rateLimitErr *client.ErrRateLimited
-		if errors.As(err, &rateLimitErr) {
-			logger.Warn("FWI operation rate limited, sleeping", "duration", rateLimitErr.RetryAfter)
-
-			delay := rateLimitErr.RetryAfter
-			if delay < 100*time.Millisecond {
-				delay = 100 * time.Millisecond
-			}
-
-			select {
-			case <-time.After(rateLimitErr.RetryAfter):
-				logger.Debug("Finished rate limit sleep, retrying operation.")
-				continue // Slept, continue to retry
-			case <-ctx.Done():
-				logger.Error("Context cancelled during rate limit sleep", "error", ctx.Err())
-				var zero R
-				return zero, fmt.Errorf("operation cancelled during rate limit sleep: %w", ctx.Err())
-			}
-		}
-
-		// It's some other error, just return it. FWI is a library, so it should propagate them.
-		var zero R
-		return zero, err
-	}
-}
-
-func withRetriesVoid(ctx context.Context, logger *slog.Logger, fn func() error) error {
-	_, err := withRetries(ctx, logger, func() (any, error) {
-		return nil, fn()
-	})
-	return err
-}
 
 // Abstracts
 type KV interface {
@@ -243,7 +202,7 @@ func (e *entityImpl) GetKey() string {
 }
 
 func (e *entityImpl) Bump(ctx context.Context, key string, value int) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.Bump(key, value)
 	})
 }
@@ -292,7 +251,7 @@ func (e *entityImpl) GetAliasManager() Aliases {
 }
 
 func (e *entityImpl) GetUsageInfo(ctx context.Context) (*models.LimitsResponse, error) {
-	return withRetries(ctx, e.logger, func() (*models.LimitsResponse, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (*models.LimitsResponse, error) {
 		return e.insiClient.GetLimits()
 	})
 }
@@ -305,37 +264,37 @@ func assembleKey(scope, key string) string {
 }
 
 func (e *valueStoreImpl) Get(ctx context.Context, key string) (string, error) {
-	return withRetries(ctx, e.logger, func() (string, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (string, error) {
 		return e.insiClient.Get(assembleKey(e.scope, key))
 	})
 }
 
 func (e *valueStoreImpl) Set(ctx context.Context, key string, value string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.Set(assembleKey(e.scope, key), value)
 	})
 }
 
 func (e *valueStoreImpl) IterateKeys(ctx context.Context, prefix string, offset, limit int) ([]string, error) {
-	return withRetries(ctx, e.logger, func() ([]string, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() ([]string, error) {
 		return e.insiClient.IterateByPrefix(assembleKey(e.scope, prefix), offset, limit)
 	})
 }
 
 func (e *valueStoreImpl) Delete(ctx context.Context, key string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.Delete(assembleKey(e.scope, key))
 	})
 }
 
 func (e *valueStoreImpl) CompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.CompareAndSwap(assembleKey(e.scope, key), oldValue, newValue)
 	})
 }
 
 func (e *valueStoreImpl) SetNX(ctx context.Context, key string, value string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.SetNX(assembleKey(e.scope, key), value)
 	})
 }
@@ -357,37 +316,37 @@ func (e *valueStoreImpl) PopScope() {
 }
 
 func (e *cacheStoreImpl) Get(ctx context.Context, key string) (string, error) {
-	return withRetries(ctx, e.logger, func() (string, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (string, error) {
 		return e.insiClient.GetCache(assembleKey(e.scope, key))
 	})
 }
 
 func (e *cacheStoreImpl) Set(ctx context.Context, key string, value string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.SetCache(assembleKey(e.scope, key), value)
 	})
 }
 
 func (e *cacheStoreImpl) IterateKeys(ctx context.Context, prefix string, offset, limit int) ([]string, error) {
-	return withRetries(ctx, e.logger, func() ([]string, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() ([]string, error) {
 		return e.insiClient.IterateCacheByPrefix(assembleKey(e.scope, prefix), offset, limit)
 	})
 }
 
 func (e *cacheStoreImpl) Delete(ctx context.Context, key string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.DeleteCache(assembleKey(e.scope, key))
 	})
 }
 
 func (e *cacheStoreImpl) CompareAndSwap(ctx context.Context, key string, oldValue, newValue string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.CompareAndSwapCache(assembleKey(e.scope, key), oldValue, newValue)
 	})
 }
 
 func (e *cacheStoreImpl) SetNX(ctx context.Context, key string, value string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.SetCacheNX(assembleKey(e.scope, key), value)
 	})
 }
@@ -417,14 +376,14 @@ func (e *eventsImpl) Subscribe(
 }
 
 func (e *eventsImpl) Publish(ctx context.Context, topic string, data any) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.PublishEvent(assembleKey(e.scope, topic), data)
 	})
 }
 
 func (e *eventsImpl) Purge(ctx context.Context) (int, error) {
 	// Purge subscriptions across ALL nodes in the cluster
-	return withRetries(ctx, e.logger, func() (int, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (int, error) {
 		return e.insiClient.PurgeEventSubscriptionsAllNodes()
 	})
 }
@@ -446,31 +405,31 @@ func (e *eventsImpl) PopScope() {
 }
 
 func (e *blobsImpl) Get(ctx context.Context, key string) (io.ReadCloser, error) {
-	return withRetries(ctx, e.logger, func() (io.ReadCloser, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (io.ReadCloser, error) {
 		return e.insiClient.GetBlob(ctx, assembleKey(e.scope, key))
 	})
 }
 
 func (e *blobsImpl) Set(ctx context.Context, key string, value string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.UploadBlob(ctx, assembleKey(e.scope, key), strings.NewReader(value), key)
 	})
 }
 
 func (e *blobsImpl) SetReader(ctx context.Context, key string, r io.Reader) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.UploadBlob(ctx, assembleKey(e.scope, key), r, key)
 	})
 }
 
 func (e *blobsImpl) Delete(ctx context.Context, key string) error {
-	return withRetriesVoid(ctx, e.logger, func() error {
+	return client.WithRetriesVoid(ctx, e.logger, func() error {
 		return e.insiClient.DeleteBlob(assembleKey(e.scope, key))
 	})
 }
 
 func (e *blobsImpl) IterateKeys(ctx context.Context, prefix string, offset, limit int) ([]string, error) {
-	return withRetries(ctx, e.logger, func() ([]string, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() ([]string, error) {
 		return e.insiClient.IterateBlobKeysByPrefix(assembleKey(e.scope, prefix), offset, limit)
 	})
 }
@@ -492,7 +451,7 @@ func (e *blobsImpl) PopScope() {
 }
 
 func (a *aliasesImpl) MakeAlias(ctx context.Context) (string, error) {
-	return withRetries(ctx, a.logger, func() (string, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, a.logger, func() (string, error) {
 		resp, err := a.insiClient.SetAlias()
 		if err != nil {
 			return "", err
@@ -505,13 +464,13 @@ func (a *aliasesImpl) MakeAlias(ctx context.Context) (string, error) {
 }
 
 func (a *aliasesImpl) DeleteAlias(ctx context.Context, alias string) error {
-	return withRetriesVoid(ctx, a.logger, func() error {
+	return client.WithRetriesVoid(ctx, a.logger, func() error {
 		return a.insiClient.DeleteAlias(alias)
 	})
 }
 
 func (a *aliasesImpl) ListAliases(ctx context.Context) ([]string, error) {
-	return withRetries(ctx, a.logger, func() ([]string, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, a.logger, func() ([]string, error) {
 		resp, err := a.insiClient.ListAliases()
 		if err != nil {
 			return nil, err
@@ -578,7 +537,7 @@ func (f *fwiImpl) CreateEntity(
 		return nil, fmt.Errorf("entity with name '%s' already exists", name)
 	}
 
-	key, err := withRetries(ctx, f.logger, func() (*models.ApiKeyCreateResponse, error) {
+	key, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() (*models.ApiKeyCreateResponse, error) {
 		return f.rootInsiClient.CreateAPIKey(name)
 	})
 	if err != nil {
@@ -599,7 +558,7 @@ func (f *fwiImpl) CreateEntity(
 		return nil, err
 	}
 
-	if err := withRetriesVoid(ctx, f.logger, func() error {
+	if err := client.WithRetriesVoid(ctx, f.logger, func() error {
 		return f.rootInsiClient.Set(entityKey, string(entityEncoded))
 	}); err != nil {
 		return nil, err
@@ -640,7 +599,7 @@ func (f *fwiImpl) CreateEntity(
 	}
 
 	// set the limits on the entity key
-	if err := withRetriesVoid(ctx, f.logger, func() error {
+	if err := client.WithRetriesVoid(ctx, f.logger, func() error {
 		return f.rootInsiClient.SetLimits(key.Key, maxlimits)
 	}); err != nil {
 		color.HiRed("Failed to set the limits on new entity: %s %v", key.Key, err)
@@ -703,7 +662,7 @@ func (f *fwiImpl) CreateOrLoadEntity(
 }
 
 func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
-	keys, err := withRetries(ctx, f.logger, func() ([]string, error) {
+	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
 		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
 	})
 	if err != nil {
@@ -716,7 +675,7 @@ func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 	entities := make([]Entity, 0, len(keys))
 
 	for _, key := range keys {
-		entityRecordStr, err := withRetries(ctx, f.logger, func() (string, error) {
+		entityRecordStr, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() (string, error) {
 			return f.rootInsiClient.Get(key)
 		})
 		if err != nil {
@@ -783,13 +742,13 @@ func (f *fwiImpl) DeleteEntity(ctx context.Context, name string) error {
 	entityUUID := entity.GetUUID()
 	entityKeyInDB := fmt.Sprintf("%s%s", EntityPrefix, entityUUID)
 
-	if err := withRetriesVoid(ctx, f.logger, func() error {
+	if err := client.WithRetriesVoid(ctx, f.logger, func() error {
 		return f.rootInsiClient.Delete(entityKeyInDB)
 	}); err != nil {
 		return fmt.Errorf("failed to delete entity record from db: %w", err)
 	}
 
-	if err := withRetriesVoid(ctx, f.logger, func() error {
+	if err := client.WithRetriesVoid(ctx, f.logger, func() error {
 		return f.rootInsiClient.DeleteAPIKey(entity.GetKey())
 	}); err != nil {
 		f.logger.Error("Failed to delete API key for entity, but entity record was deleted. Manual cleanup of API key may be required.",
@@ -818,7 +777,7 @@ func (f *fwiImpl) UpdateEntityLimits(
 	apiKey := entity.GetKey()
 
 	// Get current limits to merge with the new limits and validate.
-	currentLimitsResp, err := withRetries(ctx, f.logger, func() (*models.LimitsResponse, error) {
+	currentLimitsResp, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() (*models.LimitsResponse, error) {
 		return f.rootInsiClient.GetLimitsForKey(apiKey)
 	})
 	if err != nil {
@@ -859,7 +818,7 @@ func (f *fwiImpl) UpdateEntityLimits(
 	}
 
 	// Now set the updated and validated limits.
-	if err := withRetriesVoid(ctx, f.logger, func() error {
+	if err := client.WithRetriesVoid(ctx, f.logger, func() error {
 		return f.rootInsiClient.SetLimits(apiKey, mergedLimits)
 	}); err != nil {
 		return fmt.Errorf("failed to update limits for entity '%s': %w", name, err)
@@ -870,13 +829,13 @@ func (f *fwiImpl) UpdateEntityLimits(
 }
 
 func (f *fwiImpl) GetOpsPerSecond(ctx context.Context) (*models.OpsPerSecondCounters, error) {
-	return withRetries(ctx, f.logger, func() (*models.OpsPerSecondCounters, error) {
+	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() (*models.OpsPerSecondCounters, error) {
 		return f.rootInsiClient.GetOpsPerSecond()
 	})
 }
 
 func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, error) {
-	keys, err := withRetries(ctx, f.logger, func() ([]string, error) {
+	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
 		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
 	})
 	if err != nil {
@@ -887,7 +846,7 @@ func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, er
 	}
 
 	for _, key := range keys {
-		entityRecordStr, err := withRetries(ctx, f.logger, func() (string, error) {
+		entityRecordStr, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() (string, error) {
 			return f.rootInsiClient.Get(key)
 		})
 		if err != nil {
