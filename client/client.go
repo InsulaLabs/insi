@@ -1353,6 +1353,25 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 	}
 }
 
+// ShakeEventSubscriptions disconnects all event subscriptions and force sets the subscription count to 0.
+func (c *Client) ShakeEventSubscriptions() (int, error) {
+	var response struct {
+		Success              bool `json:"success"`
+		DisconnectedSessions int  `json:"disconnected_sessions"`
+	}
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/events/shake", nil, nil, &response)
+	if err != nil {
+		return 0, err
+	}
+
+	if !response.Success {
+		return 0, fmt.Errorf("shake operation reported failure")
+	}
+
+	return response.DisconnectedSessions, nil
+}
+
 // PurgeEventSubscriptions disconnects all event subscriptions for the current API key.
 // Returns the number of disconnected sessions.
 func (c *Client) PurgeEventSubscriptions() (int, error) {

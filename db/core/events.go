@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/rft"
 	"github.com/InsulaLabs/insi/db/tkv"
@@ -775,4 +776,70 @@ func (c *Core) eventPurgeHandler(w http.ResponseWriter, r *http.Request) {
 		"key_uuid":              td.KeyUUID,
 		"disconnected_sessions": disconnectedCount,
 	})
+}
+
+func (c *Core) eventShakeHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndEventsOp()
+
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	td, ok := c.ValidateToken(r, AnyUser())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td, limiterTypeEvents) {
+		return
+	}
+
+	result := map[string]interface{}{
+		"success":               false,
+		"disconnected_sessions": 0,
+	}
+
+	targetClient := c.loopbackClient.DeriveWithApiKey(td.KeyUUID, td.Token)
+
+	totalDisconnected := 0
+	if err := client.WithRetriesVoid(r.Context(), c.logger, func() error {
+		dc, err := targetClient.PurgeEventSubscriptionsAllNodes()
+		if err != nil {
+			return err
+		}
+		totalDisconnected += dc
+		return nil
+	}); err != nil {
+		c.logger.Error("Failed to purge event subscriptions", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	c.logger.Info("Purged event subscriptions", "entity", td.Entity, "disconnected_count", totalDisconnected)
+
+	// Now, as root key we have to manually set their counters to 0
+	if err := client.WithRetriesVoid(r.Context(), c.logger, func() error {
+		return c.fsm.Set(models.KVPayload{
+			Key:   WithApiKeySubscriptions(td.DataScopeUUID),
+			Value: "0",
+		})
+	}); err != nil {
+		c.logger.Error("Failed to set subscription count to 0", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	result["success"] = true
+	result["disconnected_sessions"] = totalDisconnected
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(result)
 }
