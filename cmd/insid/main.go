@@ -7,16 +7,28 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/InsulaLabs/insi/extensions/process"
 	"github.com/InsulaLabs/insi/runtime"
+	"github.com/google/uuid"
 )
 
 var ctx = context.Background()
+
+func init() {
+	uuid.EnableRandPool()
+}
 
 func main() {
 	// misconfigured logger in raft bbolt backend
 	// we use slog so this only silences the bbolt backend
 	// to raft snapshot store that isn't directly used by us
 	log.SetOutput(io.Discard)
+
+	extensionLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	processExtension := process.NewExtension(extensionLogger.WithGroup("process"))
 
 	remainingArgs := os.Args[1:]
 
@@ -27,6 +39,8 @@ func main() {
 		slog.Error("Failed to initialize runtime", "error", err)
 		os.Exit(1)
 	}
+
+	rt = rt.WithExtension(processExtension)
 
 	if err := rt.Run(); err != nil {
 		slog.Error("Runtime exited with error", "error", err)

@@ -24,6 +24,8 @@ import (
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
+
+	processModels "github.com/InsulaLabs/insi/extensions/process/models"
 )
 
 var (
@@ -161,9 +163,10 @@ func getClientNoConfig() (*client.Client, error) {
 				ClientDomain:   clientDomain,
 			},
 		},
-		ApiKey:     apiKey,
-		SkipVerify: skipVerify,
-		Logger:     clientLogger,
+		ApiKey:           apiKey,
+		SkipVerify:       skipVerify,
+		Logger:           clientLogger,
+		DisableRedirects: true, // Always disable redirects in direct mode without config
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
@@ -215,9 +218,10 @@ func getClient(cfg *config.Cluster, targetNodeID string) (*client.Client, error)
 				ClientDomain:   nodeDetails.ClientDomain,
 			},
 		},
-		ApiKey:     apiKey,
-		SkipVerify: cfg.ClientSkipVerify,
-		Logger:     clientLogger,
+		ApiKey:           apiKey,
+		SkipVerify:       cfg.ClientSkipVerify,
+		Logger:           clientLogger,
+		DisableRedirects: targetNodeID != "", // Disable redirects when targeting a specific node
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client for node %s (%s): %w", nodeToConnect, nodeDetails.PublicBinding, err)
@@ -315,6 +319,8 @@ func main() {
 		handleAlias(cli, cmdArgs)
 	case "admin":
 		handleAdmin(cli, cmdArgs)
+	case "ext":
+		handleExt(cli, cmdArgs)
 	default:
 		logger.Error("Unknown command", "command", command)
 		printUsage()
@@ -379,6 +385,14 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("admin"), color.CyanString("insight"), color.CyanString("entity"), color.CyanString("<root_api_key>"), color.YellowString("--root flag required."))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s\n", color.GreenString("admin"), color.CyanString("insight"), color.CyanString("entities"), color.CyanString("[offset]"), color.CyanString("[limit]"), color.YellowString("--root flag required."))
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("admin"), color.CyanString("insight"), color.CyanString("entity-by-alias"), color.CyanString("<alias>"), color.YellowString("--root flag required."))
+
+	// Extension commands
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s %s\n", color.GreenString("ext"), color.CyanString("process"), color.CyanString("register"), color.CyanString("<name>"), color.CyanString("<path>"), color.CyanString("[args...]"), color.YellowString("--root flag required"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("ext"), color.CyanString("process"), color.CyanString("list"), color.CyanString("[offset]"), color.CyanString("[limit]"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("ext"), color.CyanString("process"), color.CyanString("start"), color.CyanString("<uuid>"), color.YellowString("--root flag required"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("ext"), color.CyanString("process"), color.CyanString("stop"), color.CyanString("<uuid>"), color.YellowString("--root flag required"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("ext"), color.CyanString("process"), color.CyanString("restart"), color.CyanString("<uuid>"), color.YellowString("--root flag required"))
+	fmt.Fprintf(os.Stderr, "  %s %s %s %s %s\n", color.GreenString("ext"), color.CyanString("process"), color.CyanString("status"), color.CyanString("<uuid>"), color.YellowString("--root flag required"))
 }
 
 func handlePublish(c *client.Client, args []string) {
@@ -1742,4 +1756,276 @@ func printEntity(entity *models.Entity) {
 		}
 	}
 	fmt.Println()
+}
+
+// --- Extension Command Handlers ---
+
+func handleExt(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("ext: requires <extension> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	extension := args[0]
+	extArgs := args[1:]
+
+	switch extension {
+	case "process":
+		handleExtProcess(c, extArgs)
+	default:
+		logger.Error("ext: unknown extension", "extension", extension)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleExtProcess(c *client.Client, args []string) {
+	if len(args) < 1 {
+		logger.Error("ext process: requires <sub-command> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+	subCommand := args[0]
+	subArgs := args[1:]
+
+	switch subCommand {
+	case "register":
+		handleExtProcessRegister(c, subArgs)
+	case "list":
+		handleExtProcessList(c, subArgs)
+	case "start":
+		handleExtProcessStart(c, subArgs)
+	case "stop":
+		handleExtProcessStop(c, subArgs)
+	case "restart":
+		handleExtProcessRestart(c, subArgs)
+	case "status":
+		handleExtProcessStatus(c, subArgs)
+	default:
+		logger.Error("ext process: unknown sub-command", "sub_command", subCommand)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func handleExtProcessList(c *client.Client, args []string) {
+	offset, limit := 0, 100
+	var err error
+
+	if len(args) > 0 {
+		offset, err = strconv.Atoi(args[0])
+		if err != nil {
+			logger.Error("ext process list: invalid offset", "offset_str", args[0], "error", err)
+			fmt.Fprintf(os.Stderr, "%s Invalid offset '%s': %v\n", color.RedString("Error:"), args[0], err)
+			os.Exit(1)
+		}
+	}
+	if len(args) > 1 {
+		limit, err = strconv.Atoi(args[1])
+		if err != nil {
+			logger.Error("ext process list: invalid limit", "limit_str", args[1], "error", err)
+			fmt.Fprintf(os.Stderr, "%s Invalid limit '%s': %v\n", color.RedString("Error:"), args[1], err)
+			os.Exit(1)
+		}
+	}
+
+	resp, err := c.ListProcesses(offset, limit)
+	if err != nil {
+		logger.Error("Failed to list processes", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if len(resp.Processes) == 0 {
+		fmt.Println("No processes found.")
+		return
+	}
+
+	fmt.Printf("Node: %s (ID: %s)\n", color.CyanString(resp.NodeInfo.NodeName), resp.NodeInfo.NodeID)
+	fmt.Println(color.GreenString("--------------------"))
+
+	for _, proc := range resp.Processes {
+		statusColor := color.RedString
+		if proc.Status == processModels.ProcessStatusRunning {
+			statusColor = color.GreenString
+		} else if proc.Status == processModels.ProcessStatusStarting {
+			statusColor = color.YellowString
+		}
+
+		fmt.Printf("UUID:   %s\n", proc.UUID)
+		fmt.Printf("Name:   %s\n", proc.Name)
+		fmt.Printf("Status: %s\n", statusColor(string(proc.Status)))
+		fmt.Printf("Node:   %s (ID: %s)\n", proc.NodeName, proc.NodeID)
+		fmt.Println(color.GreenString("--------------------"))
+	}
+}
+
+func handleExtProcessRegister(c *client.Client, args []string) {
+	if len(args) < 2 {
+		logger.Error("ext process register: requires <name> <path> [args...]")
+		printUsage()
+		os.Exit(1)
+	}
+
+	// Enforce --root for process operations
+	if !useRootKey {
+		logger.Error("ext process register requires the --root flag to be set.")
+		fmt.Fprintf(os.Stderr, "%s ext process register requires --root flag.\n", color.RedString("Error:"))
+		os.Exit(1)
+	}
+
+	name := args[0]
+	targetPath := args[1]
+	var cmdArgs []string
+	if len(args) > 2 {
+		cmdArgs = args[2:]
+	}
+
+	resp, err := c.RegisterProcess(name, targetPath, cmdArgs)
+	if err != nil {
+		logger.Error("Failed to register process", "name", name, "path", targetPath, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if !resp.Success {
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), resp.Message)
+		os.Exit(1)
+	}
+
+	color.HiGreen("Process registered successfully!")
+	fmt.Printf("UUID: %s\n", color.CyanString(resp.UUID))
+	fmt.Printf("Name: %s\n", name)
+	fmt.Printf("Path: %s\n", targetPath)
+	if len(cmdArgs) > 0 {
+		fmt.Printf("Args: %v\n", cmdArgs)
+	}
+	fmt.Printf("\n%s You can now start this process with:\n", color.YellowString("Note:"))
+	fmt.Printf("  insic ext process start %s\n", resp.UUID)
+}
+
+func handleExtProcessStart(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("ext process start: requires <uuid>")
+		fmt.Fprintf(os.Stderr, "%s To register a new process, use: insic ext process register <name> <path> [args...]\n", color.YellowString("Note:"))
+		os.Exit(1)
+	}
+
+	// Enforce --root for process operations
+	if !useRootKey {
+		logger.Error("ext process start requires the --root flag to be set.")
+		fmt.Fprintf(os.Stderr, "%s ext process start requires --root flag.\n", color.RedString("Error:"))
+		os.Exit(1)
+	}
+
+	uuid := args[0]
+	resp, err := c.StartProcess(uuid)
+	if err != nil {
+		logger.Error("Failed to start process", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if resp.ReturnCode != 0 {
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), resp.Message)
+		os.Exit(resp.ReturnCode)
+	}
+
+	color.HiGreen("Process started successfully: %s", resp.Message)
+}
+
+func handleExtProcessStop(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("ext process stop: requires <uuid>")
+		printUsage()
+		os.Exit(1)
+	}
+
+	// Enforce --root for process operations
+	if !useRootKey {
+		logger.Error("ext process stop requires the --root flag to be set.")
+		fmt.Fprintf(os.Stderr, "%s ext process stop requires --root flag.\n", color.RedString("Error:"))
+		os.Exit(1)
+	}
+
+	uuid := args[0]
+	resp, err := c.StopProcess(uuid)
+	if err != nil {
+		logger.Error("Failed to stop process", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if resp.ReturnCode != 0 {
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), resp.Message)
+		os.Exit(resp.ReturnCode)
+	}
+
+	color.HiGreen("Process stopped successfully: %s", resp.Message)
+}
+
+func handleExtProcessRestart(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("ext process restart: requires <uuid>")
+		printUsage()
+		os.Exit(1)
+	}
+
+	// Enforce --root for process operations
+	if !useRootKey {
+		logger.Error("ext process restart requires the --root flag to be set.")
+		fmt.Fprintf(os.Stderr, "%s ext process restart requires --root flag.\n", color.RedString("Error:"))
+		os.Exit(1)
+	}
+
+	uuid := args[0]
+	resp, err := c.RestartProcess(uuid)
+	if err != nil {
+		logger.Error("Failed to restart process", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if resp.ReturnCode != 0 {
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), resp.Message)
+		os.Exit(resp.ReturnCode)
+	}
+
+	color.HiGreen("Process restarted successfully: %s", resp.Message)
+}
+
+func handleExtProcessStatus(c *client.Client, args []string) {
+	if len(args) != 1 {
+		logger.Error("ext process status: requires <uuid>")
+		printUsage()
+		os.Exit(1)
+	}
+
+	// Enforce --root for process operations
+	if !useRootKey {
+		logger.Error("ext process status requires the --root flag to be set.")
+		fmt.Fprintf(os.Stderr, "%s ext process status requires --root flag.\n", color.RedString("Error:"))
+		os.Exit(1)
+	}
+
+	uuid := args[0]
+	proc, err := c.GetProcessStatus(uuid)
+	if err != nil {
+		logger.Error("Failed to get process status", "uuid", uuid, "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	statusColor := color.RedString
+	if proc.Status == processModels.ProcessStatusRunning {
+		statusColor = color.GreenString
+	} else if proc.Status == processModels.ProcessStatusStarting {
+		statusColor = color.YellowString
+	}
+
+	fmt.Println(color.CyanString("Process Details:"))
+	fmt.Printf("  UUID:   %s\n", proc.UUID)
+	fmt.Printf("  Name:   %s\n", proc.Name)
+	fmt.Printf("  Status: %s\n", statusColor(string(proc.Status)))
+	fmt.Printf("  Node:   %s (ID: %s)\n", proc.NodeName, proc.NodeID)
 }

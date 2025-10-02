@@ -3,6 +3,7 @@ module github.com/InsulaLabs/insi
 go 1.24.2
 
 require (
+	github.com/ShinyTrinkets/overseer v0.6.0
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/fatih/color v1.18.0
 	github.com/google/uuid v1.6.0
@@ -18,6 +19,7 @@ require (
 )
 
 require (
+	github.com/ShinyTrinkets/meta-logger v0.2.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect

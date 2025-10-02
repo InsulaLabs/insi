@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -35,56 +36,116 @@ const (
 
 // used by all endpoints to redirect WRITE related operations to the leader
 func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, originalPath string, routeClassification routeClassification) {
+	if r.Header.Get("Connection") != "" && (strings.ToLower(r.Header.Get("Connection")) == "upgrade" || strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")) {
+		leaderInfo, err := c.fsm.LeaderHTTPAddress()
+		if err != nil {
+			c.logger.Error("Failed to get leader's connect address for forwarding", "original_path", originalPath, "error", err)
+			http.Error(w, "Failed to determine cluster leader for forwarding: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+
+		var leaderConnectAddress string
+		switch routeClassification {
+		case rcPublic:
+			leaderConnectAddress = leaderInfo.PublicBinding
+		case rcPrivate:
+			leaderConnectAddress = leaderInfo.PrivateBinding
+		}
+
+		_, port, err := net.SplitHostPort(leaderConnectAddress)
+		if err == nil && leaderInfo.ClientDomain != "" {
+			leaderConnectAddress = net.JoinHostPort(leaderInfo.ClientDomain, port)
+		}
+
+		forwardURL := "https://" + leaderConnectAddress + originalPath
+		if r.URL.RawQuery != "" {
+			forwardURL += "?" + r.URL.RawQuery
+		}
+
+		c.logger.Debug(
+			"Redirecting WebSocket request to leader",
+			"current_node_is_follower", true,
+			"leader_connect_address_from_fsm", leaderConnectAddress,
+			"final_forward_url", forwardURL,
+		)
+
+		w.Header().Set("Location", forwardURL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		return
+	}
 
 	leaderInfo, err := c.fsm.LeaderHTTPAddress()
 	if err != nil {
-		c.logger.Error(
-			"Failed to get leader's connect address for redirection",
-			"original_path", originalPath,
-			"error", err,
-		)
-		http.Error(
-			w,
-			"Failed to determine cluster leader for redirection: "+err.Error(),
-			http.StatusServiceUnavailable,
-		)
+		c.logger.Error("Failed to get leader's connect address for forwarding", "original_path", originalPath, "error", err)
+		http.Error(w, "Failed to determine cluster leader for forwarding: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
 	var leaderConnectAddress string
-
 	switch routeClassification {
 	case rcPublic:
 		leaderConnectAddress = leaderInfo.PublicBinding
-
 	case rcPrivate:
 		leaderConnectAddress = leaderInfo.PrivateBinding
 	}
 
-	// parse the public and private bindings
 	_, port, err := net.SplitHostPort(leaderConnectAddress)
-
-	// determine the address to return based on the client domain
-	// essentially, if a "domain" is provided, we use it to construct the
-	// address as "domain:port" rather than "ip:port"
 	if err == nil && leaderInfo.ClientDomain != "" {
 		leaderConnectAddress = net.JoinHostPort(leaderInfo.ClientDomain, port)
 	}
 
-	redirectURL := "https://" + leaderConnectAddress + originalPath
+	forwardURL := "https://" + leaderConnectAddress + originalPath
 	if r.URL.RawQuery != "" {
-		redirectURL += "?" + r.URL.RawQuery
+		forwardURL += "?" + r.URL.RawQuery
 	}
 
-	// DBG because this is a lot of noise
-	c.logger.Debug("Issuing redirect to leader",
-		"current_node_is_follower", true,
-		"leader_connect_address_from_fsm", leaderConnectAddress,
-		"final_redirect_url", redirectURL)
+	c.logger.Debug("Forwarding request to leader", "current_node_is_follower", true, "leader_connect_address_from_fsm", leaderConnectAddress, "final_forward_url", forwardURL)
 
-	// The client caller should follow this Location header
-	// and make the request to the leader
-	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
+	proxyReq, err := http.NewRequest(r.Method, forwardURL, r.Body)
+	if err != nil {
+		c.logger.Error("Failed to create proxy request to leader", "error", err)
+		http.Error(w, "Failed to forward request to leader", http.StatusInternalServerError)
+		return
+	}
+
+	for key, values := range r.Header {
+		for _, value := range values {
+			proxyReq.Header.Add(key, value)
+		}
+	}
+
+	clientIP := c.getRemoteAddress(r)
+	if existingForwardedFor := proxyReq.Header.Get("X-Forwarded-For"); existingForwardedFor != "" {
+		proxyReq.Header.Set("X-Forwarded-For", existingForwardedFor+", "+clientIP)
+	} else {
+		proxyReq.Header.Set("X-Forwarded-For", clientIP)
+	}
+	proxyReq.Header.Set("X-Real-IP", clientIP)
+	proxyReq.Header.Set("X-Cluster-Internal-Forward", "true")
+
+	client := &http.Client{
+		Timeout: time.Second * 30,
+	}
+
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		c.logger.Error("Failed to forward request to leader", "error", err)
+		http.Error(w, "Failed to forward request to leader", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	w.WriteHeader(resp.StatusCode)
+
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		c.logger.Error("Failed to copy response body from leader", "error", err)
+	}
 }
 
 func (c *Core) authedPing(w http.ResponseWriter, r *http.Request) {

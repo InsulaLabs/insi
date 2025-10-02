@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,9 +27,25 @@ import (
 	"golang.org/x/time/rate"
 )
 
-type RouteProvider interface {
+type ExtensionMiddlwares interface {
+	GetIPPublicFilterMiddleware() func(next http.Handler) http.Handler
+}
+
+type ExtensionPanel interface {
+	ValidateToken(r *http.Request, rootOnly AccessEntity) (models.TokenData, bool)
+
+	GetExtensionMiddlwares() ExtensionMiddlwares
+
+	GetNodeIdentity() badge.Badge
+	GetNodeName() string
+	GetNodeInstallDir() string
+}
+
+type Extension interface {
+	ReceiveInsightInterface(panel EntityInsight)
 	BindPublicRoutes(mux *http.ServeMux)
 	BindPrivateRoutes(mux *http.ServeMux)
+	OnInsiReady(ep ExtensionPanel)
 }
 
 type AccessEntity bool
@@ -121,8 +138,10 @@ type Core struct {
 
 	entityRateLimiters *ttlcache.Cache[string, *endpointKeyRateLimiters]
 
-	routeProviders []RouteProvider
+	extensions []Extension
 }
+
+var _ ExtensionPanel = &Core{}
 
 type serverInstance struct {
 	binding string
@@ -144,6 +163,10 @@ func (c *Core) GetMemoryUsageFullKey() string {
 
 func (c *Core) GetDiskUsageFullKey() string {
 	return fmt.Sprintf("%s:tracking:%s", c.cfg.RootPrefix, DiskUsageKey)
+}
+
+func (c *Core) GetNodeInstallDir() string {
+	return filepath.Join(c.cfg.InsidHome, c.nodeName)
 }
 
 func (s *Core) AddHandler(path string, handler http.Handler) error {
@@ -387,17 +410,30 @@ func (c *Core) getRateLimiter(category string, r *http.Request) *rate.Limiter {
 func (c *Core) rateLimitMiddleware(next http.Handler, category string) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		token := authHeader
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			token = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+
+		if token == c.authToken {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if r.Header.Get("X-Cluster-Internal-Forward") == "true" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		limiter := c.getRateLimiter(category, r)
 		res := limiter.Reserve()
-		// If there's a delay, the request is rate-limited.
 		if delay := res.Delay(); delay > 0 {
-			// We're not proceeding, so cancel the reservation to return the token.
 			res.Cancel()
 			c.logger.Warn("Rate limit exceeded", "category", category, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
 
-			// Set headers to inform the client about the rate limit.
 			retryAfterSeconds := math.Ceil(delay.Seconds())
-			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfterSeconds)) // Correctly format seconds.
+			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfterSeconds))
 			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%v", limiter.Limit()))
 			w.Header().Set("X-RateLimit-Burst", fmt.Sprintf("%d", limiter.Burst()))
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
@@ -452,14 +488,30 @@ func (c *Core) ipPrivateFilterMiddleware() func(next http.Handler) http.Handler 
 	return c.getIpFilterMiddleware(true)
 }
 
-func (c *Core) WithRouteProvider(rp RouteProvider) *Core {
-	c.routeProviders = append(c.routeProviders, rp)
+func (c *Core) WithRouteProvider(rp Extension) *Core {
+	c.extensions = append(c.extensions, rp)
 	return c
 }
 
-func (c *Core) WithRouteProviders(rps ...RouteProvider) *Core {
-	c.routeProviders = append(c.routeProviders, rps...)
+func (c *Core) WithRouteProviders(rps ...Extension) *Core {
+	c.extensions = append(c.extensions, rps...)
 	return c
+}
+
+func (c *Core) GetExtensionMiddlwares() ExtensionMiddlwares {
+	return c
+}
+
+func (c *Core) GetIPPublicFilterMiddleware() func(next http.Handler) http.Handler {
+	return c.ipPublicFilterMiddleware()
+}
+
+func (c *Core) GetNodeIdentity() badge.Badge {
+	return c.identity
+}
+
+func (c *Core) GetNodeName() string {
+	return c.nodeName
 }
 
 // Run forever until the context is cancelled
@@ -507,7 +559,7 @@ func (c *Core) Run() {
 		// List is so they can get a list of all the aliases they have set for the purpose of deleting or debugging
 		c.pubMux.Handle("/db/api/v1/alias/list", c.ipPublicFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.listAliasesHandler), "system")))
 
-		for _, rp := range c.routeProviders {
+		for _, rp := range c.extensions {
 			rp.BindPublicRoutes(c.pubMux)
 		}
 
@@ -545,7 +597,7 @@ func (c *Core) Run() {
 
 		c.privMux.Handle("/db/api/v1/admin/metrics/ops", c.ipPrivateFilterMiddleware()(c.rateLimitMiddleware(http.HandlerFunc(c.opsPerSecondHandler), "system")))
 
-		for _, rp := range c.routeProviders {
+		for _, rp := range c.extensions {
 			rp.BindPrivateRoutes(c.privMux)
 		}
 
@@ -554,6 +606,10 @@ func (c *Core) Run() {
 			mux:     c.privMux,
 			server:  nil,
 		}
+	}
+
+	for _, rp := range c.extensions {
+		rp.ReceiveInsightInterface(c)
 	}
 
 	httpListenAddr := c.nodeCfg.PublicBinding
@@ -596,6 +652,13 @@ func (c *Core) Run() {
 			after the root key trackers exist.
 		*/
 		go c.tombstoneRunner()
+
+		// TODO: get the instance of the node (id) so the extension
+		// can be aware of who they are relative to the node cluster
+
+		for _, rp := range c.extensions {
+			go rp.OnInsiReady(c)
+		}
 	}()
 
 	/*
