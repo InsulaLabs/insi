@@ -808,10 +808,53 @@ func (c *Core) eventShakeHandler(w http.ResponseWriter, r *http.Request) {
 
 	targetClient := c.loopbackClient.DeriveWithApiKey(td.KeyUUID, td.Token)
 
+	// Set the subscriber count to the keys MAX limit so people cant subscribe while
+	// we are shaking
+
+	limit, current, err := c.getSubscriptionUsage(td.DataScopeUUID)
+	if err != nil {
+		c.logger.Error("Failed to get subscription usage", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeySubscriptions(td.DataScopeUUID),
+		Value: strconv.FormatInt(limit*2, 10), // double so no free slots open while shaking
+	}); err != nil {
+		c.logger.Error("Failed to set subscription count to max limit", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	floorSubValue := func(val int64) error {
+		// Now, as root key we have to manually set their counters to 0
+		if err := client.WithRetriesVoid(r.Context(), c.logger, func() error {
+			return c.fsm.Set(models.KVPayload{
+				Key:   WithApiKeySubscriptions(td.DataScopeUUID),
+				Value: strconv.FormatInt(val, 10),
+			})
+		}); err != nil {
+			c.logger.Error("Failed to set subscription count to 0", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return err
+		}
+		return nil
+	}
+
 	totalDisconnected := 0
 	if err := client.WithRetriesVoid(r.Context(), c.logger, func() error {
 		dc, err := targetClient.PurgeEventSubscriptionsAllNodes()
 		if err != nil {
+			removed := current - int64(dc)
+			if removed < 0 {
+				removed = 0
+			}
+			if err := floorSubValue(removed); err != nil {
+				c.logger.Error("Failed to floor subscription coun on purge fail", "error", err)
+				return err
+			}
+			c.logger.Error("Failed to purge event subscriptions", "error", err)
 			return err
 		}
 		totalDisconnected += dc
@@ -822,19 +865,16 @@ func (c *Core) eventShakeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.logger.Info("Purged event subscriptions", "entity", td.Entity, "disconnected_count", totalDisconnected)
-
-	// Now, as root key we have to manually set their counters to 0
-	if err := client.WithRetriesVoid(r.Context(), c.logger, func() error {
-		return c.fsm.Set(models.KVPayload{
-			Key:   WithApiKeySubscriptions(td.DataScopeUUID),
-			Value: "0",
-		})
-	}); err != nil {
-		c.logger.Error("Failed to set subscription count to 0", "error", err)
+	/*
+		Setting this to 0 will allow new subscribers to connect now that we are completed.
+	*/
+	if err := floorSubValue(0); err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		c.logger.Error("Failed to floor subscription count on purge success", "error", err)
 		return
 	}
+
+	c.logger.Info("Purged event subscriptions", "entity", td.Entity, "disconnected_count", totalDisconnected)
 
 	result["success"] = true
 	result["disconnected_sessions"] = totalDisconnected
