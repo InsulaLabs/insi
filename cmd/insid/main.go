@@ -28,7 +28,7 @@ func main() {
 		Level: slog.LevelDebug,
 	}))
 
-	processExtension := process.NewExtension(extensionLogger.WithGroup("process"), "root")
+	processExtension := process.NewExtension(extensionLogger.WithGroup("process"))
 
 	remainingArgs := os.Args[1:]
 

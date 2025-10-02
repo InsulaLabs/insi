@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 
@@ -19,20 +21,22 @@ const (
 	extensionName        = "process"
 	extensionVersion     = "1.0.0"
 	extensionDescription = "Process extension"
+	extensionSaveFile    = "processes.json"
 )
 
 type Extension struct {
-	logger     *slog.Logger
-	rootApiKey string
-	insight    core.EntityInsight
-	panel      core.ExtensionPanel
-	host       *procman.Host
+	logger  *slog.Logger
+	insight core.EntityInsight
+	panel   core.ExtensionPanel
+	host    *procman.Host
 
 	nodeIdentity badge.Badge
 	nodeName     string
 
 	processRegistry map[string]*processModels.Process
 	registryMutex   sync.RWMutex
+
+	procDir string
 }
 
 var _ extensions.InsiModule = &Extension{}
@@ -74,12 +78,60 @@ func (e *Extension) OnInsiReady(panel core.ExtensionPanel) {
 	e.nodeIdentity = panel.GetNodeIdentity()
 	e.nodeName = panel.GetNodeName()
 	e.logger.Info("Insi ready", "node_name", e.nodeName, "node_id", e.nodeIdentity.GetID())
+
+	e.procDir = filepath.Join(e.panel.GetNodeInstallDir(), "extensions", "process")
+	if err := os.MkdirAll(e.procDir, 0755); err != nil {
+		e.logger.Error("Failed to create process directory", "error", err)
+		os.Exit(1)
+	}
+
+	e.mustRestore()
 }
 
-func NewExtension(logger *slog.Logger, rootApiKey string) *Extension {
+func (e *Extension) mustRestore() {
+	procFile := filepath.Join(e.procDir, extensionSaveFile)
+	if _, err := os.Stat(procFile); os.IsNotExist(err) {
+		return
+	}
+
+	// we need to directly restore the fucking map
+
+	file, err := os.Open(procFile)
+	if err != nil {
+		e.logger.Error("Failed to open process state file", "error", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	restoredMap := make(map[string]*processModels.Process)
+	if err := json.NewDecoder(file).Decode(&restoredMap); err != nil {
+		e.logger.Error("Failed to decode process state", "error", err)
+		os.Exit(1)
+	}
+
+	e.processRegistry = restoredMap
+	e.logger.Info("Process state restored", "process_registry", e.processRegistry)
+}
+
+func (e *Extension) save() error {
+	procFile := filepath.Join(e.procDir, extensionSaveFile)
+	file, err := os.Create(procFile)
+	if err != nil {
+		e.logger.Error("Failed to create process state file", "error", err)
+		return err
+	}
+	defer file.Close()
+
+	if err := json.NewEncoder(file).Encode(e.processRegistry); err != nil {
+		e.logger.Error("Failed to encode process state", "error", err)
+		return err
+	}
+	return nil
+}
+
+func NewExtension(logger *slog.Logger) *Extension {
 	return &Extension{
 		logger:          logger,
-		rootApiKey:      rootApiKey,
 		host:            procman.NewHost(logger.WithGroup("procman")),
 		processRegistry: make(map[string]*processModels.Process),
 	}
@@ -147,6 +199,12 @@ func (e *Extension) registerProcess(uuid, name, targetPath string, args []string
 
 	e.host.WithApp(app)
 	e.logger.Info("process registered", "uuid", uuid, "name", name)
+
+	if err := e.save(); err != nil {
+		e.logger.Error("Failed to save process state", "error", err)
+		return err
+	}
+
 	return nil
 }
 

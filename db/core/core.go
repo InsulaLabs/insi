@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,7 @@ type ExtensionPanel interface {
 
 	GetNodeIdentity() badge.Badge
 	GetNodeName() string
+	GetNodeInstallDir() string
 }
 
 type Extension interface {
@@ -161,6 +163,10 @@ func (c *Core) GetMemoryUsageFullKey() string {
 
 func (c *Core) GetDiskUsageFullKey() string {
 	return fmt.Sprintf("%s:tracking:%s", c.cfg.RootPrefix, DiskUsageKey)
+}
+
+func (c *Core) GetNodeInstallDir() string {
+	return filepath.Join(c.cfg.InsidHome, c.nodeName)
 }
 
 func (s *Core) AddHandler(path string, handler http.Handler) error {
