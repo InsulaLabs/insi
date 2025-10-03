@@ -27,7 +27,6 @@ make all
 This creates three binaries in `build/`:
 - `insid` - The database server
 - `insic` - Command-line client  
-- `fwit-t` - Stress testing tool
 
 ### 2. Start a Single Node
 
@@ -58,10 +57,10 @@ grep instanceSecret cluster.yaml
 curl -X POST http://localhost:8080/db/api/v1/set \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"key": "user:123:name", "value": "Alice"}'
+  -d '{"key": "user", "value": "Alice"}'
 
 # Get it back
-curl "http://localhost:8080/db/api/v1/get?key=user:123:name" \
+curl "http://localhost:8080/db/api/v1/get?key=user" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -99,8 +98,10 @@ POST /cache/delete # Remove from cache
 
 #### 3. **Events** (Real-time Pub/Sub)
 ```bash
-POST /events       # Publish messages to topics
-GET /events/subscribe  # WebSocket subscription to topics
+POST /events           # Publish messages to topics
+GET  /events/subscribe # WebSocket subscription to topics
+POST /events/purge     # Remove all subscribers from the specific node
+POST /events/shake     # Lock all subscription slots cluster-wide and drop all current subscribers, resets sub count
 ```
 
 ### Built-in Resource Management
