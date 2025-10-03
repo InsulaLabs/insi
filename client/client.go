@@ -531,11 +531,10 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
 				c.redirectCoutner.Add(1)
-				// This is a leader redirect. Update the client to stick to the new leader for future requests.
 				if c.enableLeaderStickiness {
 					if err := c.setLeader(redirectURL); err != nil {
-						// Log the error but continue; the redirect will be handled for this single request anyway.
-						c.logger.Warn("Failed to set sticky leader from redirect", "error", err)
+						c.logger.Warn(
+							"Failed to set sticky leader from redirect", "error", err, "url", redirectURL.String())
 					}
 				}
 			}

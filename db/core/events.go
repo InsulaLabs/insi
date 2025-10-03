@@ -827,8 +827,10 @@ func (c *Core) eventShakeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	floorSubValue := func(val int64) error {
-		// Now, as root key we have to manually set their counters to 0
+	/*
+		Unconditionally set the subscription count to the given value.
+	*/
+	forceCountValue := func(val int64) error {
 		if err := client.WithRetriesVoid(r.Context(), c.logger, func() error {
 			return c.fsm.Set(models.KVPayload{
 				Key:   WithApiKeySubscriptions(td.DataScopeUUID),
@@ -850,7 +852,7 @@ func (c *Core) eventShakeHandler(w http.ResponseWriter, r *http.Request) {
 			if removed < 0 {
 				removed = 0
 			}
-			if err := floorSubValue(removed); err != nil {
+			if err := forceCountValue(removed); err != nil {
 				c.logger.Error("Failed to floor subscription coun on purge fail", "error", err)
 				return err
 			}
@@ -868,7 +870,7 @@ func (c *Core) eventShakeHandler(w http.ResponseWriter, r *http.Request) {
 	/*
 		Setting this to 0 will allow new subscribers to connect now that we are completed.
 	*/
-	if err := floorSubValue(0); err != nil {
+	if err := forceCountValue(0); err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		c.logger.Error("Failed to floor subscription count on purge success", "error", err)
 		return
