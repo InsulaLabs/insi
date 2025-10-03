@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -165,24 +166,25 @@ func (c *Core) releaseSubscriptionSlot(dataScopeUUID string) {
 
 	// We are a follower, call the leader's internal API.
 	// This is a "fire-and-forget" style call, we log errors but don't block/fail.
-	go func() {
+	// Use the task pool for better resource management in high-throughput scenarios.
+	c.taskPool.Submit(func(ctx context.Context) error {
 		leaderInfo, err := c.fsm.LeaderHTTPAddress()
 		if err != nil {
 			c.logger.Error("Could not get leader address to release slot", "error", err)
-			return
+			return nil
 		}
 
 		payload := subscriptionSlotRequest{DataScopeUUID: dataScopeUUID}
 		body, err := json.Marshal(payload)
 		if err != nil {
 			c.logger.Error("Failed to marshal slot release payload", "error", err)
-			return
+			return nil
 		}
 
 		_, port, err := net.SplitHostPort(leaderInfo.PrivateBinding)
 		if err != nil {
 			c.logger.Error("Could not parse leader private binding for slot release", "binding", leaderInfo.PrivateBinding, "error", err)
-			return
+			return nil
 		}
 		host := "localhost"
 		if leaderInfo.ClientDomain != "" {
@@ -193,7 +195,7 @@ func (c *Core) releaseSubscriptionSlot(dataScopeUUID string) {
 		req, err := http.NewRequest(http.MethodPost, leaderPrivateURL, bytes.NewBuffer(body))
 		if err != nil {
 			c.logger.Error("Failed to create internal slot release request", "error", err)
-			return
+			return nil
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", c.loopbackClient.GetApiKey())
@@ -202,7 +204,7 @@ func (c *Core) releaseSubscriptionSlot(dataScopeUUID string) {
 		resp, err := c.loopbackClient.GetHttpClient().Do(req)
 		if err != nil {
 			c.logger.Error("Internal slot release request to leader failed", "error", err)
-			return
+			return nil
 		}
 		defer resp.Body.Close()
 
@@ -212,7 +214,8 @@ func (c *Core) releaseSubscriptionSlot(dataScopeUUID string) {
 		} else {
 			c.logger.Info("Successfully released subscription slot on leader", "leader_url", leaderPrivateURL)
 		}
-	}()
+		return nil
+	})
 }
 
 // eventSubscribeHandler handles WebSocket requests for event subscriptions.
