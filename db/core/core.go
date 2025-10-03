@@ -138,6 +138,9 @@ type Core struct {
 
 	entityRateLimiters *ttlcache.Cache[string, *endpointKeyRateLimiters]
 
+	// Pre-computed trusted IPs for efficient lookups (avoids map allocation per request)
+	trustedIPs map[string]struct{}
+
 	extensions []Extension
 }
 
@@ -227,6 +230,8 @@ func New(
 		cache := ttlcache.New[string, *rate.Limiter](
 			ttlcache.WithTTL[string, *rate.Limiter](time.Minute*1),
 			ttlcache.WithDisableTouchOnHit[string, *rate.Limiter](),
+			// Enable cleanup to prevent memory accumulation under stress
+			ttlcache.WithCapacity[string, *rate.Limiter](10000), // Limit cache size
 		)
 		go cache.Start()
 		return cache
@@ -255,18 +260,35 @@ func New(
 
 	apiCache := ttlcache.New[string, models.TokenData](
 		ttlcache.WithTTL[string, models.TokenData](time.Minute*1),
-
 		// Disable touch on hit for for api keys so auto expire
 		// can be leveraged for syncronization
 		ttlcache.WithDisableTouchOnHit[string, models.TokenData](),
+		// Limit cache size to prevent memory accumulation under stress
+		ttlcache.WithCapacity[string, models.TokenData](5000),
 	)
 	go apiCache.Start()
 
 	entityRateLimiters := ttlcache.New[string, *endpointKeyRateLimiters](
 		ttlcache.WithTTL[string, *endpointKeyRateLimiters](time.Minute*1),
 		ttlcache.WithDisableTouchOnHit[string, *endpointKeyRateLimiters](),
+		// Limit cache size to prevent memory accumulation under stress
+		ttlcache.WithCapacity[string, *endpointKeyRateLimiters](1000),
 	)
 	go entityRateLimiters.Start()
+
+	// Pre-compute trusted IPs map to avoid allocations in getRemoteAddress
+	trustedIPs := make(map[string]struct{})
+	for _, proxy := range clusterCfg.TrustedProxies {
+		trustedIPs[proxy] = struct{}{}
+	}
+	for _, node := range clusterCfg.Nodes {
+		nodeHost, _, err := net.SplitHostPort(node.PublicBinding)
+		if err != nil {
+			logger.Warn("Could not parse node publicBinding during initialization", "binding", node.PublicBinding, "error", err)
+			continue
+		}
+		trustedIPs[nodeHost] = struct{}{}
+	}
 
 	service := &Core{
 		appCtx:              ctx,
@@ -294,6 +316,7 @@ func New(
 		eventCh:            serviceEventCh,
 		apiCache:           apiCache,
 		entityRateLimiters: entityRateLimiters, // per-key uuid rate limiters
+		trustedIPs:         trustedIPs,
 	}
 
 	// Set the event subsystem to the service for event logic
@@ -355,21 +378,8 @@ func (c *Core) getRemoteAddress(r *http.Request) string {
 		remoteIP = r.RemoteAddr
 	}
 
-	trusted := make(map[string]struct{})
-	for _, proxy := range c.cfg.TrustedProxies {
-		trusted[proxy] = struct{}{}
-	}
-
-	for _, node := range c.cfg.Nodes {
-		nodeHost, _, err := net.SplitHostPort(node.PublicBinding)
-		if err != nil {
-			c.logger.Warn("Could not parse node publicBinding", "binding", node.PublicBinding, "error", err)
-			continue
-		}
-		trusted[nodeHost] = struct{}{}
-	}
-
-	if _, ok := trusted[remoteIP]; ok {
+	// Check if remoteIP is in trusted proxies (pre-computed at startup)
+	if _, ok := c.trustedIPs[remoteIP]; ok {
 		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
 			ips := strings.Split(forwardedFor, ",")
 			clientIP := strings.TrimSpace(ips[0])
