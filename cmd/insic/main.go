@@ -311,6 +311,8 @@ func main() {
 		handleSubscribe(cli, cmdArgs)
 	case "purge":
 		handlePurge(cli, cmdArgs)
+	case "shake":
+		handleShake(cli, cmdArgs)
 	case "api":
 		handleApi(cli, cmdArgs)
 	case "blob":
@@ -361,6 +363,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  %s %s %s\n", color.GreenString("publish"), color.CyanString("<topic>"), color.CyanString("<data>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("subscribe"), color.CyanString("<topic>"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("purge"), color.YellowString("Disconnect all event subscriptions for current API key"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", color.GreenString("shake"), color.YellowString("Force disconnect all event subscriptions and reset counters"))
 
 	// API Key Commands (Note: These typically require the --root flag)
 	fmt.Fprintf(os.Stderr, "  %s %s %s %s\n", color.GreenString("api"), color.CyanString("add"), color.CyanString("<key_name>"), color.YellowString("--root flag required"))
@@ -492,6 +495,29 @@ func handlePurge(c *client.Client, args []string) {
 		color.HiYellow("No active event subscriptions found to purge.")
 	} else {
 		color.HiGreen("Successfully purged %d event subscription(s).", disconnectedCount)
+	}
+}
+
+func handleShake(c *client.Client, args []string) {
+	if len(args) != 0 {
+		logger.Error("shake: does not take arguments")
+		printUsage()
+		os.Exit(1)
+	}
+
+	logger.Info("Attempting to shake all event subscriptions for current API key")
+
+	disconnectedCount, err := c.ShakeEventSubscriptions()
+	if err != nil {
+		logger.Error("Shake failed", "error", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+
+	if disconnectedCount == 0 {
+		color.HiYellow("No active event subscriptions found to shake.")
+	} else {
+		color.HiGreen("Successfully shook %d event subscription(s) and reset counters.", disconnectedCount)
 	}
 }
 

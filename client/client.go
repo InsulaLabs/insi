@@ -531,11 +531,10 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 			if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusPermanentRedirect {
 				c.redirectCoutner.Add(1)
-				// This is a leader redirect. Update the client to stick to the new leader for future requests.
 				if c.enableLeaderStickiness {
 					if err := c.setLeader(redirectURL); err != nil {
-						// Log the error but continue; the redirect will be handled for this single request anyway.
-						c.logger.Warn("Failed to set sticky leader from redirect", "error", err)
+						c.logger.Warn(
+							"Failed to set sticky leader from redirect", "error", err, "url", redirectURL.String())
 					}
 				}
 			}
@@ -1351,6 +1350,25 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 		}
 		return ctx.Err() // Return context error
 	}
+}
+
+// ShakeEventSubscriptions disconnects all event subscriptions and force sets the subscription count to 0.
+func (c *Client) ShakeEventSubscriptions() (int, error) {
+	var response struct {
+		Success              bool `json:"success"`
+		DisconnectedSessions int  `json:"disconnected_sessions"`
+	}
+
+	err := c.doRequest(http.MethodPost, "db/api/v1/events/shake", nil, nil, &response)
+	if err != nil {
+		return 0, err
+	}
+
+	if !response.Success {
+		return 0, fmt.Errorf("shake operation reported failure")
+	}
+
+	return response.DisconnectedSessions, nil
 }
 
 // PurgeEventSubscriptions disconnects all event subscriptions for the current API key.

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/db/models"
 	"github.com/InsulaLabs/insi/db/rft"
 	"github.com/InsulaLabs/insi/db/tkv"
@@ -775,4 +776,112 @@ func (c *Core) eventPurgeHandler(w http.ResponseWriter, r *http.Request) {
 		"key_uuid":              td.KeyUUID,
 		"disconnected_sessions": disconnectedCount,
 	})
+}
+
+func (c *Core) eventShakeHandler(w http.ResponseWriter, r *http.Request) {
+	c.IndEventsOp()
+
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	td, ok := c.ValidateToken(r, AnyUser())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !c.fsm.IsLeader() {
+		c.redirectToLeader(w, r, r.URL.Path, rcPublic)
+		return
+	}
+
+	if !c.CheckRateLimit(w, r, td, limiterTypeEvents) {
+		return
+	}
+
+	result := map[string]interface{}{
+		"success":               false,
+		"disconnected_sessions": 0,
+	}
+
+	targetClient := c.loopbackClient.DeriveWithApiKey(td.KeyUUID, td.Token)
+
+	// Set the subscriber count to the keys MAX limit so people cant subscribe while
+	// we are shaking
+
+	limit, current, err := c.getSubscriptionUsage(td.DataScopeUUID)
+	if err != nil {
+		c.logger.Error("Failed to get subscription usage", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := c.fsm.Set(models.KVPayload{
+		Key:   WithApiKeySubscriptions(td.DataScopeUUID),
+		Value: strconv.FormatInt(limit*2, 10), // double so no free slots open while shaking
+	}); err != nil {
+		c.logger.Error("Failed to set subscription count to max limit", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	/*
+		Unconditionally set the subscription count to the given value.
+	*/
+	forceCountValue := func(val int64) error {
+		if err := client.WithRetriesVoid(r.Context(), c.logger, func() error {
+			return c.fsm.Set(models.KVPayload{
+				Key:   WithApiKeySubscriptions(td.DataScopeUUID),
+				Value: strconv.FormatInt(val, 10),
+			})
+		}); err != nil {
+			c.logger.Error("Failed to set subscription count to 0", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return err
+		}
+		return nil
+	}
+
+	totalDisconnected := 0
+	if err := client.WithRetriesVoid(r.Context(), c.logger, func() error {
+		dc, err := targetClient.PurgeEventSubscriptionsAllNodes()
+		if err != nil {
+			removed := current - int64(dc)
+			if removed < 0 {
+				removed = 0
+			}
+			if err := forceCountValue(removed); err != nil {
+				c.logger.Error("Failed to floor subscription coun on purge fail", "error", err)
+				return err
+			}
+			c.logger.Error("Failed to purge event subscriptions", "error", err)
+			return err
+		}
+		totalDisconnected += dc
+		return nil
+	}); err != nil {
+		c.logger.Error("Failed to purge event subscriptions", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	/*
+		Setting this to 0 will allow new subscribers to connect now that we are completed.
+	*/
+	if err := forceCountValue(0); err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		c.logger.Error("Failed to floor subscription count on purge success", "error", err)
+		return
+	}
+
+	c.logger.Info("Purged event subscriptions", "entity", td.Entity, "disconnected_count", totalDisconnected)
+
+	result["success"] = true
+	result["disconnected_sessions"] = totalDisconnected
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(result)
 }

@@ -671,6 +671,7 @@ func (c *Core) ValidateToken(r *http.Request, rootOnly AccessEntity) (models.Tok
 			Entity:        EntityRoot,
 			DataScopeUUID: c.cfg.RootPrefix,
 			KeyUUID:       c.cfg.RootPrefix,
+			Token:         token,
 		}, true
 	}
 
@@ -706,6 +707,7 @@ func (c *Core) ValidateToken(r *http.Request, rootOnly AccessEntity) (models.Tok
 			finalTd := rootTdFromFsm
 			finalTd.Entity = td.Entity // Keep alias entity name
 			finalTd.IsAlias = true     // Mark that auth was via an alias
+			finalTd.Token = token
 
 			c.apiCache.Set(token, finalTd, c.cfg.Cache.Keys)
 			return finalTd, true
