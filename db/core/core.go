@@ -19,12 +19,17 @@ import (
 	"github.com/InsulaLabs/insi/client"
 	"github.com/InsulaLabs/insi/config"
 	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/db/pool"
 	"github.com/InsulaLabs/insi/db/rft"
 	"github.com/InsulaLabs/insi/db/tkv"
 	"github.com/fatih/color"
 	"github.com/gorilla/websocket"
 	"github.com/jellydator/ttlcache/v3"
 	"golang.org/x/time/rate"
+)
+
+const (
+	defaultCorePoolSize = 64
 )
 
 type ExtensionMiddlwares interface {
@@ -137,6 +142,9 @@ type Core struct {
 	subscriptionSlotLock sync.Mutex
 
 	entityRateLimiters *ttlcache.Cache[string, *endpointKeyRateLimiters]
+
+	// Worker pool for handling short-lived concurrent tasks
+	taskPool *pool.Pool
 
 	// Pre-computed trusted IPs for efficient lookups (avoids map allocation per request)
 	trustedIPs map[string]struct{}
@@ -290,6 +298,11 @@ func New(
 		trustedIPs[nodeHost] = struct{}{}
 	}
 
+	taskPool := pool.NewBuilder().
+		WithWorkers(defaultCorePoolSize).
+		WithLogger(logger.WithGroup("task-pool")).
+		Build(ctx)
+
 	service := &Core{
 		appCtx:              ctx,
 		cfg:                 clusterCfg,
@@ -316,6 +329,7 @@ func New(
 		eventCh:            serviceEventCh,
 		apiCache:           apiCache,
 		entityRateLimiters: entityRateLimiters, // per-key uuid rate limiters
+		taskPool:           taskPool,
 		trustedIPs:         trustedIPs,
 	}
 
@@ -752,6 +766,13 @@ func (c *Core) Run() {
 		for _, limiter := range c.rateLimiters {
 			limiter.Stop()
 		}
+	}()
+
+	stopWg.Add(1)
+	go func() {
+		defer stopWg.Done()
+		c.taskPool.Stop()
+		c.logger.Info("Task pool stopped")
 	}()
 
 	c.logger.Info("Waiting for server to stop - this may take a moment")
