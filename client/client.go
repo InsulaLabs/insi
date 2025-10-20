@@ -652,17 +652,6 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 		if resp.StatusCode == http.StatusNotFound {
 			bodyBytes, _ := io.ReadAll(resp.Body)
 
-			var errorResp ErrorResponse
-			if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
-				/*
-					Check for specific error types returned with a 404 status
-				*/
-				if errorResp.ErrorType == "API_KEY_NOT_FOUND" {
-					return ErrAPIKeyNotFound
-				}
-				return fmt.Errorf("server error (status 404): %s - %s", errorResp.ErrorType, errorResp.Message)
-			}
-
 			/*
 				For specific GET operations, a 404 is a semantic "not found" for the resource key in the URL.
 
@@ -676,6 +665,17 @@ func (c *Client) doRequest(method, path string, queryParams map[string]string, b
 
 			if isDataGetOperation {
 				return ErrKeyNotFound
+			}
+
+			var errorResp ErrorResponse
+			if jsonErr := json.Unmarshal(bodyBytes, &errorResp); jsonErr == nil {
+				/*
+					Check for specific error types returned with a 404 status
+				*/
+				if errorResp.ErrorType == "API_KEY_NOT_FOUND" {
+					return ErrAPIKeyNotFound
+				}
+				return fmt.Errorf("server error (status 404): %s - %s", errorResp.ErrorType, errorResp.Message)
 			}
 
 			/*
