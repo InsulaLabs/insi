@@ -49,6 +49,37 @@ func WithRetries[R any](ctx context.Context, retries int, logger *slog.Logger, f
 			return result, nil
 		}
 
+		if errors.Is(err, ErrKeyNotFound) || errors.Is(err, ErrConflict) ||
+			errors.Is(err, ErrAPIKeyNotFound) || errors.Is(err, ErrTokenNotFound) ||
+			errors.Is(err, ErrTokenInvalid) || errors.Is(err, ErrHashMismatch) {
+			var zero R
+			return zero, err
+		}
+
+		var diskLimitErr *ErrDiskLimitExceeded
+		if errors.As(err, &diskLimitErr) {
+			var zero R
+			return zero, err
+		}
+
+		var memoryLimitErr *ErrMemoryLimitExceeded
+		if errors.As(err, &memoryLimitErr) {
+			var zero R
+			return zero, err
+		}
+
+		var eventsLimitErr *ErrEventsLimitExceeded
+		if errors.As(err, &eventsLimitErr) {
+			var zero R
+			return zero, err
+		}
+
+		var subscriberLimitErr *ErrSubscriberLimitExceeded
+		if errors.As(err, &subscriberLimitErr) {
+			var zero R
+			return zero, err
+		}
+
 		var rateLimitErr *ErrRateLimited
 		if errors.As(err, &rateLimitErr) {
 			logger.Debug("User operation rate limited, sleeping", "duration", rateLimitErr.RetryAfter)
