@@ -1,0 +1,124 @@
+package app
+
+import (
+	"log/slog"
+	"time"
+
+	"github.com/InsulaLabs/insi/internal/db/core"
+	"github.com/google/uuid"
+)
+
+type Session struct {
+	sessionID string
+	userID    string
+
+	history       []string
+	historyIndex  int
+	currentBuffer string
+	inHistoryMode bool
+
+	config         SessionConfig
+	startTimestamp time.Time
+
+	core *core.Core
+}
+
+type SessionConfig struct {
+	Logger               *slog.Logger
+	UserID               string
+	ActiveCursorSymbol   string
+	InactiveCursorSymbol string
+	Prompt               string
+
+	Core *core.Core
+}
+
+func NewSession(config SessionConfig) *Session {
+
+	if config.Logger == nil {
+		config.Logger = slog.Default()
+	}
+
+	return &Session{
+		sessionID:      uuid.New().String(),
+		userID:         config.UserID,
+		history:        []string{},
+		historyIndex:   -1,
+		inHistoryMode:  false,
+		config:         config,
+		startTimestamp: time.Now(),
+		core:           config.Core,
+	}
+}
+
+func (s *Session) AddToHistory(cmd string) {
+	if cmd != "" {
+		s.history = append(s.history, cmd)
+		s.historyIndex = len(s.history)
+		s.inHistoryMode = false
+	}
+}
+
+func (s *Session) StartHistoryNavigation(currentBuffer string) {
+	if !s.inHistoryMode {
+		s.currentBuffer = currentBuffer
+		s.inHistoryMode = true
+		s.historyIndex = len(s.history)
+	}
+}
+
+func (s *Session) IsInHistoryMode() bool {
+	return s.inHistoryMode
+}
+
+func (s *Session) NavigateHistory(up bool) string {
+	if len(s.history) == 0 {
+		return ""
+	}
+
+	if up {
+		if s.historyIndex > 0 {
+			s.historyIndex--
+			return s.history[s.historyIndex]
+		}
+	} else {
+		if s.historyIndex < len(s.history)-1 {
+			s.historyIndex++
+			return s.history[s.historyIndex]
+		} else {
+			s.historyIndex = len(s.history)
+			s.inHistoryMode = false
+			return s.currentBuffer
+		}
+	}
+
+	if s.historyIndex >= 0 && s.historyIndex < len(s.history) {
+		return s.history[s.historyIndex]
+	}
+
+	return s.currentBuffer
+}
+
+func (s *Session) GetHistory() []string {
+	return s.history
+}
+
+func (s *Session) GetActiveCursorSymbol() string {
+	return s.config.ActiveCursorSymbol
+}
+
+func (s *Session) GetInactiveCursorSymbol() string {
+	return s.config.InactiveCursorSymbol
+}
+
+func (s *Session) UserUptime() time.Duration {
+	return time.Since(s.startTimestamp)
+}
+
+func (s *Session) GetUserID() string {
+	return s.config.UserID
+}
+
+func (s *Session) GetPrompt() string {
+	return s.config.Prompt
+}
