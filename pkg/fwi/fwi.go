@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/models"
 	"github.com/fatih/color"
 	"github.com/google/uuid"
+	"github.com/jellydator/ttlcache/v3"
 )
 
 const (
@@ -23,6 +25,9 @@ const (
 var (
 	// errEntityNotFound is returned when an entity cannot be found by name after a full scan.
 	errEntityNotFound = errors.New("entity not found")
+
+	entityCacheTTL      = time.Minute * 1
+	entityCacheCapacity = 2048
 )
 
 // Abstracts
@@ -90,6 +95,10 @@ type Entity interface {
 
 	// GetUsageInfo retrieves the current usage and limits for the entity.
 	GetUsageInfo(ctx context.Context) (*models.LimitsResponse, error)
+
+	AddPublicKey(ctx context.Context, publicKey string) error
+	RemovePublicKey(ctx context.Context, publicKey string) error
+	ListPublicKeys(ctx context.Context) ([]string, error)
 }
 
 // FWI is the instance that contains a client with the root key
@@ -129,15 +138,19 @@ type FWI interface {
 
 	// GetOpsPerSecond retrieves the current operations-per-second metrics for the node.
 	GetOpsPerSecond(ctx context.Context) (*models.OpsPerSecondCounters, error)
+
+	// Get an entity by public key, returns entity not found if entity cant be found
+	GetEntityByPublicKey(ctx context.Context, publicKey string) (Entity, error)
 }
 
 // ------------------------------------------------------------------------------------------------
 
 type entityImpl struct {
-	name       string
-	insiClient *client.Client
-	record     *entityRecord
-	logger     *slog.Logger
+	name           string
+	insiClient     *client.Client
+	rootInsiClient *client.Client
+	record         *entityRecord
+	logger         *slog.Logger
 }
 
 type valueStoreImpl struct {
@@ -176,14 +189,15 @@ type fwiImpl struct {
 	entities              map[string]Entity
 	mu                    sync.RWMutex
 	logger                *slog.Logger
+
+	entityCache *ttlcache.Cache[string, Entity]
 }
 
 type entityRecord struct {
-	UUID string `json:"uuid"` // unique id for the entity
-	Name string `json:"name"` // the name of the entity as seen by the caller
-	Key  string `json:"key"`  // the api key for the entity
-	// Limits stored and manuouakted internally
-	// this is a meta-meta record for the entity
+	UUID       string   `json:"uuid"`
+	Name       string   `json:"name"`
+	Key        string   `json:"key"`
+	PublicKeys []string `json:"public_keys,omitempty"`
 }
 
 var _ Entity = &entityImpl{}
@@ -254,6 +268,114 @@ func (e *entityImpl) GetUsageInfo(ctx context.Context) (*models.LimitsResponse, 
 	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (*models.LimitsResponse, error) {
 		return e.insiClient.GetLimits()
 	})
+}
+
+func (e *entityImpl) AddPublicKey(ctx context.Context, publicKey string) error {
+	entityKey := fmt.Sprintf("%s%s", EntityPrefix, e.record.UUID)
+
+	entityRecordStr, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (string, error) {
+		return e.rootInsiClient.Get(entityKey)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to fetch entity record: %w", err)
+	}
+
+	var er entityRecord
+	if err := json.Unmarshal([]byte(entityRecordStr), &er); err != nil {
+		return fmt.Errorf("failed to unmarshal entity record: %w", err)
+	}
+
+	for _, pk := range er.PublicKeys {
+		if pk == publicKey {
+			return fmt.Errorf("public key already exists for entity")
+		}
+	}
+
+	er.PublicKeys = append(er.PublicKeys, publicKey)
+
+	entityEncoded, err := json.Marshal(er)
+	if err != nil {
+		return fmt.Errorf("failed to marshal entity record: %w", err)
+	}
+
+	err = client.WithRetriesVoid(ctx, e.logger, func() error {
+		return e.rootInsiClient.CompareAndSwap(entityKey, entityRecordStr, string(entityEncoded))
+	})
+	if err == nil {
+		e.record = &er
+		return nil
+	}
+
+	return err
+}
+
+func (e *entityImpl) RemovePublicKey(ctx context.Context, publicKey string) error {
+	entityKey := fmt.Sprintf("%s%s", EntityPrefix, e.record.UUID)
+
+	entityRecordStr, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (string, error) {
+		return e.rootInsiClient.Get(entityKey)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to fetch entity record: %w", err)
+	}
+
+	var er entityRecord
+	if err := json.Unmarshal([]byte(entityRecordStr), &er); err != nil {
+		return fmt.Errorf("failed to unmarshal entity record: %w", err)
+	}
+
+	found := false
+	newKeys := make([]string, 0, len(er.PublicKeys))
+	for _, pk := range er.PublicKeys {
+		if pk == publicKey {
+			found = true
+			continue
+		}
+		newKeys = append(newKeys, pk)
+	}
+
+	if !found {
+		return fmt.Errorf("public key not found for entity")
+	}
+
+	er.PublicKeys = newKeys
+
+	entityEncoded, err := json.Marshal(er)
+	if err != nil {
+		return fmt.Errorf("failed to marshal entity record: %w", err)
+	}
+
+	err = client.WithRetriesVoid(ctx, e.logger, func() error {
+		return e.rootInsiClient.CompareAndSwap(entityKey, entityRecordStr, string(entityEncoded))
+	})
+	if err == nil {
+		e.record = &er
+		return nil
+	}
+
+	return err
+}
+
+func (e *entityImpl) ListPublicKeys(ctx context.Context) ([]string, error) {
+	entityKey := fmt.Sprintf("%s%s", EntityPrefix, e.record.UUID)
+
+	entityRecordStr, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (string, error) {
+		return e.rootInsiClient.Get(entityKey)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch entity record: %w", err)
+	}
+
+	var er entityRecord
+	if err := json.Unmarshal([]byte(entityRecordStr), &er); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal entity record: %w", err)
+	}
+
+	if er.PublicKeys == nil {
+		return []string{}, nil
+	}
+
+	return er.PublicKeys, nil
 }
 
 func assembleKey(scope, key string) string {
@@ -495,12 +617,20 @@ func NewFWI(insiCfg *client.Config, logger *slog.Logger) (FWI, error) {
 		return nil, fmt.Errorf("failed to create clean derivation insi client: %w", err)
 	}
 
+	entityCache := ttlcache.New[string, Entity](
+		ttlcache.WithTTL[string, Entity](entityCacheTTL),
+		ttlcache.WithDisableTouchOnHit[string, Entity](),
+		ttlcache.WithCapacity[string, Entity](uint64(entityCacheCapacity)),
+	)
+	go entityCache.Start()
+
 	f := &fwiImpl{
 		rootInsiClient:        rootInsiClient,
 		cleanDerivationClient: cleanDerivationClient,
 		entities:              make(map[string]Entity),
 		logger:                l,
 		insiCfg:               insiCfg,
+		entityCache:           entityCache,
 	}
 
 	if _, err := f.rootInsiClient.Ping(); err != nil {
@@ -609,10 +739,11 @@ func (f *fwiImpl) CreateEntity(
 	entityClient := f.cleanDerivationClient.DeriveWithApiKey(name, key.Key)
 
 	entity := &entityImpl{
-		name:       name,
-		insiClient: entityClient,
-		record:     entityRecord,
-		logger:     f.logger.WithGroup("entity").WithGroup(name),
+		name:           name,
+		insiClient:     entityClient,
+		rootInsiClient: f.rootInsiClient,
+		record:         entityRecord,
+		logger:         f.logger.WithGroup("entity").WithGroup(name),
 	}
 
 	f.mu.Lock()
@@ -691,10 +822,11 @@ func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 
 		entityClient := f.cleanDerivationClient.DeriveWithApiKey(er.Name, er.Key)
 		entity := &entityImpl{
-			name:       er.Name,
-			insiClient: entityClient,
-			record:     &er,
-			logger:     f.logger.WithGroup("entity").WithGroup(er.Name),
+			name:           er.Name,
+			insiClient:     entityClient,
+			rootInsiClient: f.rootInsiClient,
+			record:         &er,
+			logger:         f.logger.WithGroup("entity").WithGroup(er.Name),
 		}
 
 		entities = append(entities, entity)
@@ -834,7 +966,63 @@ func (f *fwiImpl) GetOpsPerSecond(ctx context.Context) (*models.OpsPerSecondCoun
 	})
 }
 
+func (f *fwiImpl) GetEntityByPublicKey(ctx context.Context, publicKey string) (Entity, error) {
+	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
+		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
+	})
+	if err != nil {
+		if errors.Is(err, client.ErrKeyNotFound) {
+			return nil, errEntityNotFound
+		}
+		return nil, err
+	}
+
+	for _, key := range keys {
+		entityRecordStr, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() (string, error) {
+			return f.rootInsiClient.Get(key)
+		})
+		if err != nil {
+			f.logger.Warn("Failed to get entity record during public key search, skipping", "key", key, "error", err)
+			continue
+		}
+
+		var er entityRecord
+		if err := json.Unmarshal([]byte(entityRecordStr), &er); err != nil {
+			f.logger.Warn(
+				"Failed to unmarshal entity record during public key search, skipping", "key", key, "error", err)
+			continue
+		}
+
+		for _, pk := range er.PublicKeys {
+			if pk == publicKey {
+				entityClient := f.cleanDerivationClient.DeriveWithApiKey(er.Name, er.Key)
+				entity := &entityImpl{
+					name:           er.Name,
+					insiClient:     entityClient,
+					rootInsiClient: f.rootInsiClient,
+					record:         &er,
+					logger:         f.logger.WithGroup("entity").WithGroup(er.Name),
+				}
+
+				f.mu.Lock()
+				f.entities[er.Name] = entity
+				f.mu.Unlock()
+
+				return entity, nil
+			}
+		}
+	}
+
+	return nil, errEntityNotFound
+}
+
 func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, error) {
+
+	item := f.entityCache.Get(name)
+	if item != nil {
+		return item.Value(), nil
+	}
+
 	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
 		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
 	})
@@ -864,11 +1052,15 @@ func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, er
 		if er.Name == name {
 			entityClient := f.cleanDerivationClient.DeriveWithApiKey(er.Name, er.Key)
 			entity := &entityImpl{
-				name:       er.Name,
-				insiClient: entityClient,
-				record:     &er,
-				logger:     f.logger.WithGroup("entity").WithGroup(er.Name),
+				name:           er.Name,
+				insiClient:     entityClient,
+				rootInsiClient: f.rootInsiClient,
+				record:         &er,
+				logger:         f.logger.WithGroup("entity").WithGroup(er.Name),
 			}
+
+			f.entityCache.Set(name, entity, entityCacheTTL)
+
 			return entity, nil
 		}
 	}

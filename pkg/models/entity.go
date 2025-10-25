@@ -6,6 +6,16 @@ type Entity struct {
 	DataScopeUUID string         `json:"data_scope_uuid"` // the data scope they have created
 	KeyUUID       string         `json:"key_uuid"`        // the key they have created
 	Usage         LimitsResponse `json:"usage"`
+
+	/*
+		Public keys are the public keys that are allowed to access the entity.
+		These are used to authenticate the entity to the system over ssh
+
+		When the ssh connection comes in we will GetEntityByPublicKey
+		to retrieve Entity interface to act on behalf of that user
+		during the user session
+	*/
+	PublicKeys []string `json:"public_keys,omitempty"`
 }
 
 type InsightRequestEntity struct {
