@@ -1,10 +1,8 @@
-package repl
+package app
 
 import (
 	"strings"
 	"time"
-
-	"github.com/InsulaLabs/insi/internal/app"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/log"
@@ -13,23 +11,23 @@ import (
 type tickMsg time.Time
 
 type Model struct {
-	session    *app.Session
+	session    *Session
 	buffer     string
 	cursor     int
 	quitting   bool
 	cursorOn   bool
-	currentApp app.App
+	currentApp App
 	windowSize tea.WindowSizeMsg
 
-	applications app.AppMap
+	applications AppMap
 }
 
 type ReplConfig struct {
-	SessionConfig app.SessionConfig
+	SessionConfig SessionConfig
 }
 
-func New(config ReplConfig, applications app.AppMap) Model {
-	session := app.NewSession(config.SessionConfig)
+func New(config ReplConfig, applications AppMap) Model {
+	session := NewSession(config.SessionConfig)
 	return Model{
 		session:      session,
 		buffer:       "",
@@ -174,7 +172,7 @@ func (m Model) View() string {
 	return b.String()
 }
 
-func (m *Model) LaunchApp(app app.App, args []string) tea.Cmd {
+func (m *Model) LaunchApp(app App, args []string) tea.Cmd {
 	m.buffer = ""
 	m.cursor = 0
 	m.currentApp = app
