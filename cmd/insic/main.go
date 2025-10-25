@@ -19,13 +19,13 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/InsulaLabs/insi/client"
-	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/pkg/client"
+	"github.com/InsulaLabs/insi/pkg/config"
+	"github.com/InsulaLabs/insi/pkg/models"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 
-	processModels "github.com/InsulaLabs/insi/extensions/process/models"
+	processModels "github.com/InsulaLabs/insi/pkg/extensions/process/models"
 )
 
 var (

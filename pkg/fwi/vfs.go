@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/InsulaLabs/insi/client"
+	"github.com/InsulaLabs/insi/pkg/client"
 )
 
 /*

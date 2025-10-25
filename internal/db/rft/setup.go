@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/InsulaLabs/insi/config"
+	"github.com/InsulaLabs/insi/pkg/config"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"

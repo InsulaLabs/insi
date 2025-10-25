@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/pkg/models"
 )
 
 var (

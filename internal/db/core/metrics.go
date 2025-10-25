@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/pkg/models"
 )
 
 type Counters struct {

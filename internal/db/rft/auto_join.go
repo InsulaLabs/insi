@@ -15,7 +15,7 @@ import (
 	"encoding/hex"
 	"net"
 
-	"github.com/InsulaLabs/insi/config"
+	"github.com/InsulaLabs/insi/pkg/config"
 
 	"github.com/hashicorp/raft"
 )

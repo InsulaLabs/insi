@@ -75,10 +75,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/pkg/models"
 	"github.com/gorilla/websocket"
 
-	processModels "github.com/InsulaLabs/insi/extensions/process/models"
+	processModels "github.com/InsulaLabs/insi/pkg/extensions/process/models"
 )
 
 const (

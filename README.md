@@ -120,7 +120,7 @@ Every Entity automatically gets:
 package main
 
 import (
-    "github.com/InsulaLabs/insi/fwi"
+    "github.com/InsulaLabs/insi/pkg/fwi"
     "log"
 )
 

@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/InsulaLabs/insi/badge"
-	"github.com/InsulaLabs/insi/db/core"
-	"github.com/InsulaLabs/insi/extensions"
-	processModels "github.com/InsulaLabs/insi/extensions/process/models"
-	"github.com/InsulaLabs/insi/extensions/process/procman"
+	"github.com/InsulaLabs/insi/internal/badge"
+	"github.com/InsulaLabs/insi/internal/db/core"
+	"github.com/InsulaLabs/insi/pkg/extensions"
+	processModels "github.com/InsulaLabs/insi/pkg/extensions/process/models"
+	"github.com/InsulaLabs/insi/pkg/extensions/process/procman"
 	"github.com/google/uuid"
 )
 

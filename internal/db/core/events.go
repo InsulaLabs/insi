@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/InsulaLabs/insi/client"
-	"github.com/InsulaLabs/insi/db/models"
-	"github.com/InsulaLabs/insi/db/rft"
-	"github.com/InsulaLabs/insi/db/tkv"
+	"github.com/InsulaLabs/insi/internal/db/rft"
+	"github.com/InsulaLabs/insi/internal/db/tkv"
+	"github.com/InsulaLabs/insi/pkg/client"
+	"github.com/InsulaLabs/insi/pkg/models"
 	"github.com/gorilla/websocket"
 )
 

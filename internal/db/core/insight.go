@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/InsulaLabs/insi/db/models"
-	"github.com/InsulaLabs/insi/db/tkv"
+	"github.com/InsulaLabs/insi/internal/db/tkv"
+	"github.com/InsulaLabs/insi/pkg/models"
 )
 
 type EndpointOperation int

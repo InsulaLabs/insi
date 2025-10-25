@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/pkg/models"
 	"github.com/google/uuid"
 	"golang.org/x/time/rate"
 )

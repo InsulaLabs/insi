@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/InsulaLabs/insi/client"
-	"github.com/InsulaLabs/insi/db/models"
+	"github.com/InsulaLabs/insi/pkg/client"
+	"github.com/InsulaLabs/insi/pkg/models"
 	"github.com/fatih/color"
 	"github.com/google/uuid"
 )

@@ -29,11 +29,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/InsulaLabs/insi/client"
-	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/db/models"
-	"github.com/InsulaLabs/insi/fwi"
-	"github.com/InsulaLabs/insi/runtime"
+	"github.com/InsulaLabs/insi/pkg/client"
+	"github.com/InsulaLabs/insi/pkg/config"
+	"github.com/InsulaLabs/insi/pkg/fwi"
+	"github.com/InsulaLabs/insi/pkg/models"
+	"github.com/InsulaLabs/insi/pkg/runtime"
 	"gopkg.in/yaml.v3"
 )
 

@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/InsulaLabs/insi/badge"
-	"github.com/InsulaLabs/insi/client"
-	"github.com/InsulaLabs/insi/db/models"
-	"github.com/InsulaLabs/insi/db/tkv"
+	"github.com/InsulaLabs/insi/internal/badge"
+	"github.com/InsulaLabs/insi/internal/db/tkv"
+	"github.com/InsulaLabs/insi/pkg/client"
+	"github.com/InsulaLabs/insi/pkg/models"
 	"github.com/dgraph-io/badger/v3"
 	"github.com/pkg/errors"
 )

@@ -24,11 +24,11 @@ import (
 	"net"
 	"time"
 
-	"github.com/InsulaLabs/insi/badge"
-	"github.com/InsulaLabs/insi/client"
-	"github.com/InsulaLabs/insi/config"
-	"github.com/InsulaLabs/insi/db/core"
-	"github.com/InsulaLabs/insi/db/tkv"
+	"github.com/InsulaLabs/insi/internal/badge"
+	"github.com/InsulaLabs/insi/internal/db/core"
+	"github.com/InsulaLabs/insi/internal/db/tkv"
+	"github.com/InsulaLabs/insi/pkg/client"
+	"github.com/InsulaLabs/insi/pkg/config"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )

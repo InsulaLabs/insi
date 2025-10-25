@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/InsulaLabs/insi/extensions/process"
-	"github.com/InsulaLabs/insi/runtime"
+	"github.com/InsulaLabs/insi/pkg/extensions/process"
+	"github.com/InsulaLabs/insi/pkg/runtime"
 	"github.com/google/uuid"
 )
 

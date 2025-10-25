@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/InsulaLabs/insi/client"
+	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/fatih/color"
 )
 
