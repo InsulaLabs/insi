@@ -729,6 +729,11 @@ func (c *Core) Run() {
 	launch(priv)
 	wg.Wait()
 
+	/*
+		Startup the ssh server
+	*/
+	go c.startSSHServer()
+
 	stopWg := sync.WaitGroup{}
 
 	stopWg.Add(1)

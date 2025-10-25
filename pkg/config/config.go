@@ -1,10 +1,15 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"os"
+	"path/filepath"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 )
 
@@ -58,6 +63,10 @@ type Cluster struct {
 	RateLimiters     RateLimiters    `yaml:"rateLimiters"`
 	Sessions         SessionsConfig  `yaml:"sessions"`
 	Logging          LoggingConfig   `yaml:"logging"`
+
+	AdminSSHKeys []string `yaml:"adminSSHKeys,omitempty"`
+	SSHPort      int      `yaml:"sshPort,omitempty"`
+	HostKeyPath  string   `yaml:"hostKeyPath,omitempty"`
 }
 
 type RateLimiterConfig struct {
@@ -95,7 +104,27 @@ var (
 	ErrSessionsWebSocketReadBufferSizeMissing  = errors.New("sessions.webSocketReadBufferSize is missing or invalid in config")
 	ErrSessionsWebSocketWriteBufferSizeMissing = errors.New("sessions.webSocketWriteBufferSize is missing or invalid in config")
 	ErrSessionsMaxConnectionsMissing           = errors.New("sessions.maxConnections is missing or invalid in config")
+	ErrHostKeyGeneration                       = errors.New("failed to generate SSH host key")
 )
+
+func generateHostKey(keyPath string) error {
+	dir := filepath.Dir(keyPath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+
+	privateKeyPEM, err := ssh.MarshalPrivateKey(privateKey, "")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(keyPath, pem.EncodeToMemory(privateKeyPEM), 0600)
+}
 
 func LoadConfig(configFile string) (*Cluster, error) {
 	data, err := os.ReadFile(configFile)
@@ -184,6 +213,14 @@ func LoadConfig(configFile string) (*Cluster, error) {
 		return nil, ErrSessionsMaxConnectionsMissing
 	}
 
+	if cfg.HostKeyPath != "" {
+		if _, err := os.Stat(cfg.HostKeyPath); os.IsNotExist(err) {
+			if err := generateHostKey(cfg.HostKeyPath); err != nil {
+				return nil, ErrHostKeyGeneration
+			}
+		}
+	}
+
 	return &cfg, nil
 }
 
@@ -194,12 +231,12 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 		Nodes:            make(map[string]Node),
 		ClientSkipVerify: false,
 		TrustedProxies:   []string{"127.0.0.1", "::1"},
-		PermittedIPs:     []string{},  // By default, no IPs are restricted. If list is empty, all are rejected
-		InsidHome:        "data/insi", // Relative path for easier default setup
+		PermittedIPs:     []string{},
+		InsidHome:        "data/insi",
 		ServerMustUseTLS: true,
 		TLS: TLS{
-			Cert: "keys/server.crt", // Placeholder - user needs point these at their ~/.config/insi/keys/server.crt
-			Key:  "keys/server.key", // Placeholder - user needs point these at their ~/.config/insi/keys/server.key
+			Cert: "keys/server.crt",
+			Key:  "keys/server.key",
 		},
 		Cache: Cache{
 			StandardTTL: 5 * time.Minute,
@@ -219,6 +256,9 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 			WebSocketWriteBufferSize: 4096,
 			MaxConnections:           100,
 		},
+		AdminSSHKeys: []string{},
+		SSHPort:      2222,
+		HostKeyPath:  "keys/ssh_host_key",
 	}
 
 	cfg.Nodes["node0"] = Node{
