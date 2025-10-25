@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/InsulaLabs/insi/internal/db/core"
+	"github.com/InsulaLabs/insi/pkg/fwi"
 	"github.com/google/uuid"
 )
 
@@ -20,7 +20,7 @@ type Session struct {
 	config         SessionConfig
 	startTimestamp time.Time
 
-	core *core.Core
+	fwi fwi.FWI
 }
 
 type SessionConfig struct {
@@ -29,8 +29,7 @@ type SessionConfig struct {
 	ActiveCursorSymbol   string
 	InactiveCursorSymbol string
 	Prompt               string
-
-	Core *core.Core
+	FWI                  fwi.FWI
 }
 
 func NewSession(config SessionConfig) *Session {
@@ -47,7 +46,7 @@ func NewSession(config SessionConfig) *Session {
 		inHistoryMode:  false,
 		config:         config,
 		startTimestamp: time.Now(),
-		core:           config.Core,
+		fwi:            config.FWI,
 	}
 }
 
@@ -121,4 +120,8 @@ func (s *Session) GetUserID() string {
 
 func (s *Session) GetPrompt() string {
 	return s.config.Prompt
+}
+
+func (s *Session) GetFWI() fwi.FWI {
+	return s.fwi
 }

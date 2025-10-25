@@ -21,6 +21,7 @@ import (
 	"github.com/InsulaLabs/insi/internal/db/tkv"
 	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/config"
+	"github.com/InsulaLabs/insi/pkg/fwi"
 	"github.com/InsulaLabs/insi/pkg/models"
 	"github.com/fatih/color"
 	"github.com/gorilla/websocket"
@@ -150,6 +151,8 @@ type Core struct {
 	trustedIPs map[string]struct{}
 
 	extensions []Extension
+
+	fwi fwi.FWI
 }
 
 var _ ExtensionPanel = &Core{}
@@ -358,6 +361,19 @@ func New(
 		Timeout:        time.Second * 30,
 		Endpoints:      endpoints,
 	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	service.fwi, err = fwi.NewFWI(&client.Config{
+		Logger:         logger.WithGroup("fwi"),
+		ConnectionType: client.ConnectionTypeRandom,
+		ApiKey:         rootApiKey,
+		SkipVerify:     clusterCfg.ClientSkipVerify,
+		Timeout:        time.Second * 30,
+		Endpoints:      endpoints,
+	}, logger.WithGroup("fwi"))
 
 	if err != nil {
 		return nil, err
@@ -725,14 +741,15 @@ func (c *Core) Run() {
 		Signal will kill the servers which will free these contexts
 		which will allow the main context to exit
 	*/
+	if c.cfg.SSHPort > 0 && c.cfg.HostKeyPath != "" {
+		if err := c.startSSHServer(); err != nil {
+			c.logger.Error("Failed to start SSH server", "error", err)
+		}
+	}
+
 	launch(pub)
 	launch(priv)
 	wg.Wait()
-
-	/*
-		Startup the ssh server
-	*/
-	go c.startSSHServer()
 
 	stopWg := sync.WaitGroup{}
 
