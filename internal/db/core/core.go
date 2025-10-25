@@ -737,6 +737,10 @@ func (c *Core) Run() {
 		}()
 	}
 
+	launch(pub)
+	launch(priv)
+	wg.Wait()
+
 	/*
 		Signal will kill the servers which will free these contexts
 		which will allow the main context to exit
@@ -746,10 +750,6 @@ func (c *Core) Run() {
 			c.logger.Error("Failed to start SSH server", "error", err)
 		}
 	}
-
-	launch(pub)
-	launch(priv)
-	wg.Wait()
 
 	stopWg := sync.WaitGroup{}
 
