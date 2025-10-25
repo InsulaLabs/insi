@@ -28,6 +28,8 @@ var (
 
 	entityCacheTTL      = time.Minute * 1
 	entityCacheCapacity = 2048
+
+	maxEntityFullIterationScan = 8192
 )
 
 // Abstracts
@@ -794,7 +796,7 @@ func (f *fwiImpl) CreateOrLoadEntity(
 
 func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
-		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
+		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, maxEntityFullIterationScan)
 	})
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
@@ -968,7 +970,7 @@ func (f *fwiImpl) GetOpsPerSecond(ctx context.Context) (*models.OpsPerSecondCoun
 
 func (f *fwiImpl) GetEntityByPublicKey(ctx context.Context, publicKey string) (Entity, error) {
 	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
-		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
+		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, maxEntityFullIterationScan)
 	})
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
@@ -1024,7 +1026,7 @@ func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, er
 	}
 
 	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
-		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
+		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, maxEntityFullIterationScan)
 	})
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
