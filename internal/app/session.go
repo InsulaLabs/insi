@@ -20,7 +20,7 @@ type Session struct {
 	config         SessionConfig
 	startTimestamp time.Time
 
-	fwi fwi.FWI
+	userFWI fwi.Entity
 }
 
 type SessionConfig struct {
@@ -29,7 +29,7 @@ type SessionConfig struct {
 	ActiveCursorSymbol   string
 	InactiveCursorSymbol string
 	Prompt               string
-	FWI                  fwi.FWI
+	UserFWI              fwi.Entity
 }
 
 func NewSession(config SessionConfig) *Session {
@@ -46,7 +46,7 @@ func NewSession(config SessionConfig) *Session {
 		inHistoryMode:  false,
 		config:         config,
 		startTimestamp: time.Now(),
-		fwi:            config.FWI,
+		userFWI:        config.UserFWI,
 	}
 }
 
@@ -122,6 +122,6 @@ func (s *Session) GetPrompt() string {
 	return s.config.Prompt
 }
 
-func (s *Session) GetFWI() fwi.FWI {
-	return s.fwi
+func (s *Session) GetFWI() fwi.Entity {
+	return s.userFWI
 }

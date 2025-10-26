@@ -202,6 +202,12 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 
 	isAdmin := sess.Context().Value(coreEntityIsAdminKey) == coreEntityIsAdminValue
 
+	/*
+		We authenticate based off of an entity public key.
+		Given that we pull entity this way we may or may not
+		be an administrator (if they setup a new entity with a root FWI)
+	*/
+
 	entityName := entity.GetName()
 	if isAdmin {
 		entityName = entityName + " (admin)"
@@ -216,7 +222,7 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 			ActiveCursorSymbol:   "█",
 			InactiveCursorSymbol: " ",
 			Prompt:               entityName + " > ",
-			FWI:                  n.fwi,
+			UserFWI:              entity,
 		},
 	}, app.AppMap{})
 
