@@ -27,14 +27,14 @@ type Session struct {
 	startTimestamp time.Time
 
 	userFWI           fwi.Entity
+	fwiManager        fwi.FWI
 	extensionControls []core.ExtensionControl
 
 	sessionRuntimeCtx context.Context
 	virtualFileSystem sessionVFS
 
-	applications  AppMap
-	appHelpText   string
-	adminHelpText string
+	applications AppMap
+	appHelpText  string
 }
 
 type SessionConfig struct {
@@ -45,6 +45,7 @@ type SessionConfig struct {
 	InactiveCursorSymbol string
 	Prompt               string
 	UserFWI              fwi.Entity
+	FWIManager           fwi.FWI
 }
 
 func NewSession(ctx context.Context, config SessionConfig, extensionControls []core.ExtensionControl, applications AppMap) *Session {
@@ -69,6 +70,7 @@ func NewSession(ctx context.Context, config SessionConfig, extensionControls []c
 		config:            config,
 		startTimestamp:    time.Now(),
 		userFWI:           config.UserFWI,
+		fwiManager:        config.FWIManager,
 		extensionControls: extensionControls,
 		sessionRuntimeCtx: ctx,
 		virtualFileSystem: sessionVFS{activeDirectory: "/", fs: config.UserFWI.GetFS()},
@@ -271,4 +273,8 @@ func (s *Session) BuildHelpText() string {
 
 func (s *Session) GetSessionRuntimeCtx() context.Context {
 	return s.sessionRuntimeCtx
+}
+
+func (s *Session) IsAdmin() bool {
+	return s.isAdmin
 }

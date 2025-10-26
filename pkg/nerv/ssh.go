@@ -253,6 +253,7 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 			InactiveCursorSymbol: " ",
 			Prompt:               entityName + " > ",
 			UserFWI:              entity,
+			FWIManager:           n.fwi,
 		},
 	}, buildAppMap(entityFS), extensionControls)
 

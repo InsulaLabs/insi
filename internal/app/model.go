@@ -132,6 +132,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cmdHandler, ok := m.commands[cmd]; ok {
 					return m, cmdHandler(m.session, cmd, args)
 				}
+
+				if m.session.IsAdmin() {
+					if cmdHandler, ok := m.restrictedCommands[cmd]; ok {
+						return m, cmdHandler(m.session, cmd, args)
+					}
+				}
 			}
 			return m, nil
 		case tea.KeyBackspace:
