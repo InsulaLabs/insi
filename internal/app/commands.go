@@ -6,6 +6,24 @@ import (
 	"github.com/charmbracelet/log"
 )
 
+/*
+Note:
+These command extensions are the extensions for the insi core that are loaded in the local
+nodes runtime. Its possible that these are running on other nodes in the insi cluster, but
+its not mandated that they must be. For this reason, nerv is only in control of the apex
+extensions. This is ultimately by design. If we want to extend later to make a "cluster wide"
+extension manager from the apex node we would need to come up with a way to sync across the
+available nodes.
+
+This is out of scope for the actual ssh application (model+session) but the note is left here
+because if anyone is attempting to start a process over ssh and wonders why they can't do so
+on any given node they will ultimately trace their investigations to this point.
+
+If cross-cluster extension controll is wanted, make an extension for it and load it here as a
+"middle man" extension that handles the cross-cluster stuff under the hood and then it will
+be immediatly available here when registered with the runtime in insid or whatever binary
+is hosting the insi Runtime.
+*/
 func getCommandMap(extensionControls []core.ExtensionControl) map[string]CLICmdHandler {
 	commands := map[string]CLICmdHandler{
 		"exit": func(session *Session, command string, args []string) tea.Cmd {
