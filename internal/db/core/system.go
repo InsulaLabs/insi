@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -125,6 +126,11 @@ func (c *Core) redirectToLeader(w http.ResponseWriter, r *http.Request, original
 
 	client := &http.Client{
 		Timeout: time.Second * 30,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: c.cfg.ClientSkipVerify,
+			},
+		},
 	}
 
 	resp, err := client.Do(proxyReq)

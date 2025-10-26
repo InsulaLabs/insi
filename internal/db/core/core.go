@@ -1189,6 +1189,8 @@ func (c *Core) initializeFWI() {
 		})
 	}
 
+	c.logger.Info("Initializing FWI", "skip_verify", c.cfg.ClientSkipVerify, "endpoints_count", len(endpoints))
+
 	fwi, err := fwi.NewFWI(&client.Config{
 		Logger:         c.logger.WithGroup("fwi"),
 		ConnectionType: client.ConnectionTypeRandom,
@@ -1204,5 +1206,5 @@ func (c *Core) initializeFWI() {
 	}
 
 	c.fwi = fwi
-	c.logger.Info("FWI initialized successfully after root keys verified")
+	c.logger.Info("FWI initialized successfully after root keys verified", "skip_verify", c.cfg.ClientSkipVerify)
 }
