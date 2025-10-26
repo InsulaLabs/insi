@@ -66,6 +66,8 @@ func (e *Extension) HandleCommand(command string, args []string) (string, error)
 		return e.cliListProcesses(subArgs)
 	case "register":
 		return e.cliRegisterProcessHandler(subArgs)
+	case "unregister":
+		return e.cliUnregisterProcess(subArgs)
 	case "start":
 		return e.cliStartProcess(subArgs)
 	case "stop":
@@ -92,16 +94,19 @@ func (e *Extension) getHelpText() string {
 	sb.WriteString("Available subcommands:\n")
 	sb.WriteString("  list [offset] [limit]              List all registered processes\n")
 	sb.WriteString("  register <name> <path> [args...]   Register a new process\n")
-	sb.WriteString("  start <uuid>                       Start a registered process\n")
-	sb.WriteString("  stop <uuid>                        Stop a running process\n")
-	sb.WriteString("  restart <uuid>                     Restart a running process\n")
-	sb.WriteString("  status <uuid>                      Show detailed status of a process\n")
+	sb.WriteString("  unregister <name|uuid>             Unregister and remove a process\n")
+	sb.WriteString("  start <name|uuid>                  Start a registered process\n")
+	sb.WriteString("  stop <name|uuid>                   Stop a running process\n")
+	sb.WriteString("  restart <name|uuid>                Restart a running process\n")
+	sb.WriteString("  status <name|uuid>                 Show detailed status of a process\n")
 	sb.WriteString("  help                               Show this help message\n")
 	sb.WriteString("\nExamples:\n")
 	sb.WriteString("  process list\n")
-	sb.WriteString("  process register myapp /usr/bin/myapp --flag value\n")
-	sb.WriteString("  process start <uuid>\n")
-	sb.WriteString("  process status <uuid>\n")
+	sb.WriteString("  process register ping-google /sbin/ping google.com\n")
+	sb.WriteString("  process start ping-google\n")
+	sb.WriteString("  process status ping-google\n")
+	sb.WriteString("  process stop ping-google\n")
+	sb.WriteString("  process unregister ping-google\n")
 
 	return sb.String()
 }

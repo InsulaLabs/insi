@@ -8,6 +8,37 @@ import (
 	"github.com/google/uuid"
 )
 
+func (e *Extension) resolveProcessIdentifier(identifier string) (string, *processModels.Process, error) {
+	e.registryMutex.RLock()
+	defer e.registryMutex.RUnlock()
+
+	if proc, exists := e.processRegistry[identifier]; exists {
+		return identifier, proc, nil
+	}
+
+	var foundUUID string
+	var foundProc *processModels.Process
+	matchCount := 0
+
+	for uuid, proc := range e.processRegistry {
+		if proc.Name == identifier {
+			foundUUID = uuid
+			foundProc = proc
+			matchCount++
+		}
+	}
+
+	if matchCount == 0 {
+		return "", nil, fmt.Errorf("process not found: %s", identifier)
+	}
+
+	if matchCount > 1 {
+		return "", nil, fmt.Errorf("multiple processes found with name '%s', please use UUID", identifier)
+	}
+
+	return foundUUID, foundProc, nil
+}
+
 func (e *Extension) cliListProcesses(args []string) (string, error) {
 	offset := 0
 	limit := 100
@@ -70,17 +101,14 @@ func (e *Extension) cliRegisterProcessHandler(args []string) (string, error) {
 
 func (e *Extension) cliStartProcess(args []string) (string, error) {
 	if len(args) < 1 {
-		return formatCommandUsage("start", "<uuid>"), fmt.Errorf("uuid required")
+		return formatCommandUsage("start", "<name|uuid>"), fmt.Errorf("process name or uuid required")
 	}
 
-	processUUID := args[0]
+	identifier := args[0]
 
-	e.registryMutex.RLock()
-	proc, exists := e.processRegistry[processUUID]
-	e.registryMutex.RUnlock()
-
-	if !exists {
-		return formatError(fmt.Sprintf("Process not found: %s", processUUID)), fmt.Errorf("process not found")
+	processUUID, proc, err := e.resolveProcessIdentifier(identifier)
+	if err != nil {
+		return formatError(err.Error()), err
 	}
 
 	if proc.Status == processModels.ProcessStatusRunning {
@@ -97,17 +125,14 @@ func (e *Extension) cliStartProcess(args []string) (string, error) {
 
 func (e *Extension) cliStopProcess(args []string) (string, error) {
 	if len(args) < 1 {
-		return formatCommandUsage("stop", "<uuid>"), fmt.Errorf("uuid required")
+		return formatCommandUsage("stop", "<name|uuid>"), fmt.Errorf("process name or uuid required")
 	}
 
-	processUUID := args[0]
+	identifier := args[0]
 
-	e.registryMutex.RLock()
-	proc, exists := e.processRegistry[processUUID]
-	e.registryMutex.RUnlock()
-
-	if !exists {
-		return formatError(fmt.Sprintf("Process not found: %s", processUUID)), fmt.Errorf("process not found")
+	processUUID, proc, err := e.resolveProcessIdentifier(identifier)
+	if err != nil {
+		return formatError(err.Error()), err
 	}
 
 	if proc.Status != processModels.ProcessStatusRunning {
@@ -124,17 +149,14 @@ func (e *Extension) cliStopProcess(args []string) (string, error) {
 
 func (e *Extension) cliRestartProcess(args []string) (string, error) {
 	if len(args) < 1 {
-		return formatCommandUsage("restart", "<uuid>"), fmt.Errorf("uuid required")
+		return formatCommandUsage("restart", "<name|uuid>"), fmt.Errorf("process name or uuid required")
 	}
 
-	processUUID := args[0]
+	identifier := args[0]
 
-	e.registryMutex.RLock()
-	proc, exists := e.processRegistry[processUUID]
-	e.registryMutex.RUnlock()
-
-	if !exists {
-		return formatError(fmt.Sprintf("Process not found: %s", processUUID)), fmt.Errorf("process not found")
+	processUUID, proc, err := e.resolveProcessIdentifier(identifier)
+	if err != nil {
+		return formatError(err.Error()), err
 	}
 
 	if proc.Status != processModels.ProcessStatusRunning {
@@ -155,18 +177,46 @@ func (e *Extension) cliRestartProcess(args []string) (string, error) {
 
 func (e *Extension) cliStatusProcess(args []string) (string, error) {
 	if len(args) < 1 {
-		return formatCommandUsage("status", "<uuid>"), fmt.Errorf("uuid required")
+		return formatCommandUsage("status", "<name|uuid>"), fmt.Errorf("process name or uuid required")
 	}
 
-	processUUID := args[0]
+	identifier := args[0]
 
-	e.registryMutex.RLock()
-	proc, exists := e.processRegistry[processUUID]
-	e.registryMutex.RUnlock()
-
-	if !exists {
-		return formatError(fmt.Sprintf("Process not found: %s", processUUID)), fmt.Errorf("process not found")
+	_, proc, err := e.resolveProcessIdentifier(identifier)
+	if err != nil {
+		return formatError(err.Error()), err
 	}
 
 	return formatProcessDetail(proc), nil
+}
+
+func (e *Extension) cliUnregisterProcess(args []string) (string, error) {
+	if len(args) < 1 {
+		return formatCommandUsage("unregister", "<name|uuid>"), fmt.Errorf("process name or uuid required")
+	}
+
+	identifier := args[0]
+
+	processUUID, proc, err := e.resolveProcessIdentifier(identifier)
+	if err != nil {
+		return formatError(err.Error()), err
+	}
+
+	if proc.Status == processModels.ProcessStatusRunning {
+		if err := e.host.StopApp(processUUID); err != nil {
+			e.logger.Error("failed to stop process during unregister", "uuid", processUUID, "error", err)
+			return formatError(fmt.Sprintf("Failed to stop running process: %s", err.Error())), err
+		}
+	}
+
+	e.registryMutex.Lock()
+	delete(e.processRegistry, processUUID)
+	e.registryMutex.Unlock()
+
+	if err := e.save(); err != nil {
+		e.logger.Error("Failed to save process state after unregister", "error", err)
+		return formatError(fmt.Sprintf("Process removed but failed to save: %s", err.Error())), err
+	}
+
+	return formatSuccess(fmt.Sprintf("Process unregistered: %s (%s)", proc.Name, processUUID)), nil
 }
