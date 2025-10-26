@@ -74,10 +74,9 @@ const (
 )
 
 // NewVFS creates a new FS instance.
-func NewVFS(vs KV, blobs Blobs, logger *slog.Logger) FS {
+func NewVFS(vs KV, logger *slog.Logger) FS {
 	return &vfsImpl{
 		vs:     vs,
-		blobs:  blobs,
 		logger: logger.WithGroup("vfs"),
 	}
 }
@@ -85,7 +84,6 @@ func NewVFS(vs KV, blobs Blobs, logger *slog.Logger) FS {
 // vfsImpl implements the FS interface.
 type vfsImpl struct {
 	vs     KV
-	blobs  Blobs
 	logger *slog.Logger
 }
 
@@ -126,21 +124,20 @@ func (v *vfsImpl) Open(ctx context.Context, path string) (File, error) {
 		return nil, fmt.Errorf("cannot open directory: %s", path)
 	}
 
-	rc, err := v.blobs.Get(ctx, vfsDataPrefix+path)
+	data, err := v.vs.Get(ctx, vfsDataPrefix+path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get blob data: %w", err)
-	}
-	defer rc.Close()
-
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read blob data: %w", err)
+		if errors.Is(err, client.ErrKeyNotFound) {
+			// File exists but has no content (empty file)
+			data = ""
+		} else {
+			return nil, fmt.Errorf("failed to get file data: %w", err)
+		}
 	}
 
 	return &fileImpl{
 		vfs:     v,
 		info:    info.(*fileInfoImpl),
-		reader:  bytes.NewReader(data),
+		reader:  bytes.NewReader([]byte(data)),
 		isWrite: false,
 	}, nil
 }
@@ -215,8 +212,8 @@ func (v *vfsImpl) Remove(ctx context.Context, p string, opts ...RemoveOption) er
 			}
 		}
 	} else {
-		// It's a file, remove its data blob.
-		if err := v.blobs.Delete(ctx, vfsDataPrefix+info.path); err != nil {
+		// It's a file, remove its data from KV.
+		if err := v.vs.Delete(ctx, vfsDataPrefix+info.path); err != nil {
 			// Log error but continue to delete metadata.
 			// If key not found, it's not a real error for idempotency.
 			if !errors.Is(err, client.ErrKeyNotFound) {
@@ -352,9 +349,9 @@ func (f *fileImpl) Close() error {
 	}
 
 	data := f.buffer.Bytes()
-	err := f.vfs.blobs.SetReader(context.Background(), vfsDataPrefix+f.info.path, bytes.NewReader(data))
+	err := f.vfs.vs.Set(context.Background(), vfsDataPrefix+f.info.path, string(data))
 	if err != nil {
-		return fmt.Errorf("failed to upload blob: %w", err)
+		return fmt.Errorf("failed to save file data: %w", err)
 	}
 
 	// Update metadata

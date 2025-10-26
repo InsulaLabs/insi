@@ -256,7 +256,7 @@ func (e *entityImpl) GetBlobs() Blobs {
 }
 
 func (e *entityImpl) GetFS() FS {
-	return NewVFS(e.GetValueStore(), e.GetBlobs(), e.logger)
+	return NewVFS(e.GetValueStore(), e.logger)
 }
 
 func (e *entityImpl) GetAliasManager() Aliases {

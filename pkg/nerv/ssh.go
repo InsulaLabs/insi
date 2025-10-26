@@ -13,6 +13,7 @@ import (
 	"github.com/InsulaLabs/insi/internal/app"
 	"github.com/InsulaLabs/insi/internal/chat"
 	"github.com/InsulaLabs/insi/internal/db/core"
+	"github.com/InsulaLabs/insi/internal/editor"
 	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/fwi"
 	"github.com/InsulaLabs/insi/pkg/models"
@@ -236,6 +237,8 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		extensionControls[i] = extension.GetContorller()
 	}
 
+	entityFS := entity.GetFS()
+
 	model := app.New(n.ctx, app.ReplConfig{
 		SessionConfig: app.SessionConfig{
 			Logger:               n.logger.WithGroup("ssh").WithGroup(entity.GetName()),
@@ -245,15 +248,20 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 			Prompt:               entityName + " > ",
 			UserFWI:              entity,
 		},
-	}, buildAppMap(), extensionControls)
+	}, buildAppMap(entityFS), extensionControls)
 
 	return model, []tea.ProgramOption{}
 }
 
-func buildAppMap() app.AppMap {
+func buildAppMap(fs fwi.FS) app.AppMap {
 
 	chatApp, chatAppConstructor := chat.AppEntry()
+	editorApp, editorAppConstructor := editor.AppEntry()
+
+	editor.SetFS(fs)
+
 	return app.AppMap{
-		chatApp: chatAppConstructor,
+		chatApp:   chatAppConstructor,
+		editorApp: editorAppConstructor,
 	}
 }

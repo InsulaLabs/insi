@@ -45,7 +45,7 @@ func getVfsCommandMap(ctx context.Context, extensionControls []core.ExtensionCon
 		"ls": func(session *Session, command string, args []string) tea.Cmd {
 			targetDir := session.virtualFileSystem.activeDirectory
 			if len(args) > 0 {
-				targetDir = session.resolvePath(args[0])
+				targetDir = session.ResolvePath(args[0])
 			}
 
 			// Ensure the target directory exists
@@ -85,7 +85,7 @@ func getVfsCommandMap(ctx context.Context, extensionControls []core.ExtensionCon
 				}
 			}
 
-			filePath := session.resolvePath(args[0])
+			filePath := session.ResolvePath(args[0])
 
 			file, err := session.virtualFileSystem.fs.Open(ctx, filePath)
 			if err != nil {
@@ -113,7 +113,7 @@ func getVfsCommandMap(ctx context.Context, extensionControls []core.ExtensionCon
 				}
 			}
 
-			dirPath := session.resolvePath(args[0])
+			dirPath := session.ResolvePath(args[0])
 
 			err := session.virtualFileSystem.fs.Mkdir(ctx, dirPath)
 			if err != nil {
@@ -133,7 +133,7 @@ func getVfsCommandMap(ctx context.Context, extensionControls []core.ExtensionCon
 				}
 			}
 
-			filePath := session.resolvePath(args[0])
+			filePath := session.ResolvePath(args[0])
 
 			// Check if file already exists
 			_, err := session.virtualFileSystem.fs.Stat(ctx, filePath)
@@ -178,7 +178,7 @@ func getVfsCommandMap(ctx context.Context, extensionControls []core.ExtensionCon
 				path = args[0]
 			}
 
-			filePath := session.resolvePath(path)
+			filePath := session.ResolvePath(path)
 
 			var opts []fwi.RemoveOption
 			if recursive {

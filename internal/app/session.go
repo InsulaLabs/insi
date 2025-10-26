@@ -191,7 +191,7 @@ func (s *Session) GetCurrentDirectory() string {
 
 func (s *Session) ChangeDirectory(ctx context.Context, newPath string) error {
 	// Resolve the path (handle relative paths)
-	resolvedPath := s.resolvePath(newPath)
+	resolvedPath := s.ResolvePath(newPath)
 
 	// Ensure the directory exists (create it if it doesn't)
 	if err := ensureDirectoryExists(ctx, s.virtualFileSystem.fs, resolvedPath); err != nil {
@@ -212,7 +212,7 @@ func (s *Session) ChangeDirectory(ctx context.Context, newPath string) error {
 	return nil
 }
 
-func (s *Session) resolvePath(path string) string {
+func (s *Session) ResolvePath(path string) string {
 	if strings.HasPrefix(path, "/") {
 		return path
 	}
@@ -257,4 +257,8 @@ func (s *Session) BuildHelpText() string {
 	helpText += s.appHelpText
 
 	return helpText
+}
+
+func (s *Session) GetSessionRuntimeCtx() context.Context {
+	return s.sessionRuntimeCtx
 }
