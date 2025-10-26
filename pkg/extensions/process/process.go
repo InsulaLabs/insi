@@ -54,26 +54,56 @@ func (e *Extension) HandleCommand(command string, args []string) (string, error)
 
 	e.logger.Info("Handling command", "command", command, "args", args)
 
-	switch strings.ToLower(command) {
+	if len(args) == 0 {
+		return e.getHelpText(), nil
+	}
+
+	subcommand := strings.ToLower(args[0])
+	subArgs := args[1:]
+
+	switch subcommand {
 	case "list":
-		return e.cliListProcesses(args)
+		return e.cliListProcesses(subArgs)
 	case "register":
-		return e.cliRegisterProcessHandler(args)
+		return e.cliRegisterProcessHandler(subArgs)
 	case "start":
-		return e.cliStartProcess(args)
+		return e.cliStartProcess(subArgs)
 	case "stop":
-		return e.cliStopProcess(args)
+		return e.cliStopProcess(subArgs)
 	case "restart":
-		return e.cliRestartProcess(args)
+		return e.cliRestartProcess(subArgs)
 	case "status":
-		return e.cliStatusProcess(args)
+		return e.cliStatusProcess(subArgs)
+	case "help":
+		return e.getHelpText(), nil
 	default:
-		return "", fmt.Errorf("unknown command: %s", command)
+		return formatError(fmt.Sprintf("Unknown subcommand: %s", subcommand)), fmt.Errorf("unknown subcommand: %s", subcommand)
 	}
 }
 
 func (e *Extension) GetHelpText() string {
 	return "Process extension"
+}
+
+func (e *Extension) getHelpText() string {
+	var sb strings.Builder
+
+	sb.WriteString("Process Extension - Manage background processes\n\n")
+	sb.WriteString("Available subcommands:\n")
+	sb.WriteString("  list [offset] [limit]              List all registered processes\n")
+	sb.WriteString("  register <name> <path> [args...]   Register a new process\n")
+	sb.WriteString("  start <uuid>                       Start a registered process\n")
+	sb.WriteString("  stop <uuid>                        Stop a running process\n")
+	sb.WriteString("  restart <uuid>                     Restart a running process\n")
+	sb.WriteString("  status <uuid>                      Show detailed status of a process\n")
+	sb.WriteString("  help                               Show this help message\n")
+	sb.WriteString("\nExamples:\n")
+	sb.WriteString("  process list\n")
+	sb.WriteString("  process register myapp /usr/bin/myapp --flag value\n")
+	sb.WriteString("  process start <uuid>\n")
+	sb.WriteString("  process status <uuid>\n")
+
+	return sb.String()
 }
 
 /*
