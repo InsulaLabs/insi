@@ -11,6 +11,24 @@ import (
 
 type tickMsg time.Time
 
+type commandOutputMsg struct {
+	output string
+	isErr  bool
+}
+
+type displayEntryType int
+
+const (
+	displayEntryCommand displayEntryType = iota
+	displayEntryOutput
+)
+
+type displayEntry struct {
+	entryType displayEntryType
+	content   string
+	isErr     bool
+}
+
 type CLICmdHandler func(session *Session, command string, args []string) tea.Cmd
 
 type Model struct {
@@ -25,6 +43,8 @@ type Model struct {
 	applications AppMap
 
 	commands map[string]CLICmdHandler
+
+	displayHistory []displayEntry
 }
 
 type ReplConfig struct {
@@ -83,6 +103,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.session.AddToHistory(command)
 
+				m.displayHistory = append(m.displayHistory, displayEntry{
+					entryType: displayEntryCommand,
+					content:   command,
+				})
+
 				cmd, args := m.splitCommandIntoCommandAndArgs(command)
 				if app, ok := m.applications[cmd]; ok {
 					return m, m.LaunchApp(app(), args)
@@ -137,6 +162,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
 			return tickMsg(t)
 		})
+	case commandOutputMsg:
+		m.displayHistory = append(m.displayHistory, displayEntry{
+			entryType: displayEntryOutput,
+			content:   msg.output,
+			isErr:     msg.isErr,
+		})
+		return m, nil
 	}
 	return m, nil
 }
@@ -158,10 +190,18 @@ func (m Model) View() string {
 	b.WriteString("Type 'exit' or press Ctrl+C/Ctrl+D to quit.\n")
 	b.WriteString("Type 'tester' to launch the calculator app.\n\n")
 
-	for _, cmd := range m.session.GetHistory() {
-		b.WriteString(m.session.GetPrompt())
-		b.WriteString(cmd)
-		b.WriteString("\n")
+	for _, entry := range m.displayHistory {
+		switch entry.entryType {
+		case displayEntryCommand:
+			b.WriteString(m.session.GetPrompt())
+			b.WriteString(entry.content)
+			b.WriteString("\n")
+		case displayEntryOutput:
+			b.WriteString(entry.content)
+			if !strings.HasSuffix(entry.content, "\n") {
+				b.WriteString("\n")
+			}
+		}
 	}
 
 	b.WriteString(m.session.GetPrompt())

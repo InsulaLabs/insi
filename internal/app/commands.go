@@ -18,9 +18,13 @@ func getCommandMap(extensionControls []core.ExtensionControl) map[string]CLICmdH
 			response, err := extension.HandleCommand(command, args)
 			if err != nil {
 				log.Error("Failed to handle command", "error", err)
-				return tea.Println(err.Error())
+				return func() tea.Msg {
+					return commandOutputMsg{output: err.Error(), isErr: true}
+				}
 			}
-			return tea.Println(response)
+			return func() tea.Msg {
+				return commandOutputMsg{output: response, isErr: false}
+			}
 		}
 	}
 	return commands
