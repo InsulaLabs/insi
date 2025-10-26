@@ -1,13 +1,8 @@
 package nerv
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"log/slog"
-	"time"
 
-	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/config"
 	"github.com/InsulaLabs/insi/pkg/fwi"
 	"github.com/InsulaLabs/insi/pkg/interfaces"
@@ -48,44 +43,7 @@ func New(nodeId string, logger *slog.Logger, cfg *config.Cluster, nodeCfg *confi
 		nodeCfg: nodeCfg,
 	}
 
-	n.initializeFWI()
-
 	return n
-}
-
-func (n *Nerv) initializeFWI() {
-	endpoints := []client.Endpoint{}
-	for _, node := range n.cfg.Nodes {
-		endpoints = append(endpoints, client.Endpoint{
-			PublicBinding:  node.PublicBinding,
-			PrivateBinding: node.PrivateBinding,
-			ClientDomain:   node.ClientDomain,
-		})
-	}
-
-	rootApiKey := sha256.New()
-	rootApiKey.Write([]byte(n.cfg.InstanceSecret))
-	rootApiKeyHex := hex.EncodeToString(rootApiKey.Sum(nil))
-	rootApiKeyBase64 := base64.StdEncoding.EncodeToString([]byte(rootApiKeyHex))
-
-	n.logger.Info("Initializing FWI", "skip_verify", n.cfg.ClientSkipVerify, "endpoints_count", len(endpoints))
-
-	fwi, err := fwi.NewFWI(&client.Config{
-		Logger:         n.logger.WithGroup("fwi"),
-		ConnectionType: client.ConnectionTypeRandom,
-		ApiKey:         rootApiKeyBase64,
-		SkipVerify:     n.cfg.ClientSkipVerify,
-		Timeout:        time.Second * 30,
-		Endpoints:      endpoints,
-	}, n.logger.WithGroup("fwi"))
-
-	if err != nil {
-		n.logger.Error("Failed to initialize FWI after root keys verified", "error", err)
-		return
-	}
-
-	n.fwi = fwi
-	n.logger.Info("FWI initialized successfully after root keys verified", "skip_verify", n.cfg.ClientSkipVerify)
 }
 
 func (n *Nerv) OnCoreReady() {
@@ -104,4 +62,6 @@ func (n *Nerv) OnCoreReady() {
 	} else {
 		color.HiYellow("NODE %s RUNNING", n.nodeCfg.PublicBinding)
 	}
+
+	n.initializeFWI()
 }

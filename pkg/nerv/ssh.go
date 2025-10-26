@@ -2,11 +2,16 @@ package nerv
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/InsulaLabs/insi/internal/app"
+	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/fwi"
 	"github.com/InsulaLabs/insi/pkg/models"
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,7 +28,53 @@ const (
 	coreSSHEntityKey       = "core_ssh_entity"
 	coreEntityIsAdminKey   = "core_ssh_entity_is_admin"
 	coreEntityIsAdminValue = "true"
+
+	constNervEntityName = "nerv"
 )
+
+var (
+	nervEntityLimits = models.Limits{
+		BytesOnDisk:   ptrInt64(10 * 1024 * 1024 * 1024), // 10GB
+		BytesInMemory: ptrInt64(10 * 1024 * 1024 * 1024), // 10GB
+		EventsEmitted: ptrInt64(1000000),                 // 1 million events
+		Subscribers:   ptrInt64(10000),                   // 10 thousand subscribers
+	}
+)
+
+func (n *Nerv) initializeFWI() {
+	endpoints := []client.Endpoint{}
+	for _, node := range n.cfg.Nodes {
+		endpoints = append(endpoints, client.Endpoint{
+			PublicBinding:  node.PublicBinding,
+			PrivateBinding: node.PrivateBinding,
+			ClientDomain:   node.ClientDomain,
+		})
+	}
+
+	rootApiKey := sha256.New()
+	rootApiKey.Write([]byte(n.cfg.InstanceSecret))
+	rootApiKeyHex := hex.EncodeToString(rootApiKey.Sum(nil))
+	rootApiKeyBase64 := base64.StdEncoding.EncodeToString([]byte(rootApiKeyHex))
+
+	n.logger.Info("Initializing FWI", "skip_verify", n.cfg.ClientSkipVerify, "endpoints_count", len(endpoints))
+
+	fwi, err := fwi.NewFWI(&client.Config{
+		Logger:         n.logger.WithGroup("fwi"),
+		ConnectionType: client.ConnectionTypeRandom,
+		ApiKey:         rootApiKeyBase64,
+		SkipVerify:     n.cfg.ClientSkipVerify,
+		Timeout:        time.Second * 30,
+		Endpoints:      endpoints,
+	}, n.logger.WithGroup("fwi"))
+
+	if err != nil {
+		n.logger.Error("Failed to initialize FWI after root keys verified", "error", err)
+		return
+	}
+
+	n.fwi = fwi
+	n.logger.Info("FWI initialized successfully after root keys verified", "skip_verify", n.cfg.ClientSkipVerify)
+}
 
 func (n *Nerv) startSSHServer() (err error) {
 
@@ -89,11 +140,11 @@ func (n *Nerv) authenticateUser(ctx ssh.Context, key ssh.PublicKey) bool {
 	var err error
 
 	if isAdmin {
-		adminEntity, err := n.fwi.CreateOrLoadEntity(context.Background(), "admin", models.Limits{
-			BytesOnDisk:   ptrInt64(10 * 1024 * 1024 * 1024),
-			BytesInMemory: ptrInt64(10 * 1024 * 1024 * 1024),
-			EventsEmitted: ptrInt64(1000000),
-			Subscribers:   ptrInt64(10000),
+		adminEntity, err := n.fwi.CreateOrLoadEntity(context.Background(), constNervEntityName, models.Limits{
+			BytesOnDisk:   nervEntityLimits.BytesOnDisk,
+			BytesInMemory: nervEntityLimits.BytesInMemory,
+			EventsEmitted: nervEntityLimits.EventsEmitted,
+			Subscribers:   nervEntityLimits.Subscribers,
 		})
 		if err != nil {
 			n.logger.Error("Failed to create/load admin entity", "error", err)
@@ -152,6 +203,8 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 	entityName := entity.GetName()
 	if isAdmin {
 		entityName = entityName + " (admin)"
+	} else {
+		entityName = entityName + " (user)"
 	}
 
 	model := app.New(app.ReplConfig{
