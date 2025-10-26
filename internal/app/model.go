@@ -17,6 +17,8 @@ type commandOutputMsg struct {
 	isErr  bool
 }
 
+type clearDisplayMsg struct{}
+
 type displayEntryType int
 
 const (
@@ -202,6 +204,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			content:   msg.output,
 			isErr:     msg.isErr,
 		})
+		return m, nil
+	case clearDisplayMsg:
+		m.displayHistory = nil
 		return m, nil
 	}
 	return m, nil

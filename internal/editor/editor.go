@@ -142,7 +142,7 @@ func (e *App) GetHelpText() string {
 }
 
 func (e *App) GetDescriptionText() string {
-	return "edit files. Use 'editor help' to see the available commands."
+	return "Edit files (use 'editor help' for details)"
 }
 
 func (e *App) loadFile() error {

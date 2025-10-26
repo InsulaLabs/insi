@@ -249,27 +249,26 @@ func (s *Session) BuildHelpText() string {
 	helpText += "  touch - Create empty file\n"
 	helpText += "  rm    - Remove files and directories\n\n"
 
-	if len(s.extensionControls) > 0 {
-		helpText += "Extension Commands:\n"
-		for _, extension := range s.extensionControls {
-			helpText += "  " + extension.CommandName() + " - " + extension.GetHelpText() + "\n"
-		}
-	} else {
-		helpText += "No extensions loaded.\n"
-	}
-
-	helpText += "\nAvailable Applications:\n\n"
+	helpText += "Available Applications:\n\n"
 	helpText += s.appHelpText
 
-	helpText += "\nAccount Commands:\n\n"
-	helpText += getAccountHelpText()
+	helpText += "\nAccount Commands:\n"
+	helpText += "  account - User account management (use 'account help' for details)\n"
 
 	if !s.isAdmin {
 		return helpText
 	}
 
-	helpText += "\nAvailable Entity Commands:\n\n"
-	helpText += getEntityHelpText()
+	if len(s.extensionControls) > 0 {
+		helpText += "\nExtension Commands:\n"
+		for _, extension := range s.extensionControls {
+			helpText += "  " + extension.CommandName() + " - " + extension.GetHelpText() + "\n"
+		}
+		helpText += "\n"
+	}
+
+	helpText += "Entity Management:\n"
+	helpText += "  entity - Entity management commands (use 'entity help' for details)\n"
 
 	return helpText
 }

@@ -145,5 +145,5 @@ func (x *App) GetHelpText() string {
 }
 
 func (x *App) GetDescriptionText() string {
-	return "chat with users. Use 'chat help' to see the available commands."
+	return "Chat with users (use 'chat help' for details)"
 }

@@ -37,23 +37,30 @@ func getCommandMap(ctx context.Context, session *Session, extensionControls []co
 				return commandOutputMsg{output: helpText, isErr: false}
 			}
 		},
+		"clear": func(session *Session, command string, args []string) tea.Cmd {
+			return func() tea.Msg {
+				return clearDisplayMsg{}
+			}
+		},
 	}
 
 	commands = mergeCommandMaps(commands, getVfsCommandMap(ctx, extensionControls))
 
 	commands = mergeCommandMaps(commands, getAccountCommands(ctx, session, extensionControls))
 
-	for _, extension := range extensionControls {
-		commands[extension.CommandName()] = func(session *Session, command string, args []string) tea.Cmd {
-			response, err := extension.HandleCommand(command, args)
-			if err != nil {
-				log.Error("Failed to handle command", "error", err)
-				return func() tea.Msg {
-					return commandOutputMsg{output: err.Error(), isErr: true}
+	if session.IsAdmin() {
+		for _, extension := range extensionControls {
+			commands[extension.CommandName()] = func(session *Session, command string, args []string) tea.Cmd {
+				response, err := extension.HandleCommand(command, args)
+				if err != nil {
+					log.Error("Failed to handle command", "error", err)
+					return func() tea.Msg {
+						return commandOutputMsg{output: err.Error(), isErr: true}
+					}
 				}
-			}
-			return func() tea.Msg {
-				return commandOutputMsg{output: response, isErr: false}
+				return func() tea.Msg {
+					return commandOutputMsg{output: response, isErr: false}
+				}
 			}
 		}
 	}
