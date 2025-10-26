@@ -22,6 +22,7 @@ import (
 	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/config"
 	"github.com/InsulaLabs/insi/pkg/fwi"
+	"github.com/InsulaLabs/insi/pkg/interfaces"
 	"github.com/InsulaLabs/insi/pkg/models"
 	"github.com/fatih/color"
 	"github.com/gorilla/websocket"
@@ -544,7 +545,7 @@ func (c *Core) GetNodeName() string {
 }
 
 // Run forever until the context is cancelled
-func (c *Core) Run() {
+func (c *Core) Run(observers []interfaces.SystemObserver) {
 
 	makePublicMux := func(binding string) *serverInstance {
 
@@ -675,23 +676,14 @@ func (c *Core) Run() {
 		time.Sleep(CommonStartupTaskDelayDuration)
 		c.ensureRootKeyTrackersExist()
 
-		c.initializeFWI()
-
-		if c.cfg.ApexNode == "" {
-			c.logger.Info("SSH server disabled - no apex node configured")
-		} else if c.cfg.SSHPort > 0 && c.cfg.HostKeyPath != "" && c.fwi != nil && c.cfg.ApexNode == c.nodeName {
-			c.logger.Info("Starting SSH server on apex node", "apex_node", c.nodeName)
-			if err := c.startSSHServer(); err != nil {
-				c.logger.Error("Failed to start SSH server", "error", err)
-			}
-		} else if c.cfg.SSHPort > 0 && c.cfg.HostKeyPath != "" {
-			c.logger.Info("SSH server not started - this node is not the apex", "current_node", c.nodeName, "apex_node", c.cfg.ApexNode)
-		}
-
 		go c.tombstoneRunner()
 
 		for _, rp := range c.extensions {
 			go rp.OnInsiReady(c)
+		}
+
+		for _, observer := range observers {
+			observer.OnCoreReady()
 		}
 	}()
 
@@ -1177,34 +1169,4 @@ func (c *Core) dispatchToWebsocketSubscribers(event models.Event) {
 	} else {
 		c.logger.Debug("No WebSocket subscribers for topic in dispatch", "topic", event.Topic)
 	}
-}
-
-func (c *Core) initializeFWI() {
-	endpoints := []client.Endpoint{}
-	for _, node := range c.cfg.Nodes {
-		endpoints = append(endpoints, client.Endpoint{
-			PublicBinding:  node.PublicBinding,
-			PrivateBinding: node.PrivateBinding,
-			ClientDomain:   node.ClientDomain,
-		})
-	}
-
-	c.logger.Info("Initializing FWI", "skip_verify", c.cfg.ClientSkipVerify, "endpoints_count", len(endpoints))
-
-	fwi, err := fwi.NewFWI(&client.Config{
-		Logger:         c.logger.WithGroup("fwi"),
-		ConnectionType: client.ConnectionTypeRandom,
-		ApiKey:         c.authToken,
-		SkipVerify:     c.cfg.ClientSkipVerify,
-		Timeout:        time.Second * 30,
-		Endpoints:      endpoints,
-	}, c.logger.WithGroup("fwi"))
-
-	if err != nil {
-		c.logger.Error("Failed to initialize FWI after root keys verified", "error", err)
-		return
-	}
-
-	c.fwi = fwi
-	c.logger.Info("FWI initialized successfully after root keys verified", "skip_verify", c.cfg.ClientSkipVerify)
 }

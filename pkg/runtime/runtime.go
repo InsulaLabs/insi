@@ -29,6 +29,8 @@ import (
 	"github.com/InsulaLabs/insi/internal/db/tkv"
 	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/config"
+	"github.com/InsulaLabs/insi/pkg/interfaces"
+	"github.com/InsulaLabs/insi/pkg/nerv"
 	"github.com/fatih/color"
 	"gopkg.in/yaml.v3"
 )
@@ -52,6 +54,8 @@ type Runtime struct {
 
 	currentLogLevel slog.Level
 	keySetupOnce    sync.Once
+
+	nervSystem *nerv.Nerv
 
 	extensions []core.Extension
 }
@@ -356,7 +360,16 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 
 	r.service.WithRouteProviders(r.extensions...)
 
-	r.service.Run()
+	r.nervSystem = nerv.New(
+		nodeId,
+		r.logger.With("service", "nerv"),
+		r.clusterCfg,
+		&nodeCfg,
+	)
+
+	r.service.Run([]interfaces.SystemObserver{
+		r.nervSystem,
+	})
 }
 
 func getMapKeys(m map[string]config.Node) []string {
