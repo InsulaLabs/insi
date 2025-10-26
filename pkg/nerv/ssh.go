@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/internal/app"
+	"github.com/InsulaLabs/insi/internal/db/core"
 	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/fwi"
 	"github.com/InsulaLabs/insi/pkg/models"
@@ -224,6 +225,11 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		entityName = entityName + " (user)"
 	}
 
+	extensionControls := make([]core.ExtensionControl, len(n.extensions))
+	for i, extension := range n.extensions {
+		extensionControls[i] = extension.GetContorller()
+	}
+
 	model := app.New(app.ReplConfig{
 		SessionConfig: app.SessionConfig{
 			Logger:               n.logger.WithGroup("ssh").WithGroup(entity.GetName()),
@@ -233,7 +239,7 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 			Prompt:               entityName + " > ",
 			UserFWI:              entity,
 		},
-	}, app.AppMap{})
+	}, app.AppMap{}, extensionControls)
 
 	return model, []tea.ProgramOption{
 		tea.WithAltScreen(),

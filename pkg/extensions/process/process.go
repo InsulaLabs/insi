@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/InsulaLabs/insi/internal/badge"
@@ -39,6 +40,35 @@ type Extension struct {
 	procDir string
 }
 
+/*
+Extension controller
+*/
+var _ core.ExtensionControl = &Extension{}
+
+func (e *Extension) CommandName() string {
+	return extensionName
+}
+
+func (e *Extension) HandleCommand(command string, args []string) (string, error) {
+
+	e.logger.Info("Handling command", "command", command, "args", args)
+	sb := strings.Builder{}
+	sb.WriteString("Process extension commands:\n")
+	/*
+		TODO: We need to mimic the web commands by taking out the
+		core operations an duplicating or extracting to a shared area
+		so both can leverage
+	*/
+	return sb.String(), nil
+}
+
+func (e *Extension) GetHelpText() string {
+	return "Process extension"
+}
+
+/*
+Extension module
+*/
 var _ extensions.InsiModule = &Extension{}
 
 func (e *Extension) Name() string {
@@ -55,6 +85,10 @@ func (e *Extension) Description() string {
 
 func (e *Extension) ReceiveInsightInterface(insight core.EntityInsight) {
 	e.insight = insight
+}
+
+func (e *Extension) GetContorller() core.ExtensionControl {
+	return e
 }
 
 func (e *Extension) BindPublicRoutes(mux *http.ServeMux) {

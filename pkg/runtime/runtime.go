@@ -365,6 +365,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 		r.logger.With("service", "nerv"),
 		r.clusterCfg,
 		&nodeCfg,
+		r.extensions,
 	)
 
 	r.service.Run([]interfaces.SystemObserver{

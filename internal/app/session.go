@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/InsulaLabs/insi/internal/db/core"
 	"github.com/InsulaLabs/insi/pkg/fwi"
 	"github.com/google/uuid"
 )
@@ -20,7 +21,8 @@ type Session struct {
 	config         SessionConfig
 	startTimestamp time.Time
 
-	userFWI fwi.Entity
+	userFWI           fwi.Entity
+	extensionControls []core.ExtensionControl
 }
 
 type SessionConfig struct {
@@ -32,21 +34,22 @@ type SessionConfig struct {
 	UserFWI              fwi.Entity
 }
 
-func NewSession(config SessionConfig) *Session {
+func NewSession(config SessionConfig, extensionControls []core.ExtensionControl) *Session {
 
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
 
 	return &Session{
-		sessionID:      uuid.New().String(),
-		userID:         config.UserID,
-		history:        []string{},
-		historyIndex:   -1,
-		inHistoryMode:  false,
-		config:         config,
-		startTimestamp: time.Now(),
-		userFWI:        config.UserFWI,
+		sessionID:         uuid.New().String(),
+		userID:            config.UserID,
+		history:           []string{},
+		historyIndex:      -1,
+		inHistoryMode:     false,
+		config:            config,
+		startTimestamp:    time.Now(),
+		userFWI:           config.UserFWI,
+		extensionControls: extensionControls,
 	}
 }
 
@@ -124,4 +127,16 @@ func (s *Session) GetPrompt() string {
 
 func (s *Session) GetFWI() fwi.Entity {
 	return s.userFWI
+}
+
+/*
+	Data helpers
+*/
+
+func (s *Session) GetLoadedExtensionNames() []string {
+	extensionNames := make([]string, len(s.extensionControls))
+	for i, extension := range s.extensionControls {
+		extensionNames[i] = extension.CommandName()
+	}
+	return extensionNames
 }

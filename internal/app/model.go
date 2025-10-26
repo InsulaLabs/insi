@@ -4,11 +4,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/InsulaLabs/insi/internal/db/core"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/log"
 )
 
 type tickMsg time.Time
+
+type CLICmdHandler func(session *Session, command string, args []string) tea.Cmd
 
 type Model struct {
 	session    *Session
@@ -20,20 +23,24 @@ type Model struct {
 	windowSize tea.WindowSizeMsg
 
 	applications AppMap
+
+	commands map[string]CLICmdHandler
 }
 
 type ReplConfig struct {
 	SessionConfig SessionConfig
 }
 
-func New(config ReplConfig, applications AppMap) Model {
-	session := NewSession(config.SessionConfig)
+func New(config ReplConfig, applications AppMap, extensionControls []core.ExtensionControl) Model {
+	session := NewSession(config.SessionConfig, extensionControls)
+
 	return Model{
 		session:      session,
 		buffer:       "",
 		cursor:       0,
 		cursorOn:     true,
 		applications: applications,
+		commands:     getCommandMap(extensionControls),
 	}
 }
 
@@ -79,6 +86,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd, args := m.splitCommandIntoCommandAndArgs(command)
 				if app, ok := m.applications[cmd]; ok {
 					return m, m.LaunchApp(app(), args)
+				}
+
+				if cmdHandler, ok := m.commands[cmd]; ok {
+					return m, cmdHandler(m.session, cmd, args)
 				}
 			}
 			return m, nil

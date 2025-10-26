@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/InsulaLabs/insi/internal/db/core"
 	"github.com/InsulaLabs/insi/pkg/config"
 	"github.com/InsulaLabs/insi/pkg/fwi"
 	"github.com/InsulaLabs/insi/pkg/interfaces"
@@ -20,19 +21,27 @@ type Nerv struct {
 
 	/*
 		This is the root-available FWI interface that is used for admin sessions
-
 	*/
 	fwi fwi.FWI
+
+	extensions []core.Extension
 }
 
 var _ interfaces.SystemObserver = &Nerv{}
 
-func New(nodeId string, logger *slog.Logger, cfg *config.Cluster, nodeCfg *config.Node) *Nerv {
+func New(
+	nodeId string,
+	logger *slog.Logger,
+	cfg *config.Cluster,
+	nodeCfg *config.Node,
+	extensions []core.Extension,
+) *Nerv {
 	return &Nerv{
-		nodeId:  nodeId,
-		logger:  logger,
-		cfg:     cfg,
-		nodeCfg: nodeCfg,
+		nodeId:     nodeId,
+		logger:     logger,
+		cfg:        cfg,
+		nodeCfg:    nodeCfg,
+		extensions: extensions,
 	}
 }
 

@@ -48,11 +48,23 @@ type ExtensionPanel interface {
 	GetNodeInstallDir() string
 }
 
+type ExtensionControl interface {
+	CommandName() string
+	HandleCommand(command string, args []string) (string, error)
+	GetHelpText() string
+}
+
 type Extension interface {
 	ReceiveInsightInterface(panel EntityInsight)
 	BindPublicRoutes(mux *http.ServeMux)
 	BindPrivateRoutes(mux *http.ServeMux)
 	OnInsiReady(ep ExtensionPanel)
+
+	/*
+		This way the runtime can control various aspects
+		of any given extension
+	*/
+	GetContorller() ExtensionControl
 }
 
 type AccessEntity bool
