@@ -235,7 +235,7 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		extensionControls[i] = extension.GetContorller()
 	}
 
-	model := app.New(app.ReplConfig{
+	model := app.New(n.ctx, app.ReplConfig{
 		SessionConfig: app.SessionConfig{
 			Logger:               n.logger.WithGroup("ssh").WithGroup(entity.GetName()),
 			UserID:               entity.GetName(),

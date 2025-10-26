@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -45,22 +46,25 @@ type Model struct {
 	commands map[string]CLICmdHandler
 
 	displayHistory []displayEntry
+
+	ctx context.Context
 }
 
 type ReplConfig struct {
 	SessionConfig SessionConfig
 }
 
-func New(config ReplConfig, applications AppMap, extensionControls []core.ExtensionControl) Model {
-	session := NewSession(config.SessionConfig, extensionControls)
+func New(ctx context.Context, config ReplConfig, applications AppMap, extensionControls []core.ExtensionControl) Model {
+	session := NewSession(ctx, config.SessionConfig, extensionControls)
 
 	return Model{
 		session:      session,
+		ctx:          ctx,
 		buffer:       "",
 		cursor:       0,
 		cursorOn:     true,
 		applications: applications,
-		commands:     getCommandMap(extensionControls),
+		commands:     getCommandMap(ctx, extensionControls),
 	}
 }
 

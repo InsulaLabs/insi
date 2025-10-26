@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -23,6 +24,8 @@ type Session struct {
 
 	userFWI           fwi.Entity
 	extensionControls []core.ExtensionControl
+
+	sessionRuntimeCtx context.Context
 }
 
 type SessionConfig struct {
@@ -34,7 +37,7 @@ type SessionConfig struct {
 	UserFWI              fwi.Entity
 }
 
-func NewSession(config SessionConfig, extensionControls []core.ExtensionControl) *Session {
+func NewSession(ctx context.Context, config SessionConfig, extensionControls []core.ExtensionControl) *Session {
 
 	if config.Logger == nil {
 		config.Logger = slog.Default()
@@ -50,6 +53,7 @@ func NewSession(config SessionConfig, extensionControls []core.ExtensionControl)
 		startTimestamp:    time.Now(),
 		userFWI:           config.UserFWI,
 		extensionControls: extensionControls,
+		sessionRuntimeCtx: ctx,
 	}
 }
 

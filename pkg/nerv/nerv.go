@@ -25,11 +25,13 @@ type Nerv struct {
 	fwi fwi.FWI
 
 	extensions []core.Extension
+	ctx        context.Context
 }
 
 var _ interfaces.SystemObserver = &Nerv{}
 
 func New(
+	ctx context.Context,
 	nodeId string,
 	logger *slog.Logger,
 	cfg *config.Cluster,
@@ -42,6 +44,7 @@ func New(
 		cfg:        cfg,
 		nodeCfg:    nodeCfg,
 		extensions: extensions,
+		ctx:        ctx,
 	}
 }
 

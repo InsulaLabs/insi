@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+
 	"github.com/InsulaLabs/insi/internal/db/core"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/log"
@@ -24,7 +26,7 @@ If cross-cluster extension controll is wanted, make an extension for it and load
 be immediatly available here when registered with the runtime in insid or whatever binary
 is hosting the insi Runtime.
 */
-func getCommandMap(extensionControls []core.ExtensionControl) map[string]CLICmdHandler {
+func getCommandMap(ctx context.Context, extensionControls []core.ExtensionControl) map[string]CLICmdHandler {
 	commands := map[string]CLICmdHandler{
 		"exit": func(session *Session, command string, args []string) tea.Cmd {
 			return tea.Quit
@@ -36,6 +38,8 @@ func getCommandMap(extensionControls []core.ExtensionControl) map[string]CLICmdH
 			}
 		},
 	}
+
+	commands = mergeCommandMaps(commands, getVfsCommandMap(ctx, extensionControls))
 
 	for _, extension := range extensionControls {
 		commands[extension.CommandName()] = func(session *Session, command string, args []string) tea.Cmd {
@@ -52,4 +56,14 @@ func getCommandMap(extensionControls []core.ExtensionControl) map[string]CLICmdH
 		}
 	}
 	return commands
+}
+
+func mergeCommandMaps(maps ...map[string]CLICmdHandler) map[string]CLICmdHandler {
+	result := make(map[string]CLICmdHandler)
+	for _, m := range maps {
+		for k, v := range m {
+			result[k] = v
+		}
+	}
+	return result
 }

@@ -361,6 +361,7 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 	r.service.WithRouteProviders(r.extensions...)
 
 	r.nervSystem = nerv.New(
+		r.appCtx,
 		nodeId,
 		r.logger.With("service", "nerv"),
 		r.clusterCfg,
