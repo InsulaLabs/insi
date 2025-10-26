@@ -2,6 +2,7 @@ package process
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -52,14 +53,23 @@ func (e *Extension) CommandName() string {
 func (e *Extension) HandleCommand(command string, args []string) (string, error) {
 
 	e.logger.Info("Handling command", "command", command, "args", args)
-	sb := strings.Builder{}
-	sb.WriteString("Process extension commands:\n")
-	/*
-		TODO: We need to mimic the web commands by taking out the
-		core operations an duplicating or extracting to a shared area
-		so both can leverage
-	*/
-	return sb.String(), nil
+
+	switch strings.ToLower(command) {
+	case "list":
+		return e.cliListProcesses(args)
+	case "register":
+		return e.cliRegisterProcessHandler(args)
+	case "start":
+		return e.cliStartProcess(args)
+	case "stop":
+		return e.cliStopProcess(args)
+	case "restart":
+		return e.cliRestartProcess(args)
+	case "status":
+		return e.cliStatusProcess(args)
+	default:
+		return "", fmt.Errorf("unknown command: %s", command)
+	}
 }
 
 func (e *Extension) GetHelpText() string {
