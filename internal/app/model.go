@@ -91,7 +91,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyCtrlD:
+		case tea.KeyCtrlC:
+			if m.buffer != "" {
+				m.displayHistory = append(m.displayHistory, displayEntry{
+					entryType: displayEntryCommand,
+					content:   m.buffer + "^C",
+				})
+			}
+			m.buffer = ""
+			m.cursor = 0
+			return m, nil
+		case tea.KeyCtrlD:
 			m.quitting = true
 			return m, tea.Quit
 		case tea.KeyEnter:
@@ -149,11 +159,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+		case tea.KeySpace:
+			m.buffer = m.buffer[:m.cursor] + " " + m.buffer[m.cursor:]
+			m.cursor++
+			return m, nil
 		default:
-			if len(msg.String()) == 1 {
-				char := msg.String()
-				m.buffer = m.buffer[:m.cursor] + char + m.buffer[m.cursor:]
-				m.cursor++
+			if msg.Type == tea.KeyRunes {
+				text := msg.String()
+
+				if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") && len(text) > 2 {
+					text = text[1 : len(text)-1]
+				}
+
+				text = strings.ReplaceAll(text, "\r", "")
+				text = strings.ReplaceAll(text, "\n", " ")
+				text = strings.ReplaceAll(text, "\t", " ")
+				m.buffer = m.buffer[:m.cursor] + text + m.buffer[m.cursor:]
+				m.cursor += len(text)
 			}
 			return m, nil
 		}
@@ -187,8 +209,8 @@ func (m Model) View() string {
 	var b strings.Builder
 
 	b.WriteString("REPL v0.1.0\n")
-	b.WriteString("Type 'exit' or press Ctrl+C/Ctrl+D to quit.\n")
-	b.WriteString("Type 'tester' to launch the calculator app.\n\n")
+	b.WriteString("Type 'help' for available commands.\n")
+	b.WriteString("Type 'exit' or press Ctrl+C/Ctrl+D to quit.\n\n")
 
 	for _, entry := range m.displayHistory {
 		switch entry.entryType {

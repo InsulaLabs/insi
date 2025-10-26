@@ -36,6 +36,7 @@ type Extension struct {
 	nodeName     string
 
 	processRegistry map[string]*processModels.Process
+	nameToUUID      map[string]string
 	registryMutex   sync.RWMutex
 
 	procDir string
@@ -173,8 +174,6 @@ func (e *Extension) mustRestore() {
 		return
 	}
 
-	// we need to directly restore the fucking map
-
 	file, err := os.Open(procFile)
 	if err != nil {
 		e.logger.Error("Failed to open process state file", "error", err)
@@ -189,7 +188,24 @@ func (e *Extension) mustRestore() {
 	}
 
 	e.processRegistry = restoredMap
-	e.logger.Info("Process state restored", "process_registry", e.processRegistry)
+
+	e.nameToUUID = make(map[string]string)
+	for uuid, proc := range e.processRegistry {
+		e.nameToUUID[proc.Name] = uuid
+
+		app := procman.NewHostedApp(procman.HostedAppOpt{
+			Name:       uuid,
+			TargetPath: proc.TargetPath,
+			CmdArgs:    proc.Args,
+			CmdOptions: procman.DefaultOptions(),
+			StartStopCb: func(name string, running bool) {
+				e.updateProcessStatus(name, running)
+			},
+		})
+		e.host.WithApp(app)
+	}
+
+	e.logger.Info("Process state restored", "process_count", len(e.processRegistry))
 }
 
 func (e *Extension) save() error {
@@ -213,6 +229,7 @@ func NewExtension(logger *slog.Logger) *Extension {
 		logger:          logger,
 		host:            procman.NewHost(logger.WithGroup("procman")),
 		processRegistry: make(map[string]*processModels.Process),
+		nameToUUID:      make(map[string]string),
 	}
 }
 
@@ -259,12 +276,16 @@ func (e *Extension) registerProcess(uuid, name, targetPath string, args []string
 	}
 
 	e.processRegistry[uuid] = &processModels.Process{
-		UUID:     uuid,
-		Name:     name,
-		Status:   processModels.ProcessStatusStopped,
-		NodeName: e.nodeName,
-		NodeID:   e.nodeIdentity.GetID(),
+		UUID:       uuid,
+		Name:       name,
+		Status:     processModels.ProcessStatusStopped,
+		NodeName:   e.nodeName,
+		NodeID:     e.nodeIdentity.GetID(),
+		TargetPath: targetPath,
+		Args:       args,
 	}
+
+	e.nameToUUID[name] = uuid
 
 	app := procman.NewHostedApp(procman.HostedAppOpt{
 		Name:       uuid,

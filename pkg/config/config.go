@@ -65,9 +65,10 @@ type Cluster struct {
 	Sessions         SessionsConfig  `yaml:"sessions"`
 	Logging          LoggingConfig   `yaml:"logging"`
 
-	AdminSSHKeys []string `yaml:"adminSSHKeys,omitempty"`
-	SSHPort      int      `yaml:"sshPort,omitempty"`
-	HostKeyPath  string   `yaml:"hostKeyPath,omitempty"`
+	AdminSSHKeys      []string `yaml:"adminSSHKeys,omitempty"`
+	SSHPort           int      `yaml:"sshPort,omitempty"`
+	HostKeyPath       string   `yaml:"hostKeyPath,omitempty"`
+	EnableNonAdminSSH bool     `yaml:"enableNonAdminSSH,omitempty"`
 }
 
 type RateLimiterConfig struct {
@@ -271,9 +272,10 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 			WebSocketWriteBufferSize: 4096,
 			MaxConnections:           100,
 		},
-		AdminSSHKeys: []string{},
-		SSHPort:      2222,
-		HostKeyPath:  "keys/ssh_host_key",
+		AdminSSHKeys:      []string{},
+		SSHPort:           2222,
+		HostKeyPath:       "keys/ssh_host_key",
+		EnableNonAdminSSH: false,
 	}
 
 	cfg.Nodes["node0"] = Node{

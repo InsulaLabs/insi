@@ -150,7 +150,12 @@ func (h *Host) StartApp(name string) error {
 			h.Logger.Error("failed to clean up previous overseer", "error", err)
 		}
 		if app.watcherDone != nil {
-			<-app.watcherDone
+			select {
+			case <-app.watcherDone:
+				h.Logger.Info("watcher done signal received", "app", name)
+			case <-time.After(2 * time.Second):
+				h.Logger.Warn("timeout waiting for watcher done signal, proceeding anyway", "app", name)
+			}
 		}
 	}
 
@@ -181,13 +186,14 @@ func (h *Host) StartApp(name string) error {
 	}()
 
 	timeout := time.After(2 * time.Second)
+loop:
 	for !app.running {
 		select {
 		case <-timeout:
 			return fmt.Errorf("timeout waiting for app to start")
 		case <-time.After(50 * time.Millisecond):
 			if app.running {
-				break
+				break loop
 			}
 		}
 	}

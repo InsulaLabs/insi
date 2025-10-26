@@ -16,27 +16,13 @@ func (e *Extension) resolveProcessIdentifier(identifier string) (string, *proces
 		return identifier, proc, nil
 	}
 
-	var foundUUID string
-	var foundProc *processModels.Process
-	matchCount := 0
-
-	for uuid, proc := range e.processRegistry {
-		if proc.Name == identifier {
-			foundUUID = uuid
-			foundProc = proc
-			matchCount++
+	if uuid, exists := e.nameToUUID[identifier]; exists {
+		if proc, exists := e.processRegistry[uuid]; exists {
+			return uuid, proc, nil
 		}
 	}
 
-	if matchCount == 0 {
-		return "", nil, fmt.Errorf("process not found: %s", identifier)
-	}
-
-	if matchCount > 1 {
-		return "", nil, fmt.Errorf("multiple processes found with name '%s', please use UUID", identifier)
-	}
-
-	return foundUUID, foundProc, nil
+	return "", nil, fmt.Errorf("process not found: %s", identifier)
 }
 
 func (e *Extension) cliListProcesses(args []string) (string, error) {
@@ -211,6 +197,7 @@ func (e *Extension) cliUnregisterProcess(args []string) (string, error) {
 
 	e.registryMutex.Lock()
 	delete(e.processRegistry, processUUID)
+	delete(e.nameToUUID, proc.Name)
 	e.registryMutex.Unlock()
 
 	if err := e.save(); err != nil {

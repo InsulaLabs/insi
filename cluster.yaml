@@ -80,5 +80,6 @@ logging:
 
 sshPort: 8222
 hostKeyPath: "/Users/bosley/.config/insi/keys/ssh_host_key"
+enableNonAdminSSH: false
 adminSSHKeys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILBtuwwqxwjI2/HF1lF/xMlui5smhTImh/gqTMXa/gxY"

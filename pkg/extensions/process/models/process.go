@@ -10,11 +10,13 @@ const (
 )
 
 type Process struct {
-	UUID     string        `json:"uuid"`
-	Name     string        `json:"name"`
-	Status   ProcessStatus `json:"status"`
-	NodeName string        `json:"node_name"`
-	NodeID   string        `json:"node_id"`
+	UUID       string        `json:"uuid"`
+	Name       string        `json:"name"`
+	Status     ProcessStatus `json:"status"`
+	NodeName   string        `json:"node_name"`
+	NodeID     string        `json:"node_id"`
+	TargetPath string        `json:"target_path"`
+	Args       []string      `json:"args"`
 }
 
 type ProcessNodeInfo struct {

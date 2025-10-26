@@ -140,3 +140,24 @@ func (s *Session) GetLoadedExtensionNames() []string {
 	}
 	return extensionNames
 }
+
+func (s *Session) BuildHelpText() string {
+	var helpText string
+
+	helpText += "Available Commands:\n\n"
+
+	helpText += "Built-in Commands:\n"
+	helpText += "  exit - Exit the session\n"
+	helpText += "  help - Display this help message\n\n"
+
+	if len(s.extensionControls) > 0 {
+		helpText += "Extension Commands:\n"
+		for _, extension := range s.extensionControls {
+			helpText += "  " + extension.CommandName() + " - " + extension.GetHelpText() + "\n"
+		}
+	} else {
+		helpText += "No extensions loaded.\n"
+	}
+
+	return helpText
+}

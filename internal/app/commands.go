@@ -29,6 +29,12 @@ func getCommandMap(extensionControls []core.ExtensionControl) map[string]CLICmdH
 		"exit": func(session *Session, command string, args []string) tea.Cmd {
 			return tea.Quit
 		},
+		"help": func(session *Session, command string, args []string) tea.Cmd {
+			helpText := session.BuildHelpText()
+			return func() tea.Msg {
+				return commandOutputMsg{output: helpText, isErr: false}
+			}
+		},
 	}
 
 	for _, extension := range extensionControls {

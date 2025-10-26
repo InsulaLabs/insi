@@ -148,6 +148,11 @@ func (n *Nerv) authenticateUser(ctx ssh.Context, key ssh.PublicKey) bool {
 		}
 	}
 
+	if !isAdmin && !n.cfg.EnableNonAdminSSH {
+		n.logger.Warn("Non-admin SSH access denied: enableNonAdminSSH is false", "public_key", publicKeyStr)
+		return false
+	}
+
 	var entity fwi.Entity
 	var err error
 
@@ -241,8 +246,5 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		},
 	}, app.AppMap{}, extensionControls)
 
-	return model, []tea.ProgramOption{
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	}
+	return model, []tea.ProgramOption{}
 }
