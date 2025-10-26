@@ -141,6 +141,10 @@ func (e *App) GetHelpText() string {
 	return e.viewModeHelp()
 }
 
+func (e *App) GetDescriptionText() string {
+	return "edit files. Use 'editor help' to see the available commands."
+}
+
 func (e *App) loadFile() error {
 	file, err := e.fs.Open(e.ctx, e.filePath)
 	if err != nil {

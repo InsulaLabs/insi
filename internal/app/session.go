@@ -53,9 +53,8 @@ func NewSession(ctx context.Context, config SessionConfig, extensionControls []c
 	sb := strings.Builder{}
 	for appName, appConstructor := range applications {
 		app := appConstructor()
-		appHelpText := app.GetHelpText()
-		appHelpText += "  " + appName + " - " + appHelpText + "\n"
-		sb.WriteString(appHelpText)
+		appDescriptionText := app.GetDescriptionText()
+		sb.WriteString("  " + appName + "\t- " + appDescriptionText + "\n")
 	}
 
 	session := &Session{

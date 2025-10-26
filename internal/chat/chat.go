@@ -143,3 +143,7 @@ func (x *App) userInterrupt() {
 func (x *App) GetHelpText() string {
 	return x.viewModeHelp()
 }
+
+func (x *App) GetDescriptionText() string {
+	return "chat with users. Use 'chat help' to see the available commands."
+}

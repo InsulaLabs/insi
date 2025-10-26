@@ -12,7 +12,7 @@ import (
 func (e *App) viewModeEdit() string {
 	status := e.renderStatusLine()
 	editorView := e.textarea.View()
-	
+
 	return lipgloss.JoinVertical(
 		lipgloss.Top,
 		editorView,
@@ -29,7 +29,7 @@ func (e *App) updateModeEdit(msg tea.Msg) (app.App, tea.Cmd) {
 		e.width = msg.Width
 		e.textarea.SetWidth(msg.Width)
 		e.textarea.SetHeight(msg.Height - 1)
-		
+
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC:
@@ -46,7 +46,7 @@ func (e *App) updateModeEdit(msg tea.Msg) (app.App, tea.Cmd) {
 			} else {
 				e.viewport.SetContent("File saved")
 			}
-		case tea.KeyCtrlQ:
+		case tea.KeyCtrlX:
 			return nil, tea.Quit
 		}
 	}
@@ -60,8 +60,8 @@ func (e *App) renderStatusLine() string {
 	if e.isDirty() {
 		dirtyIndicator = " [modified]"
 	}
-	
-	status := fmt.Sprintf(" %s%s | Ctrl+S: Save | Ctrl+Q: Quit | ESC: Exit", e.filePath, dirtyIndicator)
-	
+
+	status := fmt.Sprintf(" %s%s | Ctrl+S: Save | Ctrl+X: Quit | ESC: Exit", e.filePath, dirtyIndicator)
+
 	return e.statusLineStyle.Width(e.width).Render(status)
 }

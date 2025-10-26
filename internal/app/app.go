@@ -11,4 +11,5 @@ type App interface {
 	Update(msg tea.Msg) (App, tea.Cmd)
 	View() string
 	GetHelpText() string
+	GetDescriptionText() string
 }

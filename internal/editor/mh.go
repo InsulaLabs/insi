@@ -16,7 +16,7 @@ func (e *App) viewModeHelp() string {
 	b.WriteString("  editor help        - Show this help information.\n\n")
 	b.WriteString("Editor Controls:\n")
 	b.WriteString("  Ctrl+S     - Save the current file.\n")
-	b.WriteString("  Ctrl+Q     - Quit editor (force quit even with unsaved changes).\n")
+	b.WriteString("  Ctrl+X     - Quit editor (force quit even with unsaved changes).\n")
 	b.WriteString("  Ctrl+C     - Exit editor (prompts if unsaved changes).\n")
 	b.WriteString("  ESC        - Exit editor (prompts if unsaved changes).\n\n")
 	b.WriteString("Navigation:\n")
