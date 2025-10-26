@@ -55,7 +55,7 @@ type ReplConfig struct {
 }
 
 func New(ctx context.Context, config ReplConfig, applications AppMap, extensionControls []core.ExtensionControl) Model {
-	session := NewSession(ctx, config.SessionConfig, extensionControls)
+	session := NewSession(ctx, config.SessionConfig, extensionControls, applications)
 
 	return Model{
 		session:      session,

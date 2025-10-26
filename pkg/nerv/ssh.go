@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/InsulaLabs/insi/internal/app"
+	"github.com/InsulaLabs/insi/internal/chat"
 	"github.com/InsulaLabs/insi/internal/db/core"
 	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/fwi"
@@ -244,7 +245,15 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 			Prompt:               entityName + " > ",
 			UserFWI:              entity,
 		},
-	}, app.AppMap{}, extensionControls)
+	}, buildAppMap(), extensionControls)
 
 	return model, []tea.ProgramOption{}
+}
+
+func buildAppMap() app.AppMap {
+
+	chatApp, chatAppConstructor := chat.AppEntry()
+	return app.AppMap{
+		chatApp: chatAppConstructor,
+	}
 }

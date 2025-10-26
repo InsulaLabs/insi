@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/InsulaLabs/insi/internal/db/core"
@@ -26,6 +29,10 @@ type Session struct {
 	extensionControls []core.ExtensionControl
 
 	sessionRuntimeCtx context.Context
+	virtualFileSystem sessionVFS
+
+	applications AppMap
+	appHelpText  string
 }
 
 type SessionConfig struct {
@@ -37,13 +44,21 @@ type SessionConfig struct {
 	UserFWI              fwi.Entity
 }
 
-func NewSession(ctx context.Context, config SessionConfig, extensionControls []core.ExtensionControl) *Session {
+func NewSession(ctx context.Context, config SessionConfig, extensionControls []core.ExtensionControl, applications AppMap) *Session {
 
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
 
-	return &Session{
+	sb := strings.Builder{}
+	for appName, appConstructor := range applications {
+		app := appConstructor()
+		appHelpText := app.GetHelpText()
+		appHelpText += "  " + appName + " - " + appHelpText + "\n"
+		sb.WriteString(appHelpText)
+	}
+
+	session := &Session{
 		sessionID:         uuid.New().String(),
 		userID:            config.UserID,
 		history:           []string{},
@@ -54,7 +69,18 @@ func NewSession(ctx context.Context, config SessionConfig, extensionControls []c
 		userFWI:           config.UserFWI,
 		extensionControls: extensionControls,
 		sessionRuntimeCtx: ctx,
+		virtualFileSystem: sessionVFS{activeDirectory: "/", fs: config.UserFWI.GetFS()},
+		applications:      applications,
+		appHelpText:       sb.String(),
 	}
+
+	// Ensure the root directory exists
+	if err := ensureDirectoryExists(ctx, session.virtualFileSystem.fs, "/"); err != nil {
+		// Log the error but don't fail session creation
+		config.Logger.Warn("Failed to ensure root directory exists", "error", err)
+	}
+
+	return session
 }
 
 func (s *Session) AddToHistory(cmd string) {
@@ -145,6 +171,61 @@ func (s *Session) GetLoadedExtensionNames() []string {
 	return extensionNames
 }
 
+/*
+	VFS Helper Methods
+*/
+
+// ensureDirectoryExists checks if a directory exists and creates it if it doesn't
+func ensureDirectoryExists(ctx context.Context, fs fwi.FS, path string) error {
+	_, err := fs.Stat(ctx, path)
+	if err != nil {
+		// Directory doesn't exist, try to create it
+		return fs.Mkdir(ctx, path)
+	}
+	return nil
+}
+
+func (s *Session) GetCurrentDirectory() string {
+	return s.virtualFileSystem.activeDirectory
+}
+
+func (s *Session) ChangeDirectory(ctx context.Context, newPath string) error {
+	// Resolve the path (handle relative paths)
+	resolvedPath := s.resolvePath(newPath)
+
+	// Ensure the directory exists (create it if it doesn't)
+	if err := ensureDirectoryExists(ctx, s.virtualFileSystem.fs, resolvedPath); err != nil {
+		return fmt.Errorf("failed to access directory %s: %w", newPath, err)
+	}
+
+	// Verify it's actually a directory
+	info, err := s.virtualFileSystem.fs.Stat(ctx, resolvedPath)
+	if err != nil {
+		return fmt.Errorf("directory not accessible: %s", newPath)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("not a directory: %s", newPath)
+	}
+
+	s.virtualFileSystem.activeDirectory = resolvedPath
+	return nil
+}
+
+func (s *Session) resolvePath(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return path
+	}
+
+	// Handle relative path
+	current := s.virtualFileSystem.activeDirectory
+	if current == "/" {
+		return "/" + path
+	}
+
+	return filepath.Join(current, path)
+}
+
 func (s *Session) BuildHelpText() string {
 	var helpText string
 
@@ -154,6 +235,15 @@ func (s *Session) BuildHelpText() string {
 	helpText += "  exit - Exit the session\n"
 	helpText += "  help - Display this help message\n\n"
 
+	helpText += "File System Commands:\n"
+	helpText += "  pwd   - Show current directory\n"
+	helpText += "  cd    - Change directory\n"
+	helpText += "  ls    - List directory contents\n"
+	helpText += "  cat   - Display file contents\n"
+	helpText += "  mkdir - Create directory\n"
+	helpText += "  touch - Create empty file\n"
+	helpText += "  rm    - Remove files and directories\n\n"
+
 	if len(s.extensionControls) > 0 {
 		helpText += "Extension Commands:\n"
 		for _, extension := range s.extensionControls {
@@ -162,6 +252,9 @@ func (s *Session) BuildHelpText() string {
 	} else {
 		helpText += "No extensions loaded.\n"
 	}
+
+	helpText += "\nAvailable Applications:\n\n"
+	helpText += s.appHelpText
 
 	return helpText
 }
