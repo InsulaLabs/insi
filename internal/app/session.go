@@ -261,6 +261,9 @@ func (s *Session) BuildHelpText() string {
 	helpText += "\nAvailable Applications:\n\n"
 	helpText += s.appHelpText
 
+	helpText += "\nAccount Commands:\n\n"
+	helpText += getAccountHelpText()
+
 	if !s.isAdmin {
 		return helpText
 	}

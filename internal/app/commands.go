@@ -41,6 +41,8 @@ func getCommandMap(ctx context.Context, session *Session, extensionControls []co
 
 	commands = mergeCommandMaps(commands, getVfsCommandMap(ctx, extensionControls))
 
+	commands = mergeCommandMaps(commands, getAccountCommands(ctx, session, extensionControls))
+
 	for _, extension := range extensionControls {
 		commands[extension.CommandName()] = func(session *Session, command string, args []string) tea.Cmd {
 			response, err := extension.HandleCommand(command, args)
