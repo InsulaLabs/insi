@@ -49,8 +49,9 @@ type LoggingConfig struct {
 }
 
 type Cluster struct {
-	InstanceSecret   string          `yaml:"instanceSecret"` // on config load no two nodes should have the same instance secret
-	DefaultLeader    string          `yaml:"defaultLeader"`  // if first time launch, non-leaders will auto-follow this leader - need to set this and
+	InstanceSecret   string          `yaml:"instanceSecret"`     // on config load no two nodes should have the same instance secret
+	DefaultLeader    string          `yaml:"defaultLeader"`      // if first time launch, non-leaders will auto-follow this leader - need to set this and
+	ApexNode         string          `yaml:"apexNode,omitempty"` // The apex node that provides SSH access (separate from raft leader)
 	Nodes            map[string]Node `yaml:"nodes"`
 	TLS              TLS             `yaml:"tls"`
 	ClientSkipVerify bool            `yaml:"clientSkipVerify"` // Across all nodes, if true, then their "join" clients will permit skip of TLS verification
@@ -105,6 +106,8 @@ var (
 	ErrSessionsWebSocketWriteBufferSizeMissing = errors.New("sessions.webSocketWriteBufferSize is missing or invalid in config")
 	ErrSessionsMaxConnectionsMissing           = errors.New("sessions.maxConnections is missing or invalid in config")
 	ErrHostKeyGeneration                       = errors.New("failed to generate SSH host key")
+	ErrApexNodeNotFound                        = errors.New("apexNode specified but does not exist in nodes configuration")
+	ErrApexNodeMissing                         = errors.New("apexNode must be specified when SSH configuration is present (sshPort, hostKeyPath, or adminSSHKeys)")
 )
 
 func generateHostKey(keyPath string) error {
@@ -213,6 +216,17 @@ func LoadConfig(configFile string) (*Cluster, error) {
 		return nil, ErrSessionsMaxConnectionsMissing
 	}
 
+	sshConfigured := cfg.SSHPort > 0 || cfg.HostKeyPath != "" || len(cfg.AdminSSHKeys) > 0
+	if sshConfigured && cfg.ApexNode == "" {
+		return nil, ErrApexNodeMissing
+	}
+
+	if cfg.ApexNode != "" {
+		if _, ok := cfg.Nodes[cfg.ApexNode]; !ok {
+			return nil, ErrApexNodeNotFound
+		}
+	}
+
 	if cfg.HostKeyPath != "" {
 		if _, err := os.Stat(cfg.HostKeyPath); os.IsNotExist(err) {
 			if err := generateHostKey(cfg.HostKeyPath); err != nil {
@@ -228,6 +242,7 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 	cfg := Cluster{
 		InstanceSecret:   "please_change_this_secret_in_production_!!!",
 		DefaultLeader:    "node0",
+		ApexNode:         "node0",
 		Nodes:            make(map[string]Node),
 		ClientSkipVerify: false,
 		TrustedProxies:   []string{"127.0.0.1", "::1"},

@@ -294,11 +294,19 @@ func (r *Runtime) startNodeInstance(nodeId string, nodeCfg config.Node) {
 
 	keyPath := filepath.Join(r.clusterCfg.InsidHome, "keys")
 
-	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+	// Check if keys directory exists and if TLS certificates exist
+	_, keyPathErr := os.Stat(keyPath)
+	_, certErr := os.Stat(r.clusterCfg.TLS.Cert)
+	_, keyErr := os.Stat(r.clusterCfg.TLS.Key)
+
+	if os.IsNotExist(keyPathErr) || os.IsNotExist(certErr) || os.IsNotExist(keyErr) {
+		nodeLogger.Info("TLS certificates missing, will generate them", "cert_path", r.clusterCfg.TLS.Cert, "key_path", r.clusterCfg.TLS.Key)
 		r.keySetupOnce.Do(func() {
-			nodeLogger.Info("Creating keys directory", "path", keyPath)
-			r.setupKeys(keyPath)
+			nodeLogger.Info("Creating keys directory and generating certificates", "path", keyPath)
+			r.setupKeys(keyPath, r.clusterCfg.TLS.Cert, r.clusterCfg.TLS.Key)
 		})
+	} else {
+		nodeLogger.Info("TLS certificates already exist", "cert_path", r.clusterCfg.TLS.Cert, "key_path", r.clusterCfg.TLS.Key)
 	}
 
 	nodeDataRootPath := filepath.Join(r.clusterCfg.InsidHome, nodeId)
@@ -415,7 +423,7 @@ func (r *Runtime) GetHomeDir() string {
 	return r.clusterCfg.InsidHome
 }
 
-func (r *Runtime) setupKeys(keyPath string) {
+func (r *Runtime) setupKeys(keyPath, certPath, keyFilePath string) {
 
 	if err := os.MkdirAll(keyPath, os.ModePerm); err != nil {
 		r.logger.Error("Failed to create keys directory", "path", keyPath, "error", err)
@@ -499,38 +507,38 @@ func (r *Runtime) setupKeys(keyPath string) {
 	}
 
 	// Create PEM files for cert and key
-	certOut, err := os.Create(filepath.Join(keyPath, "server.crt"))
+	certOut, err := os.Create(certPath)
 	if err != nil {
-		r.logger.Error("Failed to open server.crt for writing", "error", err)
+		r.logger.Error("Failed to open certificate file for writing", "path", certPath, "error", err)
 		os.Exit(1)
 	}
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
-		r.logger.Error("Failed to write data to insid.crt", "error", err)
+		r.logger.Error("Failed to write certificate data", "path", certPath, "error", err)
 		certOut.Close()
 		os.Exit(1)
 	}
 	if err := certOut.Close(); err != nil {
-		r.logger.Error("Failed to close server.crt", "error", err)
+		r.logger.Error("Failed to close certificate file", "path", certPath, "error", err)
 		os.Exit(1)
 	}
-	r.logger.Info("Generated insid.crt", "path", certOut.Name())
+	r.logger.Info("Generated certificate", "path", certPath)
 
-	keyOut, err := os.OpenFile(filepath.Join(keyPath, "server.key"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	keyOut, err := os.OpenFile(keyFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		r.logger.Error("Failed to open server.key for writing", "error", err)
+		r.logger.Error("Failed to open key file for writing", "path", keyFilePath, "error", err)
 		os.Exit(1)
 	}
 	privBytes := x509.MarshalPKCS1PrivateKey(priv)
 	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
-		r.logger.Error("Failed to write data to server.key", "error", err)
+		r.logger.Error("Failed to write key data", "path", keyFilePath, "error", err)
 		keyOut.Close()
 		os.Exit(1)
 	}
 	if err := keyOut.Close(); err != nil {
-		r.logger.Error("Failed to close server.key", "error", err)
+		r.logger.Error("Failed to close key file", "path", keyFilePath, "error", err)
 		os.Exit(1)
 	}
-	r.logger.Info("Generated server.key", "path", keyOut.Name())
+	r.logger.Info("Generated private key", "path", keyFilePath)
 }
 
 func removeDuplicateIPs(ips []net.IP) []net.IP {

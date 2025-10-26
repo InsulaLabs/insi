@@ -8,6 +8,7 @@ import (
 
 	"github.com/InsulaLabs/insi/internal/app"
 	"github.com/InsulaLabs/insi/pkg/fwi"
+	"github.com/InsulaLabs/insi/pkg/models"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
@@ -26,8 +27,16 @@ const (
 
 func (c *Core) startSSHServer() (err error) {
 
+	host, _, err := net.SplitHostPort(c.nodeCfg.PublicBinding)
+	if err != nil {
+		c.logger.Error("Failed to parse public binding for SSH", "binding", c.nodeCfg.PublicBinding, "error", err)
+		return err
+	}
+
+	sshAddr := net.JoinHostPort(host, strconv.Itoa(c.cfg.SSHPort))
+
 	srv, err := wish.NewServer(
-		wish.WithAddress(net.JoinHostPort(c.nodeCfg.PublicBinding, strconv.Itoa(c.cfg.SSHPort))),
+		wish.WithAddress(sshAddr),
 		wish.WithHostKeyPath(c.cfg.HostKeyPath),
 		wish.WithPublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
 			return c.authenticateUser(ctx, key)
@@ -51,7 +60,7 @@ func (c *Core) startSSHServer() (err error) {
 	}
 
 	go func() {
-		c.logger.Info("Starting SSH server", "host", c.nodeCfg.PublicBinding, "port", c.cfg.SSHPort)
+		c.logger.Info("Starting SSH server", "address", sshAddr)
 		if err = srv.ListenAndServe(); err != nil && !errors.Is(err, ssh.ErrServerClosed) {
 			c.logger.Error("Could not start server", "error", err)
 		}
@@ -68,14 +77,6 @@ func (c *Core) authenticateUser(ctx ssh.Context, key ssh.PublicKey) bool {
 
 	publicKeyStr := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(key)))
 
-	entity, err := c.fwi.GetEntityByPublicKey(context.Background(), publicKeyStr)
-	if err != nil {
-		c.logger.Debug("SSH authentication failed: entity not found for public key", "error", err)
-		return false
-	}
-
-	ctx.SetValue(coreSSHEntityKey, entity)
-
 	isAdmin := false
 	for _, adminKey := range c.cfg.AdminSSHKeys {
 		if strings.TrimSpace(adminKey) == publicKeyStr {
@@ -84,12 +85,59 @@ func (c *Core) authenticateUser(ctx ssh.Context, key ssh.PublicKey) bool {
 		}
 	}
 
+	var entity fwi.Entity
+	var err error
+
 	if isAdmin {
+		adminEntity, err := c.fwi.CreateOrLoadEntity(context.Background(), "admin", models.Limits{
+			BytesOnDisk:   ptrInt64(10 * 1024 * 1024 * 1024),
+			BytesInMemory: ptrInt64(10 * 1024 * 1024 * 1024),
+			EventsEmitted: ptrInt64(1000000),
+			Subscribers:   ptrInt64(10000),
+		})
+		if err != nil {
+			c.logger.Error("Failed to create/load admin entity", "error", err)
+			return false
+		}
+		entity = adminEntity
+
+		keys, err := entity.ListPublicKeys(context.Background())
+		if err != nil {
+			c.logger.Error("Failed to list public keys for admin entity", "error", err)
+		} else {
+			found := false
+			for _, k := range keys {
+				if strings.TrimSpace(k) == publicKeyStr {
+					found = true
+					break
+				}
+			}
+			if !found {
+				if err := entity.AddPublicKey(context.Background(), publicKeyStr); err != nil {
+					c.logger.Warn("Failed to add admin public key to entity", "error", err)
+				} else {
+					c.logger.Info("Added admin public key to admin entity")
+				}
+			}
+		}
+
 		ctx.SetValue(coreEntityIsAdminKey, coreEntityIsAdminValue)
+	} else {
+		entity, err = c.fwi.GetEntityByPublicKey(context.Background(), publicKeyStr)
+		if err != nil {
+			c.logger.Debug("SSH authentication failed: entity not found for public key", "error", err)
+			return false
+		}
 	}
+
+	ctx.SetValue(coreSSHEntityKey, entity)
 
 	c.logger.Info("SSH user authenticated", "entity", entity.GetName(), "is_admin", isAdmin)
 	return true
+}
+
+func ptrInt64(v int64) *int64 {
+	return &v
 }
 
 func (c *Core) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {

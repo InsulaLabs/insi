@@ -5,6 +5,9 @@ rootPrefix: "some-secure-prefix"
 # If first time launch, non-leaders will auto-follow this leader
 defaultLeader: "node0"
 
+# The apex node provides SSH access (separate from raft leader)
+apexNode: "node0"
+
 # Directory for storing insi data
 insiHome: "/Users/bosley/.config/insi"
 

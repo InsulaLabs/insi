@@ -366,18 +366,7 @@ func New(
 		return nil, err
 	}
 
-	service.fwi, err = fwi.NewFWI(&client.Config{
-		Logger:         logger.WithGroup("fwi"),
-		ConnectionType: client.ConnectionTypeRandom,
-		ApiKey:         rootApiKey,
-		SkipVerify:     clusterCfg.ClientSkipVerify,
-		Timeout:        time.Second * 30,
-		Endpoints:      endpoints,
-	}, logger.WithGroup("fwi"))
-
-	if err != nil {
-		return nil, err
-	}
+	service.fwi = nil
 
 	blobService, err := newBlobService(logger, service, service.loopbackClient, identity, endpoints)
 	if err != nil {
@@ -686,16 +675,20 @@ func (c *Core) Run() {
 		time.Sleep(CommonStartupTaskDelayDuration)
 		c.ensureRootKeyTrackersExist()
 
-		/*
-			Start the tombstone runner AFTER the root key trackers exist
-			just to make sure everything is in-order for deletion routines
-			It should be fine, but operationally it makes sense to do this
-			after the root key trackers exist.
-		*/
-		go c.tombstoneRunner()
+		c.initializeFWI()
 
-		// TODO: get the instance of the node (id) so the extension
-		// can be aware of who they are relative to the node cluster
+		if c.cfg.ApexNode == "" {
+			c.logger.Info("SSH server disabled - no apex node configured")
+		} else if c.cfg.SSHPort > 0 && c.cfg.HostKeyPath != "" && c.fwi != nil && c.cfg.ApexNode == c.nodeName {
+			c.logger.Info("Starting SSH server on apex node", "apex_node", c.nodeName)
+			if err := c.startSSHServer(); err != nil {
+				c.logger.Error("Failed to start SSH server", "error", err)
+			}
+		} else if c.cfg.SSHPort > 0 && c.cfg.HostKeyPath != "" {
+			c.logger.Info("SSH server not started - this node is not the apex", "current_node", c.nodeName, "apex_node", c.cfg.ApexNode)
+		}
+
+		go c.tombstoneRunner()
 
 		for _, rp := range c.extensions {
 			go rp.OnInsiReady(c)
@@ -739,17 +732,8 @@ func (c *Core) Run() {
 
 	launch(pub)
 	launch(priv)
-	wg.Wait()
 
-	/*
-		Signal will kill the servers which will free these contexts
-		which will allow the main context to exit
-	*/
-	if c.cfg.SSHPort > 0 && c.cfg.HostKeyPath != "" {
-		if err := c.startSSHServer(); err != nil {
-			c.logger.Error("Failed to start SSH server", "error", err)
-		}
-	}
+	wg.Wait()
 
 	stopWg := sync.WaitGroup{}
 
@@ -1193,4 +1177,32 @@ func (c *Core) dispatchToWebsocketSubscribers(event models.Event) {
 	} else {
 		c.logger.Debug("No WebSocket subscribers for topic in dispatch", "topic", event.Topic)
 	}
+}
+
+func (c *Core) initializeFWI() {
+	endpoints := []client.Endpoint{}
+	for _, node := range c.cfg.Nodes {
+		endpoints = append(endpoints, client.Endpoint{
+			PublicBinding:  node.PublicBinding,
+			PrivateBinding: node.PrivateBinding,
+			ClientDomain:   node.ClientDomain,
+		})
+	}
+
+	fwi, err := fwi.NewFWI(&client.Config{
+		Logger:         c.logger.WithGroup("fwi"),
+		ConnectionType: client.ConnectionTypeRandom,
+		ApiKey:         c.authToken,
+		SkipVerify:     c.cfg.ClientSkipVerify,
+		Timeout:        time.Second * 30,
+		Endpoints:      endpoints,
+	}, c.logger.WithGroup("fwi"))
+
+	if err != nil {
+		c.logger.Error("Failed to initialize FWI after root keys verified", "error", err)
+		return
+	}
+
+	c.fwi = fwi
+	c.logger.Info("FWI initialized successfully after root keys verified")
 }
