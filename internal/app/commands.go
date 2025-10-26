@@ -26,7 +26,7 @@ If cross-cluster extension controll is wanted, make an extension for it and load
 be immediatly available here when registered with the runtime in insid or whatever binary
 is hosting the insi Runtime.
 */
-func getCommandMap(ctx context.Context, extensionControls []core.ExtensionControl) map[string]CLICmdHandler {
+func getCommandMap(ctx context.Context, session *Session, extensionControls []core.ExtensionControl) map[string]CLICmdHandler {
 	commands := map[string]CLICmdHandler{
 		"exit": func(session *Session, command string, args []string) tea.Cmd {
 			return tea.Quit

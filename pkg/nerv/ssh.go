@@ -246,6 +246,7 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 
 	model := app.New(n.ctx, app.ReplConfig{
 		SessionConfig: app.SessionConfig{
+			IsAdmin:              isAdmin,
 			Logger:               n.logger.WithGroup("ssh").WithGroup(entity.GetName()),
 			UserID:               entity.GetName(),
 			ActiveCursorSymbol:   "█",

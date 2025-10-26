@@ -43,7 +43,8 @@ type Model struct {
 
 	applications AppMap
 
-	commands map[string]CLICmdHandler
+	commands           map[string]CLICmdHandler
+	restrictedCommands map[string]CLICmdHandler
 
 	displayHistory []displayEntry
 
@@ -58,13 +59,14 @@ func New(ctx context.Context, config ReplConfig, applications AppMap, extensionC
 	session := NewSession(ctx, config.SessionConfig, extensionControls, applications)
 
 	return Model{
-		session:      session,
-		ctx:          ctx,
-		buffer:       "",
-		cursor:       0,
-		cursorOn:     true,
-		applications: applications,
-		commands:     getCommandMap(ctx, extensionControls),
+		session:            session,
+		ctx:                ctx,
+		buffer:             "",
+		cursor:             0,
+		cursorOn:           true,
+		applications:       applications,
+		commands:           getCommandMap(ctx, session, extensionControls),
+		restrictedCommands: getRestrictedCommands(ctx, session, extensionControls),
 	}
 }
 

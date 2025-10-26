@@ -16,6 +16,7 @@ import (
 type Session struct {
 	sessionID string
 	userID    string
+	isAdmin   bool
 
 	history       []string
 	historyIndex  int
@@ -31,11 +32,13 @@ type Session struct {
 	sessionRuntimeCtx context.Context
 	virtualFileSystem sessionVFS
 
-	applications AppMap
-	appHelpText  string
+	applications  AppMap
+	appHelpText   string
+	adminHelpText string
 }
 
 type SessionConfig struct {
+	IsAdmin              bool
 	Logger               *slog.Logger
 	UserID               string
 	ActiveCursorSymbol   string
@@ -71,6 +74,7 @@ func NewSession(ctx context.Context, config SessionConfig, extensionControls []c
 		virtualFileSystem: sessionVFS{activeDirectory: "/", fs: config.UserFWI.GetFS()},
 		applications:      applications,
 		appHelpText:       sb.String(),
+		isAdmin:           config.IsAdmin,
 	}
 
 	// Ensure the root directory exists
@@ -254,6 +258,13 @@ func (s *Session) BuildHelpText() string {
 
 	helpText += "\nAvailable Applications:\n\n"
 	helpText += s.appHelpText
+
+	if !s.isAdmin {
+		return helpText
+	}
+
+	helpText += "\nAvailable Entity Commands:\n\n"
+	helpText += getEntityHelpText()
 
 	return helpText
 }
