@@ -141,18 +141,17 @@ func (n *Nerv) authenticateUser(ctx ssh.Context, key ssh.PublicKey) bool {
 	defer aeCancel()
 
 	if isAdmin {
-		adminEntity, err := n.fwi.CreateOrLoadEntity(aeCtx, n.nodeId, models.Limits{
-			BytesOnDisk:   nervEntityLimits.BytesOnDisk,
-			BytesInMemory: nervEntityLimits.BytesInMemory,
-			EventsEmitted: nervEntityLimits.EventsEmitted,
-			Subscribers:   nervEntityLimits.Subscribers,
-		})
+
+		/*
+			This entity is for maintaining admin session and configuration information
+		*/
+
+		adminEntity, err := n.createAdminEntity(aeCtx)
 		if err != nil {
-			n.logger.Error("Failed to create/load admin entity", "error", err)
+			n.logger.Error("Failed to create admin entity", "error", err)
 			return false
-		} else {
-			n.logger.Info("Admin entity created/loaded", "entity", adminEntity.GetName())
 		}
+
 		entity = adminEntity
 
 		keys, err := entity.ListPublicKeys(aeCtx)
