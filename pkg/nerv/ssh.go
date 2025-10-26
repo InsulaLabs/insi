@@ -92,13 +92,18 @@ func (n *Nerv) initializeFWI() {
 
 func (n *Nerv) startSSHServer() (err error) {
 
+	if n.nodeCfg.SSHPort == 0 {
+		n.logger.Info("SSH port not configured for this node, skipping SSH server")
+		return nil
+	}
+
 	host, _, err := net.SplitHostPort(n.nodeCfg.PublicBinding)
 	if err != nil {
 		n.logger.Error("Failed to parse public binding for SSH", "binding", n.nodeCfg.PublicBinding, "error", err)
 		return err
 	}
 
-	sshAddr := net.JoinHostPort(host, strconv.Itoa(n.cfg.SSHPort))
+	sshAddr := net.JoinHostPort(host, strconv.Itoa(n.nodeCfg.SSHPort))
 
 	srv, err := wish.NewServer(
 		wish.WithAddress(sshAddr),

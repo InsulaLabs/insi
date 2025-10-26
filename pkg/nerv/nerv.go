@@ -66,12 +66,15 @@ func (n *Nerv) OnCoreReady() {
 }
 
 func (n *Nerv) apexServices() {
-	if err := n.startSSHServer(); err != nil {
-		n.logger.Error("Failed to start SSH server", "error", err)
-	}
+
+	n.logger.Info("Starting apex services", "node_id", n.nodeId)
 }
 
 func (n *Nerv) nodeServices() {
+
+	if err := n.startSSHServer(); err != nil {
+		n.logger.Error("Failed to start SSH server", "error", err)
+	}
 
 	color.HiMagenta("Nerv node services started %s", n.nodeCfg.PublicBinding)
 }

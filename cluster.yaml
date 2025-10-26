@@ -62,23 +62,25 @@ nodes:
     publicBinding: 127.0.0.1:8443
     clientDomain: "localhost"
     nodeSecret: "node0-secret"
+    sshPort: 8222
   node1:
     raftBinding: 127.0.0.1:2223
     privateBinding: 127.0.0.1:8447
     publicBinding: 127.0.0.1:8444
     clientDomain: "localhost"
     nodeSecret: "node1-secret"
+    sshPort: 8223
   node2:
     raftBinding: 127.0.0.1:2224
     privateBinding: 127.0.0.1:8448
     publicBinding: 127.0.0.1:8445
     clientDomain: "localhost"
     nodeSecret: "node2-secret"
+    sshPort: 8224
 
 logging:
   level: "info"
 
-sshPort: 8222
 hostKeyPath: "/Users/bosley/.config/insi/keys/ssh_host_key"
 enableNonAdminSSH: false
 adminSSHKeys:

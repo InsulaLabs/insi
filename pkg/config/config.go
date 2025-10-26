@@ -25,6 +25,7 @@ type Node struct {
 	PublicBinding  string `yaml:"publicBinding"`
 	NodeSecret     string `yaml:"nodeSecret"`
 	ClientDomain   string `yaml:"clientDomain,omitempty"`
+	SSHPort        int    `yaml:"sshPort,omitempty"`
 }
 
 type Cache struct {
@@ -66,7 +67,6 @@ type Cluster struct {
 	Logging          LoggingConfig   `yaml:"logging"`
 
 	AdminSSHKeys      []string `yaml:"adminSSHKeys,omitempty"`
-	SSHPort           int      `yaml:"sshPort,omitempty"`
 	HostKeyPath       string   `yaml:"hostKeyPath,omitempty"`
 	EnableNonAdminSSH bool     `yaml:"enableNonAdminSSH,omitempty"`
 }
@@ -108,7 +108,6 @@ var (
 	ErrSessionsMaxConnectionsMissing           = errors.New("sessions.maxConnections is missing or invalid in config")
 	ErrHostKeyGeneration                       = errors.New("failed to generate SSH host key")
 	ErrApexNodeNotFound                        = errors.New("apexNode specified but does not exist in nodes configuration")
-	ErrApexNodeMissing                         = errors.New("apexNode must be specified when SSH configuration is present (sshPort, hostKeyPath, or adminSSHKeys)")
 )
 
 func generateHostKey(keyPath string) error {
@@ -217,11 +216,6 @@ func LoadConfig(configFile string) (*Cluster, error) {
 		return nil, ErrSessionsMaxConnectionsMissing
 	}
 
-	sshConfigured := cfg.SSHPort > 0 || cfg.HostKeyPath != "" || len(cfg.AdminSSHKeys) > 0
-	if sshConfigured && cfg.ApexNode == "" {
-		return nil, ErrApexNodeMissing
-	}
-
 	if cfg.ApexNode != "" {
 		if _, ok := cfg.Nodes[cfg.ApexNode]; !ok {
 			return nil, ErrApexNodeNotFound
@@ -273,7 +267,6 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 			MaxConnections:           100,
 		},
 		AdminSSHKeys:      []string{},
-		SSHPort:           2222,
 		HostKeyPath:       "keys/ssh_host_key",
 		EnableNonAdminSSH: false,
 	}
@@ -284,14 +277,15 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 		PublicBinding:  "127.0.0.1:7001",
 		NodeSecret:     "node0_secret_please_change_!!!",
 		ClientDomain:   "localhost",
+		SSHPort:        2222,
 	}
-	// Add more nodes if desired for a default multi-node setup example
 	cfg.Nodes["node1"] = Node{
 		RaftBinding:    "127.0.0.1:7002",
 		PrivateBinding: "127.0.0.1:8081",
 		PublicBinding:  "127.0.0.1:7003",
 		NodeSecret:     "node1_secret_please_change_!!!",
 		ClientDomain:   "localhost",
+		SSHPort:        2223,
 	}
 	cfg.Nodes["node2"] = Node{
 		RaftBinding:    "127.0.0.1:7004",
@@ -299,6 +293,7 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 		PublicBinding:  "127.0.0.1:7005",
 		NodeSecret:     "node2_secret_please_change_!!!",
 		ClientDomain:   "localhost",
+		SSHPort:        2224,
 	}
 
 	// The configFile argument is not used by this function to generate the content,
