@@ -9,22 +9,6 @@ import (
 	"github.com/fatih/color"
 )
 
-/*
-
-
-	if c.cfg.ApexNode == "" {
-		c.logger.Info("SSH server disabled - no apex node configured")
-	} else if c.cfg.SSHPort > 0 && c.cfg.HostKeyPath != "" && c.fwi != nil && isApex {
-		c.logger.Info("Starting SSH server on apex node", "apex_node", c.nodeName)
-		if err := c.startSSHServer(); err != nil {
-			c.logger.Error("Failed to start SSH server", "error", err)
-		}
-	} else if c.cfg.SSHPort > 0 && c.cfg.HostKeyPath != "" {
-		c.logger.Info("SSH server not started - this node is not the apex", "current_node", c.nodeName, "apex_node", c.cfg.ApexNode)
-	}
-
-*/
-
 type Nerv struct {
 	fwi     fwi.FWI
 	nodeId  string
@@ -36,32 +20,38 @@ type Nerv struct {
 var _ interfaces.SystemObserver = &Nerv{}
 
 func New(nodeId string, logger *slog.Logger, cfg *config.Cluster, nodeCfg *config.Node) *Nerv {
-	n := &Nerv{
+	return &Nerv{
 		nodeId:  nodeId,
 		logger:  logger,
 		cfg:     cfg,
 		nodeCfg: nodeCfg,
 	}
-
-	return n
 }
 
 func (n *Nerv) OnCoreReady() {
+
+	n.logger.Info("Nerv is ready to start services", "node_id", n.nodeId)
+
+	n.initializeFWI()
+
 	isAPex := n.cfg.ApexNode == n.nodeId
 
 	if isAPex {
-		if err := n.startSSHServer(); err != nil {
-			n.logger.Error("Failed to start SSH server", "error", err)
-		}
-	} else {
-		n.logger.Info("SSH server not started - this node is not the apex", "current_node", n.nodeCfg.RaftBinding, "apex_node", n.cfg.ApexNode)
+		n.logger.Info("Nerv is the apex node, starting apex services", "node_id", n.nodeId)
+		n.apexServices()
 	}
 
-	if isAPex {
-		color.HiCyan("APEX RUNNING %s", n.nodeCfg.PublicBinding)
-	} else {
-		color.HiYellow("NODE %s RUNNING", n.nodeCfg.PublicBinding)
-	}
+	n.logger.Info("Starting Nerv node services", "node_id", n.nodeId)
+	n.nodeServices()
+}
 
-	n.initializeFWI()
+func (n *Nerv) apexServices() {
+	if err := n.startSSHServer(); err != nil {
+		n.logger.Error("Failed to start SSH server", "error", err)
+	}
+}
+
+func (n *Nerv) nodeServices() {
+
+	color.HiMagenta("Nerv node services started %s", n.nodeCfg.PublicBinding)
 }

@@ -28,8 +28,6 @@ const (
 	coreSSHEntityKey       = "core_ssh_entity"
 	coreEntityIsAdminKey   = "core_ssh_entity_is_admin"
 	coreEntityIsAdminValue = "true"
-
-	constNervEntityName = "nerv"
 )
 
 var (
@@ -139,8 +137,11 @@ func (n *Nerv) authenticateUser(ctx ssh.Context, key ssh.PublicKey) bool {
 	var entity fwi.Entity
 	var err error
 
+	aeCtx, aeCancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer aeCancel()
+
 	if isAdmin {
-		adminEntity, err := n.fwi.CreateOrLoadEntity(context.Background(), constNervEntityName, models.Limits{
+		adminEntity, err := n.fwi.CreateOrLoadEntity(aeCtx, n.nodeId, models.Limits{
 			BytesOnDisk:   nervEntityLimits.BytesOnDisk,
 			BytesInMemory: nervEntityLimits.BytesInMemory,
 			EventsEmitted: nervEntityLimits.EventsEmitted,
@@ -149,10 +150,12 @@ func (n *Nerv) authenticateUser(ctx ssh.Context, key ssh.PublicKey) bool {
 		if err != nil {
 			n.logger.Error("Failed to create/load admin entity", "error", err)
 			return false
+		} else {
+			n.logger.Info("Admin entity created/loaded", "entity", adminEntity.GetName())
 		}
 		entity = adminEntity
 
-		keys, err := entity.ListPublicKeys(context.Background())
+		keys, err := entity.ListPublicKeys(aeCtx)
 		if err != nil {
 			n.logger.Error("Failed to list public keys for admin entity", "error", err)
 		} else {
@@ -164,7 +167,7 @@ func (n *Nerv) authenticateUser(ctx ssh.Context, key ssh.PublicKey) bool {
 				}
 			}
 			if !found {
-				if err := entity.AddPublicKey(context.Background(), publicKeyStr); err != nil {
+				if err := entity.AddPublicKey(aeCtx, publicKeyStr); err != nil {
 					n.logger.Warn("Failed to add admin public key to entity", "error", err)
 				} else {
 					n.logger.Info("Added admin public key to admin entity")
@@ -174,7 +177,7 @@ func (n *Nerv) authenticateUser(ctx ssh.Context, key ssh.PublicKey) bool {
 
 		ctx.SetValue(coreEntityIsAdminKey, coreEntityIsAdminValue)
 	} else {
-		entity, err = n.fwi.GetEntityByPublicKey(context.Background(), publicKeyStr)
+		entity, err = n.fwi.GetEntityByPublicKey(aeCtx, publicKeyStr)
 		if err != nil {
 			n.logger.Debug("SSH authentication failed: entity not found for public key", "error", err)
 			return false
