@@ -85,3 +85,11 @@ hostKeyPath: "/Users/bosley/.config/insi/keys/ssh_host_key"
 enableNonAdminSSH: false
 adminSSHKeys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILBtuwwqxwjI2/HF1lF/xMlui5smhTImh/gqTMXa/gxY"
+
+adminEntityLimits:
+  bytesOnDisk: 10737418240
+  bytesInMemory: 10737418240
+  eventsEmitted: 1000000
+  subscribers: 69
+  rpsDataLimit: 183
+  rpsEventLimit: 112

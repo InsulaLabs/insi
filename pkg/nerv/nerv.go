@@ -82,11 +82,15 @@ func (n *Nerv) nodeServices() {
 func (n *Nerv) createAdminEntity(ctx context.Context) (fwi.Entity, error) {
 	adminUserEntityName := fmt.Sprintf("nerv.%s", n.nodeId)
 
+	limits := n.cfg.AdminEntityLimits
+
 	adminEntity, err := n.fwi.CreateOrLoadEntity(ctx, adminUserEntityName, models.Limits{
-		BytesOnDisk:   nervEntityLimits.BytesOnDisk,
-		BytesInMemory: nervEntityLimits.BytesInMemory,
-		EventsEmitted: nervEntityLimits.EventsEmitted,
-		Subscribers:   nervEntityLimits.Subscribers,
+		BytesOnDisk:   &limits.BytesOnDisk,
+		BytesInMemory: &limits.BytesInMemory,
+		EventsEmitted: &limits.EventsEmitted,
+		Subscribers:   &limits.Subscribers,
+		RPSDataLimit:  &limits.RPSDataLimit,
+		RPSEventLimit: &limits.RPSEventLimit,
 	})
 	if err != nil {
 		n.logger.Error("Failed to create/load admin entity", "error", err)

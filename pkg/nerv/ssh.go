@@ -16,7 +16,6 @@ import (
 	"github.com/InsulaLabs/insi/internal/editor"
 	"github.com/InsulaLabs/insi/pkg/client"
 	"github.com/InsulaLabs/insi/pkg/fwi"
-	"github.com/InsulaLabs/insi/pkg/models"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
@@ -32,28 +31,6 @@ const (
 	coreEntityIsAdminKey   = "core_ssh_entity_is_admin"
 	coreEntityIsAdminValue = "true"
 )
-
-var (
-	nervEntityLimits = models.Limits{
-		BytesOnDisk:   ptrFrom[int64](10 * 1024 * 1024 * 1024), // 10GB
-		BytesInMemory: ptrFrom[int64](10 * 1024 * 1024 * 1024), // 10GB
-		EventsEmitted: ptrFrom[int64](1000000),                 // 1 million events
-		Subscribers:   ptrFrom[int64](10000),                   // 10 thousand subscribers
-	}
-)
-
-/*
-This here is a tradeoff from how I set the core user isolatiuon up where the limits might be omitted
-due to null-possible fields in the representation.
-
-Its technically an artifact from the core database itself regarding entity tracking as we are piggy-backing off
-the entity that is used across-cluster where the cluster is of arbitrary size
-
-Architecturally it was easier to just use pointers and permit null
-*/
-func ptrFrom[R any](v R) *R {
-	return &v
-}
 
 func (n *Nerv) initializeFWI() {
 	endpoints := []client.Endpoint{}

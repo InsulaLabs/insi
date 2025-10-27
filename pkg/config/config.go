@@ -49,6 +49,15 @@ type LoggingConfig struct {
 	Level string `yaml:"level"`
 }
 
+type AdminEntityLimits struct {
+	BytesOnDisk   int64 `yaml:"bytesOnDisk"`
+	BytesInMemory int64 `yaml:"bytesInMemory"`
+	EventsEmitted int64 `yaml:"eventsEmitted"`
+	Subscribers   int64 `yaml:"subscribers"`
+	RPSDataLimit  int64 `yaml:"rpsDataLimit"`
+	RPSEventLimit int64 `yaml:"rpsEventLimit"`
+}
+
 type Cluster struct {
 	InstanceSecret   string          `yaml:"instanceSecret"`     // on config load no two nodes should have the same instance secret
 	DefaultLeader    string          `yaml:"defaultLeader"`      // if first time launch, non-leaders will auto-follow this leader - need to set this and
@@ -66,9 +75,10 @@ type Cluster struct {
 	Sessions         SessionsConfig  `yaml:"sessions"`
 	Logging          LoggingConfig   `yaml:"logging"`
 
-	AdminSSHKeys      []string `yaml:"adminSSHKeys,omitempty"`
-	HostKeyPath       string   `yaml:"hostKeyPath,omitempty"`
-	EnableNonAdminSSH bool     `yaml:"enableNonAdminSSH,omitempty"`
+	AdminSSHKeys      []string          `yaml:"adminSSHKeys,omitempty"`
+	HostKeyPath       string            `yaml:"hostKeyPath,omitempty"`
+	EnableNonAdminSSH bool              `yaml:"enableNonAdminSSH,omitempty"`
+	AdminEntityLimits AdminEntityLimits `yaml:"adminEntityLimits"`
 }
 
 type RateLimiterConfig struct {
@@ -108,6 +118,12 @@ var (
 	ErrSessionsMaxConnectionsMissing           = errors.New("sessions.maxConnections is missing or invalid in config")
 	ErrHostKeyGeneration                       = errors.New("failed to generate SSH host key")
 	ErrApexNodeNotFound                        = errors.New("apexNode specified but does not exist in nodes configuration")
+	ErrAdminEntityLimitsBytesOnDiskMissing     = errors.New("adminEntityLimits.bytesOnDisk is missing or invalid in config")
+	ErrAdminEntityLimitsBytesInMemoryMissing   = errors.New("adminEntityLimits.bytesInMemory is missing or invalid in config")
+	ErrAdminEntityLimitsEventsEmittedMissing   = errors.New("adminEntityLimits.eventsEmitted is missing or invalid in config")
+	ErrAdminEntityLimitsSubscribersMissing     = errors.New("adminEntityLimits.subscribers is missing or invalid in config")
+	ErrAdminEntityLimitsRPSDataLimitMissing    = errors.New("adminEntityLimits.rpsDataLimit is missing or invalid in config")
+	ErrAdminEntityLimitsRPSEventLimitMissing   = errors.New("adminEntityLimits.rpsEventLimit is missing or invalid in config")
 )
 
 func generateHostKey(keyPath string) error {
@@ -222,6 +238,25 @@ func LoadConfig(configFile string) (*Cluster, error) {
 		}
 	}
 
+	if cfg.AdminEntityLimits.BytesOnDisk <= 0 {
+		return nil, ErrAdminEntityLimitsBytesOnDiskMissing
+	}
+	if cfg.AdminEntityLimits.BytesInMemory <= 0 {
+		return nil, ErrAdminEntityLimitsBytesInMemoryMissing
+	}
+	if cfg.AdminEntityLimits.EventsEmitted <= 0 {
+		return nil, ErrAdminEntityLimitsEventsEmittedMissing
+	}
+	if cfg.AdminEntityLimits.Subscribers <= 0 {
+		return nil, ErrAdminEntityLimitsSubscribersMissing
+	}
+	if cfg.AdminEntityLimits.RPSDataLimit <= 0 {
+		return nil, ErrAdminEntityLimitsRPSDataLimitMissing
+	}
+	if cfg.AdminEntityLimits.RPSEventLimit <= 0 {
+		return nil, ErrAdminEntityLimitsRPSEventLimitMissing
+	}
+
 	if cfg.HostKeyPath != "" {
 		if _, err := os.Stat(cfg.HostKeyPath); os.IsNotExist(err) {
 			if err := generateHostKey(cfg.HostKeyPath); err != nil {
@@ -269,6 +304,14 @@ func GenerateConfig(configFile string) (*Cluster, error) {
 		AdminSSHKeys:      []string{},
 		HostKeyPath:       "keys/ssh_host_key",
 		EnableNonAdminSSH: false,
+		AdminEntityLimits: AdminEntityLimits{
+			BytesOnDisk:   10 * 1024 * 1024 * 1024,
+			BytesInMemory: 10 * 1024 * 1024 * 1024,
+			EventsEmitted: 1000000,
+			Subscribers:   10000,
+			RPSDataLimit:  1000,
+			RPSEventLimit: 1000,
+		},
 	}
 
 	cfg.Nodes["node0"] = Node{

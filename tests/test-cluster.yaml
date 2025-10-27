@@ -87,3 +87,11 @@ hostKeyPath: "/tmp/insi-test-cluster/keys/ssh_host_key"
 enableNonAdminSSH: false
 adminSSHKeys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINXmvDEC7hY7E0AkELZPeE1onwmnGVjqh2NedtO23Wfi"
+
+adminEntityLimits:
+  bytesOnDisk: 10737418240
+  bytesInMemory: 10737418240
+  eventsEmitted: 1000000
+  subscribers: 10000
+  rpsDataLimit: 1000
+  rpsEventLimit: 1000
