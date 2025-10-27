@@ -69,8 +69,9 @@ func WithRecursiveRemove() RemoveOption {
 }
 
 const (
-	vfsMetaPrefix = "vfs:meta:"
-	vfsDataPrefix = "vfs:data:"
+	vfsMetaPrefix    = "vfs:meta:"
+	vfsBlockPrefix   = "vfs:block:"
+	defaultBlockSize = 8192
 )
 
 // NewVFS creates a new FS instance.
@@ -87,12 +88,13 @@ type vfsImpl struct {
 	logger *slog.Logger
 }
 
-// fileInfoImpl implements the FileInfo interface.
 type fileInfoImpl struct {
 	FileName    string    `json:"name"`
 	FileSize    int64     `json:"size"`
 	FileModTime time.Time `json:"mod_time"`
 	FIsDir      bool      `json:"is_dir"`
+	BlockSize   int       `json:"block_size"`
+	BlockCount  int       `json:"block_count"`
 	path        string
 }
 
@@ -124,20 +126,28 @@ func (v *vfsImpl) Open(ctx context.Context, path string) (File, error) {
 		return nil, fmt.Errorf("cannot open directory: %s", path)
 	}
 
-	data, err := v.vs.Get(ctx, vfsDataPrefix+path)
-	if err != nil {
-		if errors.Is(err, client.ErrKeyNotFound) {
-			// File exists but has no content (empty file)
-			data = ""
-		} else {
-			return nil, fmt.Errorf("failed to get file data: %w", err)
+	fileInfo := info.(*fileInfoImpl)
+	var data []byte
+
+	if fileInfo.BlockCount > 0 {
+		data = make([]byte, 0, fileInfo.FileSize)
+		for i := 0; i < fileInfo.BlockCount; i++ {
+			blockKey := fmt.Sprintf("%s%s:%d", vfsBlockPrefix, path, i)
+			blockData, err := v.vs.Get(ctx, blockKey)
+			if err != nil {
+				if errors.Is(err, client.ErrKeyNotFound) {
+					return nil, fmt.Errorf("missing block %d for file %s", i, path)
+				}
+				return nil, fmt.Errorf("failed to get block %d: %w", i, err)
+			}
+			data = append(data, []byte(blockData)...)
 		}
 	}
 
 	return &fileImpl{
 		vfs:     v,
-		info:    info.(*fileInfoImpl),
-		reader:  bytes.NewReader([]byte(data)),
+		info:    fileInfo,
+		reader:  bytes.NewReader(data),
 		isWrite: false,
 	}, nil
 }
@@ -155,12 +165,13 @@ func (v *vfsImpl) Create(ctx context.Context, path string) (File, error) {
 		}
 	}
 
-	// If file exists, we'll overwrite it. Truncate behavior.
 	info := &fileInfoImpl{
 		FileName:    filepath.Base(path),
 		FileSize:    0,
 		FileModTime: time.Now(),
 		FIsDir:      false,
+		BlockSize:   defaultBlockSize,
+		BlockCount:  0,
 		path:        path,
 	}
 
@@ -212,12 +223,12 @@ func (v *vfsImpl) Remove(ctx context.Context, p string, opts ...RemoveOption) er
 			}
 		}
 	} else {
-		// It's a file, remove its data from KV.
-		if err := v.vs.Delete(ctx, vfsDataPrefix+info.path); err != nil {
-			// Log error but continue to delete metadata.
-			// If key not found, it's not a real error for idempotency.
-			if !errors.Is(err, client.ErrKeyNotFound) {
-				v.logger.Warn("failed to delete blob data, proceeding to delete metadata", "path", p, "error", err)
+		for i := 0; i < info.BlockCount; i++ {
+			blockKey := fmt.Sprintf("%s%s:%d", vfsBlockPrefix, info.path, i)
+			if err := v.vs.Delete(ctx, blockKey); err != nil {
+				if !errors.Is(err, client.ErrKeyNotFound) {
+					v.logger.Warn("failed to delete block, proceeding", "path", p, "block", i, "error", err)
+				}
 			}
 		}
 	}
@@ -345,20 +356,51 @@ func (f *fileImpl) Seek(offset int64, whence int) (int64, error) {
 
 func (f *fileImpl) Close() error {
 	if !f.isWrite || !f.dirty {
-		return nil // Nothing to do
+		return nil
 	}
 
+	ctx := context.Background()
 	data := f.buffer.Bytes()
-	err := f.vfs.vs.Set(context.Background(), vfsDataPrefix+f.info.path, string(data))
-	if err != nil {
-		return fmt.Errorf("failed to save file data: %w", err)
+	totalSize := len(data)
+
+	blockSize := f.info.BlockSize
+	if blockSize == 0 {
+		blockSize = defaultBlockSize
 	}
 
-	// Update metadata
-	f.info.FileSize = int64(len(data))
-	f.info.FileModTime = time.Now()
+	oldBlockCount := f.info.BlockCount
+	newBlockCount := (totalSize + blockSize - 1) / blockSize
+	if newBlockCount == 0 && totalSize == 0 {
+		newBlockCount = 0
+	}
 
-	if err := f.vfs.setMeta(context.Background(), f.info.path, f.info); err != nil {
+	for i := 0; i < newBlockCount; i++ {
+		start := i * blockSize
+		end := start + blockSize
+		if end > totalSize {
+			end = totalSize
+		}
+		blockData := data[start:end]
+		blockKey := fmt.Sprintf("%s%s:%d", vfsBlockPrefix, f.info.path, i)
+		if err := f.vfs.vs.Set(ctx, blockKey, string(blockData)); err != nil {
+			return fmt.Errorf("failed to save block %d: %w", i, err)
+		}
+	}
+
+	for i := newBlockCount; i < oldBlockCount; i++ {
+		blockKey := fmt.Sprintf("%s%s:%d", vfsBlockPrefix, f.info.path, i)
+		if err := f.vfs.vs.Delete(ctx, blockKey); err != nil {
+			if !errors.Is(err, client.ErrKeyNotFound) {
+				f.vfs.logger.Warn("failed to delete old block", "path", f.info.path, "block", i, "error", err)
+			}
+		}
+	}
+
+	f.info.FileSize = int64(totalSize)
+	f.info.FileModTime = time.Now()
+	f.info.BlockCount = newBlockCount
+
+	if err := f.vfs.setMeta(ctx, f.info.path, f.info); err != nil {
 		return fmt.Errorf("failed to update meta on close: %w", err)
 	}
 
