@@ -12,6 +12,7 @@ const (
 	OBJ_TYPE_STRING     ObjType = "string"     // quoted string
 	OBJ_TYPE_NUMBER     ObjType = "number"     // numeric value
 	OBJ_TYPE_IDENTIFIER ObjType = "identifier" // unquoted identifier
+	OBJ_TYPE_FN         ObjType = "fn"         // something that can be called
 )
 
 type List []Obj
@@ -23,6 +24,11 @@ type Error struct {
 }
 type Number float64
 type Identifier string
+
+type Fn struct {
+	Identifier string
+	Function   Callable
+}
 
 type Obj struct {
 	Type ObjType
@@ -62,6 +68,9 @@ func (o Obj) Encode() string {
 		return fmt.Sprintf("%g", float64(num))
 	case OBJ_TYPE_IDENTIFIER:
 		return string(o.D.(Identifier))
+	case OBJ_TYPE_FN:
+		fn := o.D.(Fn)
+		return fmt.Sprintf("fn:%s", fn.Identifier)
 	case OBJ_TYPE_ERROR:
 		err := o.D.(Error)
 		return fmt.Sprintf("ERROR:%d:%s", err.Position, err.Message)
