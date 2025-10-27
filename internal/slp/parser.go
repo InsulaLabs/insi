@@ -12,26 +12,26 @@ const (
 )
 
 type Parser struct {
-	target   string
-	position int
+	Target   string
+	Position int
 }
 
 func (p *Parser) Parse() Obj {
 	p.skipWhitespace()
 
-	if p.position >= len(p.target) {
+	if p.Position >= len(p.Target) {
 		return Obj{Type: OBJ_TYPE_NONE, D: None{}}
 	}
 
-	switch p.target[p.position] {
+	switch p.Target[p.Position] {
 	case '(':
 		return p.parseList()
 	case '\'':
-		p.position++        // consume the quote
+		p.Position++        // consume the quote
 		quoted := p.Parse() // parse the expression after the quote
 		return Obj{Type: OBJ_TYPE_SOME, D: Some(quoted)}
 	case '_':
-		p.position++
+		p.Position++
 		return Obj{Type: OBJ_TYPE_NONE, D: None{}}
 	default:
 		return p.parseSome()
@@ -39,20 +39,20 @@ func (p *Parser) Parse() Obj {
 }
 
 func (p *Parser) parseList() Obj {
-	listStart := p.position
-	p.position++ // skip '('
+	listStart := p.Position
+	p.Position++ // skip '('
 	var items List
 
-	for p.position < len(p.target) {
+	for p.Position < len(p.Target) {
 		p.skipWhitespace()
-		if p.position >= len(p.target) {
+		if p.Position >= len(p.Target) {
 			return Obj{Type: OBJ_TYPE_ERROR, D: Error{
 				Position: listStart,
 				Message:  "unclosed list",
 			}}
 		}
-		if p.target[p.position] == ')' {
-			p.position++ // skip ')'
+		if p.Target[p.Position] == ')' {
+			p.Position++ // skip ')'
 			return Obj{Type: OBJ_TYPE_LIST, D: items}
 		}
 		item := p.Parse()
@@ -69,19 +69,19 @@ func (p *Parser) parseList() Obj {
 }
 
 func (p *Parser) parseSome() Obj {
-	if p.target[p.position] == '"' {
+	if p.Target[p.Position] == '"' {
 		return p.parseQuotedString()
 	}
 
-	start := p.position
-	for p.position < len(p.target) &&
-		p.target[p.position] != ' ' &&
-		p.target[p.position] != ')' &&
-		p.target[p.position] != '(' {
-		p.position++
+	start := p.Position
+	for p.Position < len(p.Target) &&
+		p.Target[p.Position] != ' ' &&
+		p.Target[p.Position] != ')' &&
+		p.Target[p.Position] != '(' {
+		p.Position++
 	}
 
-	value := p.target[start:p.position]
+	value := p.Target[start:p.Position]
 
 	// Check if it's a number
 	if num, ok := parseNumber(value); ok {
@@ -93,24 +93,24 @@ func (p *Parser) parseSome() Obj {
 }
 
 func (p *Parser) parseQuotedString() Obj {
-	p.position++ // skip opening quote
-	start := p.position
+	p.Position++ // skip opening quote
+	start := p.Position
 
-	for p.position < len(p.target) {
-		if p.target[p.position] == '"' {
+	for p.Position < len(p.Target) {
+		if p.Target[p.Position] == '"' {
 			// Check if it's escaped
 			escapeCount := 0
-			for i := p.position - 1; i >= start && p.target[i] == '\\'; i-- {
+			for i := p.Position - 1; i >= start && p.Target[i] == '\\'; i-- {
 				escapeCount++
 			}
 			if escapeCount%2 == 0 {
-				value := p.target[start:p.position]
-				p.position++ // skip closing quote
+				value := p.Target[start:p.Position]
+				p.Position++ // skip closing quote
 				unescaped := unescapeString(value)
 				return Obj{Type: OBJ_TYPE_STRING, D: unescaped}
 			}
 		}
-		p.position++
+		p.Position++
 	}
 
 	return Obj{Type: OBJ_TYPE_ERROR, D: Error{
@@ -205,7 +205,7 @@ func parseFloat(s string) (float64, error) {
 }
 
 func (p *Parser) skipWhitespace() {
-	for p.position < len(p.target) && p.target[p.position] == ' ' {
-		p.position++
+	for p.Position < len(p.Target) && p.Target[p.Position] == ' ' {
+		p.Position++
 	}
 }
