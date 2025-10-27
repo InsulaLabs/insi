@@ -58,6 +58,8 @@ type KV interface {
 	PushScope(scope string)
 
 	PopScope() // if scope prefix is empty its a no-op
+
+	GetScope() string
 }
 
 type Events interface {
@@ -246,6 +248,10 @@ func (e *entityImpl) GetValueStore() KV {
 		insiClient: e.insiClient,
 		logger:     e.logger.WithGroup("vs"),
 	}
+}
+
+func (e *valueStoreImpl) GetScope() string {
+	return e.scope
 }
 
 func (e *entityImpl) GetCacheStore() KV {
@@ -495,6 +501,10 @@ func (e *cacheStoreImpl) PushScope(scope string) {
 	} else {
 		e.scope = e.scope + "." + scope
 	}
+}
+
+func (e *cacheStoreImpl) GetScope() string {
+	return e.scope
 }
 
 func (e *cacheStoreImpl) PopScope() {
