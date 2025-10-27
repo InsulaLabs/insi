@@ -16,10 +16,19 @@ type EndpointOperation int
 // Non-system-root entities
 
 type EntityInsight interface {
-	GetEntity(rootApiKey string) (models.Entity, error)
+	// Retrieve an entity from a root api key
+	GetRootEntity(rootApiKey string) (models.Entity, error)
+
+	// Retrieve a range of entities (paginated)
 	GetEntities(offset, limit int) ([]models.Entity, error)
+
+	// Retrieve an entity from an api key alias
 	GetEntityByAlias(alias string) (models.Entity, error)
+
+	// Retrieve an entity from a data scope uuid (from a decomposed alias)
 	GetEntityByDataScopeUUID(dataScopeUUID string) (models.Entity, error)
+
+	// Retrieve an entity from a key uuid (from a decomposed alias)
 	GetEntityByKeyUUID(keyUUID string) (models.Entity, error)
 }
 
@@ -92,7 +101,7 @@ func (c *Core) getEntity(keyUUID, apiKey, dataScopeUUID string) (models.Entity, 
 var _ EntityInsight = &Core{}
 
 // rootApiKey is the non-alias non-system-root api key for the entity
-func (c *Core) GetEntity(rootApiKey string) (models.Entity, error) {
+func (c *Core) GetRootEntity(rootApiKey string) (models.Entity, error) {
 	td, err := c.decomposeKey(rootApiKey)
 	if err != nil {
 		return models.Entity{}, errors.New("invalid api key")
@@ -185,7 +194,7 @@ func (c *Core) getEntityHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity, err := c.GetEntity(req.RootApiKey)
+	entity, err := c.GetRootEntity(req.RootApiKey)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return

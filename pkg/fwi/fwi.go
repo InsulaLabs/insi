@@ -2,6 +2,8 @@ package fwi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/InsulaLabs/insi/pkg/client"
@@ -27,9 +30,12 @@ var (
 	errEntityNotFound = errors.New("entity not found")
 
 	entityCacheTTL      = time.Minute * 1
-	entityCacheCapacity = 2048
+	entityCacheCapacity = 4092
 
 	maxEntityFullIterationScan = 8192
+
+	entityManifestHashUpdateInterval = time.Minute * 1
+	entityManifestHashUpdateTimeout  = time.Second * 30
 )
 
 // Abstracts
@@ -109,6 +115,8 @@ type Entity interface {
 // We store the entities and load them by name so we can re-access their data scope
 // The FWI interace is
 type FWI interface {
+	GetEntityManifestHash(ctx context.Context) (string, error)
+
 	// Creates an api key as an admin
 	CreateEntity(
 		ctx context.Context,
@@ -128,6 +136,8 @@ type FWI interface {
 
 	// Load all created entities (we wont have thousands so no need for pagination)
 	GetAllEntities(ctx context.Context) ([]Entity, error)
+
+	GetRangeOfEntities(ctx context.Context, offset, limit int) ([]Entity, error)
 
 	// Load an entity by name
 	GetEntity(ctx context.Context, name string) (Entity, error)
@@ -188,11 +198,15 @@ type fwiImpl struct {
 	insiCfg               *client.Config
 	rootInsiClient        *client.Client
 	cleanDerivationClient *client.Client
-	entities              map[string]Entity
 	mu                    sync.RWMutex
 	logger                *slog.Logger
 
-	entityCache *ttlcache.Cache[string, Entity]
+	entityCacheByName      *ttlcache.Cache[string, Entity]
+	entityCacheByPublicKey *ttlcache.Cache[string, Entity]
+
+	entityManifestHash string
+	lastHashUpdate     time.Time
+	isUpdatingHash     atomic.Bool
 }
 
 type entityRecord struct {
@@ -619,39 +633,34 @@ func NewFWI(insiCfg *client.Config, logger *slog.Logger) (FWI, error) {
 		return nil, fmt.Errorf("failed to create clean derivation insi client: %w", err)
 	}
 
-	entityCache := ttlcache.New[string, Entity](
+	entityCacheByName := ttlcache.New[string, Entity](
 		ttlcache.WithTTL[string, Entity](entityCacheTTL),
 		ttlcache.WithDisableTouchOnHit[string, Entity](),
 		ttlcache.WithCapacity[string, Entity](uint64(entityCacheCapacity)),
 	)
-	go entityCache.Start()
+	go entityCacheByName.Start()
+
+	entityCacheByPublicKey := ttlcache.New[string, Entity](
+		ttlcache.WithTTL[string, Entity](entityCacheTTL),
+		ttlcache.WithDisableTouchOnHit[string, Entity](),
+		ttlcache.WithCapacity[string, Entity](uint64(entityCacheCapacity)),
+	)
+	go entityCacheByPublicKey.Start()
 
 	f := &fwiImpl{
-		rootInsiClient:        rootInsiClient,
-		cleanDerivationClient: cleanDerivationClient,
-		entities:              make(map[string]Entity),
-		logger:                l,
-		insiCfg:               insiCfg,
-		entityCache:           entityCache,
+		rootInsiClient:         rootInsiClient,
+		cleanDerivationClient:  cleanDerivationClient,
+		logger:                 l,
+		insiCfg:                insiCfg,
+		entityCacheByName:      entityCacheByName,
+		entityCacheByPublicKey: entityCacheByPublicKey,
 	}
 
 	if _, err := f.rootInsiClient.Ping(); err != nil {
 		return nil, err
 	}
 
-	// load the entites that are already created
-	entities, err := f.GetAllEntities(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
-	for _, entity := range entities {
-		f.mu.Lock()
-		f.entities[entity.GetName()] = entity
-		f.mu.Unlock()
-	}
-
-	l.Info("FWI initialized", "loaded_entities", len(entities))
+	l.Info("FWI initialized")
 	return f, nil
 }
 
@@ -748,9 +757,7 @@ func (f *fwiImpl) CreateEntity(
 		logger:         f.logger.WithGroup("entity").WithGroup(name),
 	}
 
-	f.mu.Lock()
-	f.entities[name] = entity
-	f.mu.Unlock()
+	f.entityCacheByName.Set(name, entity, entityCacheTTL)
 
 	return entity, nil
 }
@@ -760,26 +767,12 @@ func (f *fwiImpl) CreateOrLoadEntity(
 	name string,
 	maxlimits models.Limits,
 ) (Entity, error) {
-	// First, check the in-memory cache for the entity.
-	f.mu.RLock()
-	entity, ok := f.entities[name]
-	f.mu.RUnlock()
-	if ok {
-		return entity, nil
-	}
-
-	// If not in cache, try to load from the database by iterating and checking the name field.
 	entity, err := f.findEntityByName(ctx, name)
 	if err == nil {
-		// Found it in the DB. Cache it locally and return.
-		f.mu.Lock()
-		f.entities[name] = entity
-		f.mu.Unlock()
 		return entity, nil
 	}
 
 	if !errors.Is(err, errEntityNotFound) {
-		// An unexpected error occurred during the search.
 		return nil, err
 	}
 
@@ -794,9 +787,73 @@ func (f *fwiImpl) CreateOrLoadEntity(
 	return entity, nil
 }
 
+func (f *fwiImpl) GetEntityManifestHash(ctx context.Context) (string, error) {
+
+	if !f.lastHashUpdate.IsZero() && time.Since(f.lastHashUpdate) < entityManifestHashUpdateInterval && f.entityManifestHash != "" {
+		return f.entityManifestHash, nil
+	}
+
+	/*
+		Check that this instance isn't already updating the hash
+		- Stores true to indicate we are updating
+
+		Whis operation can be taxing if we have tens of thousands of entites, but this is an admin-level operation
+		that will only happen when we need to sync manifests so for now it doesn't need to be optimized to accomplish the goal
+	*/
+	if f.isUpdatingHash.Swap(true) {
+		if f.entityManifestHash != "" {
+			// Only happens if two GetEntityManifestHash are called immediatly at a startup scenario
+			return "", errors.New("hash is being calculated for first time still, wait a moment")
+		}
+		return f.entityManifestHash, nil
+	}
+
+	defer f.isUpdatingHash.Store(false)
+
+	entities, err := f.GetAllEntities(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	hasher := sha256.New()
+	for _, entity := range entities {
+		hasher.Write([]byte(entity.GetKey()))
+	}
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	f.entityManifestHash = hash
+	f.lastHashUpdate = time.Now()
+
+	return hash, nil
+}
+
 func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
+
+	entities, err := f.GetRangeOfEntities(ctx, 0, maxEntityFullIterationScan)
+	if err != nil {
+		return nil, err
+	}
+
+	return entities, nil
+}
+
+func (f *fwiImpl) GetRangeOfEntities(ctx context.Context, offset, limit int) ([]Entity, error) {
+
+	if limit > maxEntityFullIterationScan {
+		limit = maxEntityFullIterationScan
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = maxEntityFullIterationScan
+	}
+	if offset > limit {
+		return []Entity{}, nil
+	}
+
 	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
-		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, maxEntityFullIterationScan)
+		return f.rootInsiClient.IterateByPrefix(EntityPrefix, offset, limit)
 	})
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
@@ -838,28 +895,13 @@ func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 }
 
 func (f *fwiImpl) GetEntity(ctx context.Context, name string) (Entity, error) {
-	// Check the local in-memory map first for performance.
-	f.mu.RLock()
-	entity, ok := f.entities[name]
-	f.mu.RUnlock()
-	if ok {
-		return entity, nil
-	}
 
-	// If not found in cache, it may have been created by another process.
-	// Fall back to searching the database by iterating.
-	f.logger.Info("Entity not in local cache, searching database", "name", name)
+	/// the findEntityByName will cache
 	entity, err := f.findEntityByName(ctx, name)
 	if err != nil {
 		// This will be errEntityNotFound if it's not in the DB.
 		return nil, err
 	}
-
-	// Found it in the DB, so we cache it for future requests.
-	f.mu.Lock()
-	f.entities[name] = entity
-	f.mu.Unlock()
-
 	return entity, nil
 }
 
@@ -892,7 +934,26 @@ func (f *fwiImpl) DeleteEntity(ctx context.Context, name string) error {
 		return fmt.Errorf("failed to delete entity api key: %w", err)
 	}
 
-	delete(f.entities, name)
+	cleanupGroup := sync.WaitGroup{}
+	cleanupGroup.Add(1)
+	go func() {
+		defer cleanupGroup.Done()
+		publicKeys, err := entity.ListPublicKeys(ctx)
+		if err != nil {
+			return
+		}
+		for _, publicKey := range publicKeys {
+			f.entityCacheByPublicKey.Delete(publicKey)
+		}
+	}()
+
+	go func() {
+		defer cleanupGroup.Done()
+		f.entityCacheByName.Delete(name)
+	}()
+
+	cleanupGroup.Wait()
+
 	f.logger.Info("Successfully deleted entity", "name", name, "uuid", entityUUID)
 
 	return nil
@@ -902,6 +963,7 @@ func (f *fwiImpl) UpdateEntityLimits(
 	ctx context.Context,
 	name string,
 	newLimits models.Limits,
+
 ) error {
 	entity, err := f.GetEntity(ctx, name)
 	if err != nil {
@@ -969,6 +1031,12 @@ func (f *fwiImpl) GetOpsPerSecond(ctx context.Context) (*models.OpsPerSecondCoun
 }
 
 func (f *fwiImpl) GetEntityByPublicKey(ctx context.Context, publicKey string) (Entity, error) {
+
+	item := f.entityCacheByPublicKey.Get(publicKey)
+	if item != nil {
+		return item.Value(), nil
+	}
+
 	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
 		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, maxEntityFullIterationScan)
 	})
@@ -1006,9 +1074,7 @@ func (f *fwiImpl) GetEntityByPublicKey(ctx context.Context, publicKey string) (E
 					logger:         f.logger.WithGroup("entity").WithGroup(er.Name),
 				}
 
-				f.mu.Lock()
-				f.entities[er.Name] = entity
-				f.mu.Unlock()
+				f.entityCacheByPublicKey.Set(publicKey, entity, entityCacheTTL)
 
 				return entity, nil
 			}
@@ -1020,7 +1086,7 @@ func (f *fwiImpl) GetEntityByPublicKey(ctx context.Context, publicKey string) (E
 
 func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, error) {
 
-	item := f.entityCache.Get(name)
+	item := f.entityCacheByName.Get(name)
 	if item != nil {
 		return item.Value(), nil
 	}
@@ -1061,7 +1127,7 @@ func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, er
 				logger:         f.logger.WithGroup("entity").WithGroup(er.Name),
 			}
 
-			f.entityCache.Set(name, entity, entityCacheTTL)
+			f.entityCacheByName.Set(name, entity, entityCacheTTL)
 
 			return entity, nil
 		}

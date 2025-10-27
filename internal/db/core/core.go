@@ -64,7 +64,7 @@ type Extension interface {
 		This way the runtime can control various aspects
 		of any given extension
 	*/
-	GetContorller() ExtensionControl
+	GetController() ExtensionControl
 }
 
 type AccessEntity bool

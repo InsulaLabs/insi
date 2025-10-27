@@ -133,7 +133,7 @@ func (e *Extension) ReceiveInsightInterface(insight core.EntityInsight) {
 	e.insight = insight
 }
 
-func (e *Extension) GetContorller() core.ExtensionControl {
+func (e *Extension) GetController() core.ExtensionControl {
 	return e
 }
 

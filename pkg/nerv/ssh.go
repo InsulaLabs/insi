@@ -239,7 +239,7 @@ func (n *Nerv) newSession(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 
 	extensionControls := make([]core.ExtensionControl, len(n.extensions))
 	for i, extension := range n.extensions {
-		extensionControls[i] = extension.GetContorller()
+		extensionControls[i] = extension.GetController()
 	}
 
 	entityFS := entity.GetFS()
