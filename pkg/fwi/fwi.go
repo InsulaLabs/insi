@@ -65,7 +65,7 @@ type KV interface {
 type Events interface {
 	Subscribe(ctx context.Context, topic string, onEvent func(data any)) error
 	Publish(ctx context.Context, topic string, data any) error
-	Purge(ctx context.Context) (int, error) // Purges subscriptions across ALL nodes
+	Unsubscribe(ctx context.Context, topic string) error
 
 	PushScope(scope string)
 	PopScope()
@@ -529,11 +529,8 @@ func (e *eventsImpl) Publish(ctx context.Context, topic string, data any) error 
 	})
 }
 
-func (e *eventsImpl) Purge(ctx context.Context) (int, error) {
-	// Purge subscriptions across ALL nodes in the cluster
-	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, e.logger, func() (int, error) {
-		return e.insiClient.PurgeEventSubscriptionsAllNodes()
-	})
+func (e *eventsImpl) Unsubscribe(ctx context.Context, topic string) error {
+	return e.insiClient.UnsubscribeFromTopic(assembleKey(e.scope, topic))
 }
 
 func (e *eventsImpl) PushScope(scope string) {

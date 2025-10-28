@@ -225,6 +225,8 @@ type Client struct {
 	endpointMu             sync.RWMutex
 	enableLeaderStickiness bool
 	disableRedirects       bool
+	activeSubscriptions    map[string]*websocket.Conn
+	subscriptionsMu        sync.RWMutex
 }
 
 /*
@@ -251,6 +253,8 @@ func (c *Client) DeriveWithApiKey(name, apiKey string) *Client {
 		endpoints:              c.endpoints,
 		enableLeaderStickiness: c.enableLeaderStickiness,
 		disableRedirects:       c.disableRedirects,
+		activeSubscriptions:    make(map[string]*websocket.Conn),
+		subscriptionsMu:        sync.RWMutex{},
 	}
 }
 
@@ -387,6 +391,8 @@ func NewClient(cfg *Config) (*Client, error) {
 		endpoints:              cfg.Endpoints,
 		enableLeaderStickiness: cfg.EnableLeaderStickiness,
 		disableRedirects:       cfg.DisableRedirects,
+		activeSubscriptions:    make(map[string]*websocket.Conn),
+		subscriptionsMu:        sync.RWMutex{},
 	}, nil
 }
 
@@ -1275,7 +1281,16 @@ func (c *Client) SubscribeToEvents(topic string, ctx context.Context, onEvent fu
 		return fmt.Errorf("failed to connect to websocket after %d redirects, last url: %s, error: %w", MaximumRedirects, currentWsURL.String(), err)
 	}
 
-	defer conn.Close()
+	c.subscriptionsMu.Lock()
+	c.activeSubscriptions[topic] = conn
+	c.subscriptionsMu.Unlock()
+
+	defer func() {
+		c.subscriptionsMu.Lock()
+		delete(c.activeSubscriptions, topic)
+		c.subscriptionsMu.Unlock()
+		conn.Close()
+	}()
 
 	fmt.Println("Successfully connected to event stream.")
 
@@ -1447,6 +1462,36 @@ func (c *Client) PurgeEventSubscriptionsAllNodes() (int, error) {
 	}
 
 	return totalDisconnected, nil
+}
+
+func (c *Client) UnsubscribeFromTopic(topic string) error {
+	if topic == "" {
+		return fmt.Errorf("topic cannot be empty")
+	}
+
+	c.subscriptionsMu.Lock()
+	conn, exists := c.activeSubscriptions[topic]
+	if !exists {
+		c.subscriptionsMu.Unlock()
+		return fmt.Errorf("no active subscription found for topic: %s", topic)
+	}
+	delete(c.activeSubscriptions, topic)
+	c.subscriptionsMu.Unlock()
+
+	if err := conn.WriteMessage(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+	); err != nil {
+		c.logger.Warn("Failed to send close message to websocket", "topic", topic, "error", err)
+	}
+
+	if err := conn.Close(); err != nil {
+		c.logger.Warn("Failed to close websocket connection", "topic", topic, "error", err)
+		return fmt.Errorf("failed to close connection for topic %s: %w", topic, err)
+	}
+
+	c.logger.Info("Unsubscribed from topic", "topic", topic)
+	return nil
 }
 
 // --- Blob Operations ---
