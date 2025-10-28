@@ -2,7 +2,6 @@ package terminus
 
 import (
 	"github.com/InsulaLabs/insi/pkg/fwi"
-	"github.com/InsulaLabs/insi/pkg/slp"
 )
 
 type VirtualMachine struct {
@@ -23,7 +22,6 @@ type VirtualMachine struct {
 		(get some_scope:x)
 
 	*/
-	fns map[string]slp.Callable
 }
 
 func (x *VirtualMachine) ExecuteCommand(command string) (string, error) {

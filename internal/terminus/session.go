@@ -87,7 +87,6 @@ func NewSession(ctx context.Context, config SessionConfig, extensionControls []c
 	}
 
 	session.vm.session = session
-	session.vm.fns = session.vm.buildFns()
 
 	if err := ensureDirectoryExists(ctx, session.vm.svfs.fs, "/"); err != nil {
 		config.Logger.Warn("Failed to ensure root directory exists", "error", err)
