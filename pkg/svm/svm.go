@@ -2,7 +2,9 @@ package svm
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/InsulaLabs/insi/pkg/fwi"
@@ -34,89 +36,6 @@ Events
 This defines the environment that the machine si working in. I will use this psuedo code to express the idea:
 
 
-//------------------------------------------------------------
-
-(data-scope "some-arbitrary-data-to-scope-operations-to")
-
-
-(interrupt-handler "topic-name-A" data (do
-	(log "Received event on topic 'topic-name-A, with data:'" data)
-))
-
-(interrupt-handler "topic-name-B" data (do
-	(log "Received event on topic 'topic-name-B, with data:'" data)
-))
-
-(every "1s" (do
-	(emit "topic-name-A" "Hello, world!")
-))
-
-(every "5s" (do
-	(emit "topic-name-B", "AYYYYYYY")
-))
-
-
-(every "1s" (do
-
-	; Each "Every" is basically a "main" tick function. All you do is define one of these at the top level
-	; and its body will run each tick
-
-))
-
-(on-init (do
-	(init "topic-name-A")
-	(init "topic-name-B")
-))
-
-
-
-Top level syntax will differ from "inner" syntax to ensure that "every" and "interrupt-handler" are not available unless
-we are parsing the top level scope.
-
-We will essentially be doing a bisection or 2-pass filter on these files to seperate out the setup functions:
-	interrupt-handler "SOME NAME" <data> <body>
-
-	every <duration> <body>
-
-	on-init <body>
-
-These top 3 have some rules as well
-	"every" function if given the same duration but defined in separate blocks will not be guaranteed to be executed synchronously.
-		- I will not pre-merge same-duration bodies in any order as that will inevitably lead to undue complexity for little benefit
-
-	interrupt-handler
-		- This is a body similar to "every" but is executed whenever an event is received by the processor.
-			This definition has a special <data> argument that will be captured by the body of the statement so "data" should
-			be treated by the programmer as a "keyword" as it will be present in every root parse context unabashedly.
-
-	on-init
-		- Similiar to a microcontroller's setup function, this can be used to define actions that run once at the very beginning
-			of vm execution.
-
-	data-scope
-		- sets the data scope for the fwi KVS
-
-
-Available commands inside any "do" list:
-
-(data-scope "test")
-(every "1s" (do
-
-	(try
-		(snx x 0)
-		(log "x already existed (okay)"))
-
-	(log (get x))
-
-
-
-
-
-))
-
-
-The values when stopred into the fwi interface will have to be encoded into the parser's representation of the data so that when they are "gotten" via "get"
-they can be resoled into a workable object
 
 
 */
@@ -134,17 +53,21 @@ type Task struct {
 type SVMProcessDefinition struct {
 	operationDataScope string
 
-	initBody          slp.List
-	tasks             []Task
-	interruptHandlers map[string]slp.List
+	initBody          slp.List                // on init
+	tasks             []Task                  // every
+	interruptHandlers map[string]slp.Callable // interrupt-handler fns
 }
 
 type SVMProcessor struct {
-	logger     *slog.Logger
+	logger *slog.Logger
+
+	processLogger *slog.Logger
+
 	definition SVMProcessDefinition
 	envData    fwi.KV     // cache or value - its irrelevant
 	events     fwi.Events // event pub/sub
 
+	running atomic.Bool
 }
 
 func NewProcessor(
@@ -154,7 +77,8 @@ func NewProcessor(
 	eventsBackend fwi.Events,
 ) SVMProcessor {
 	return SVMProcessor{
-		logger: logger,
+		logger:        logger,
+		processLogger: logger.WithGroup("process"), // this is what "log" keyword logs to
 		definition: SVMProcessDefinition{
 			operationDataScope: instanceScopeId,
 		},
@@ -163,9 +87,25 @@ func NewProcessor(
 	}
 }
 
+func (p *SVMProcessor) LoadDefinition(instructions []byte) error {
+
+	// TODO: Parse && store into processor definition for later interpreting
+	return nil
+}
+
 func (p *SVMProcessor) Run(ctx context.Context) error {
 
+	if p.running.Swap(true) {
+		return errors.New("processor already running")
+	}
+
 	p.logger.Debug("AYYY")
+
+	// TODO:
+	// 1) Call on init, wait until complete success, then
+	//		- this is where subscriptions will explicitly happen as seen above
+	//		- if this fails, the processor will not start and the error will be returned
+	// 2) Kick off all scheduled "every" list task
 
 	return nil
 }

@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/InsulaLabs/insi/pkg/fwi"
 	"github.com/InsulaLabs/insi/pkg/svm"
@@ -227,6 +227,21 @@ func (d *DemoEvents) Purge(ctx context.Context) (int, error) {
 
 func main() {
 
+	var targetFile string
+	flag.StringVar(&targetFile, "file", "", "File to load and run")
+	flag.Parse()
+
+	if targetFile == "" {
+		fmt.Println("no file provided")
+		os.Exit(1)
+	}
+
+	fileContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		fmt.Println("failed to read file", err)
+		os.Exit(1)
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
@@ -245,51 +260,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logger.Info("Starting SVM processor demo")
-
-	// Example: Set up event subscriptions
-	eventsBackend.Subscribe(ctx, "demo-topic", func(data any) {
-		logger.Info("Received event", "topic", "demo-topic", "data", data)
-	})
-
-	// Example: Demonstrate KV operations
-	logger.Info("Demonstrating KV operations...")
-	kvBackend.Set(ctx, "demo-key", "demo-value")
-	if value, err := kvBackend.Get(ctx, "demo-key"); err == nil {
-		logger.Info("KV get/set", "key", "demo-key", "value", value)
+	if err := processor.LoadDefinition(fileContent); err != nil {
+		fmt.Println("failed to load definition", err)
+		os.Exit(1)
 	}
-
-	// Test SetNX (set if not exists)
-	if err := kvBackend.SetNX(ctx, "new-key", "new-value"); err == nil {
-		logger.Info("SetNX succeeded for new key")
-	}
-	if err := kvBackend.SetNX(ctx, "demo-key", "should-fail"); err != nil {
-		logger.Info("SetNX correctly failed for existing key", "error", err)
-	}
-
-	// Test scoping
-	kvBackend.PushScope("scope1")
-	kvBackend.Set(ctx, "scoped-key", "scoped-value")
-	if value, err := kvBackend.Get(ctx, "scoped-key"); err == nil {
-		logger.Info("Scoped KV operation", "scope", kvBackend.GetScope(), "key", "scoped-key", "value", value)
-	}
-	kvBackend.PopScope()
-
-	// Test iteration
-	kvBackend.Set(ctx, "iter-key1", "value1")
-	kvBackend.Set(ctx, "iter-key2", "value2")
-	if keys, err := kvBackend.IterateKeys(ctx, "", 0, 10); err == nil {
-		logger.Info("KV iteration", "keys", keys)
-	}
-
-	// Publish a demo event
-	logger.Info("Publishing demo event...")
-	eventsBackend.Publish(ctx, "demo-topic", "Hello from demo!")
-
-	// Give async event handlers time to complete
-	time.Sleep(100 * time.Millisecond)
-
-	logger.Info("Demo setup complete, starting processor...")
 
 	if err := processor.Run(ctx); err != nil {
 		logger.Error("failed to run processor", "error", err)
