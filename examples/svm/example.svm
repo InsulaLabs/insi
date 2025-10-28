@@ -2,6 +2,8 @@
 ;  This example is the working document being made by bosley. Nobody but bosley should be editing this file.
 ;	This file is a work in progress and is the source of truth for the svm system.
 ;
+;	This file will be read in by "BuildRuntimeFromData" and used to construct
+;	the runtime, containing all defined "processes"
 ;
 ;	define a process with a name,
 ;   then buid the body using the following commands:
@@ -57,6 +59,16 @@
 
 	(on-init (do
 		(bind "test-event" boop-event-handler)
+
+		; store is a call to store some data in the k/v store
+		; similar to setting a variable, just very manually
+		;
+		(store some_topic "test-event")
+		(store some_data "ayyylmao")
+
+		; Note: in the kv the full key is "data-scope.key"
+		; so if we later add a (in "some-scope (do (...))) we 
+		; can easily have ephemeral data scopes
 	))
 
 	(on-kill (do
@@ -66,5 +78,29 @@
 	(static-fn boop-event-handler (topic data) (do
 		(log "Received event on " topic " with data: " data)
 	))
+
+	(every "5s" (do
+		(emit 
+			; Here we load the topic to emit to, and the data to emit
+			; at the call time, so if it changes within the every loop,
+			; the data will reflect the change in the emit
+			;
+			(load some_topic) ; load the topic target at emit time
+			(load some_data)  ; load the data at emit time
+		)
+	))
 )
 
+(startup (do
+	(log "Starting up example processes")
+	(launch "example/beep")
+	(launch "example/boop")
+	(log "Launched example processes")
+	(log "Startup complete")
+))
+
+(shutdown (do
+	(log "Shutting down example processes")
+	(shutdown "example/*") ; showing wildcard for group (also available in startup - static strings)
+	(log "Shutdown complete")
+))

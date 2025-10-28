@@ -29,6 +29,14 @@ type Runtime struct {
 
 	kv     fwi.KV
 	events fwi.Events
+
+	/*
+		Startup shutdown, and process list as to be build by the runtime builder
+		when loading in data
+	*/
+	startupBody  slp.List
+	shutdownBody slp.List
+	processes    map[string]SVMProcess
 }
 
 var _ slp.Env = &Runtime{}
@@ -53,7 +61,17 @@ func (r *Runtime) ResolveCallable(env slp.Env, name string) slp.Obj {
 
 /*
 
- */
+	ALl commands will have to have an implementation or handler in the runtime as the runtime
+	is what actually orchestrates everything. Once a runtime si built from source we startup
+	(the function) and start off all the "every" functions and start supporting the subscriptions
+	etc.
+
+	"set <identifier> <resolved-value>"
+	"get <identifier>" => Obj
+
+	do
+	etc
+*/
 
 func (r *Runtime) GetState() RuntimeState {
 	return r.state

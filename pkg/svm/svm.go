@@ -1,16 +1,5 @@
 package svm
 
-import (
-	"context"
-	"errors"
-	"log/slog"
-	"sync/atomic"
-	"time"
-
-	"github.com/InsulaLabs/insi/pkg/fwi"
-	"github.com/InsulaLabs/insi/pkg/slp"
-)
-
 // simple virtual machine
 
 /*
@@ -34,78 +23,21 @@ Events
 	Subscribe to topic
 
 This defines the environment that the machine si working in. I will use this psuedo code to express the idea:
-
-
-
-
 */
 
-type FunctionDefinition struct {
-	Identifier string
-	Body       slp.List
-}
+/*
+Takes in a byte array of SVM data and builds a Runtime instance from it.
+*/
+func BuildRuntimeFromData(data []byte) (*Runtime, *BuildError) {
 
-type Task struct {
-	EveryDuration time.Duration
-	Do            slp.List
-}
+	// TODO: parse the data into slp object list
+	// Iterate over the objects and handle the top-most level
+	// objects "process" etc to build the processes.
+	// each "process" call will spawn a process builder to construct
+	// and validate the process here.
 
-type SVMProcessDefinition struct {
-	operationDataScope string
+	// The runtime will contain all of the defined processes and
+	// have a startup/shutdown body (see example.svm)
 
-	initBody          slp.List                // on init
-	tasks             []Task                  // every
-	interruptHandlers map[string]slp.Callable // interrupt-handler fns
-}
-
-type SVMProcessor struct {
-	logger *slog.Logger
-
-	processLogger *slog.Logger
-
-	definition SVMProcessDefinition
-	envData    fwi.KV     // cache or value - its irrelevant
-	events     fwi.Events // event pub/sub
-
-	running atomic.Bool
-}
-
-func NewProcessor(
-	instanceScopeId string,
-	logger *slog.Logger,
-	kvBackend fwi.KV,
-	eventsBackend fwi.Events,
-) SVMProcessor {
-	return SVMProcessor{
-		logger:        logger,
-		processLogger: logger.WithGroup("process"), // this is what "log" keyword logs to
-		definition: SVMProcessDefinition{
-			operationDataScope: instanceScopeId,
-		},
-		envData: kvBackend,
-		events:  eventsBackend,
-	}
-}
-
-func (p *SVMProcessor) LoadDefinition(instructions []byte) error {
-
-	// TODO: Parse && store into processor definition for later interpreting
-	return nil
-}
-
-func (p *SVMProcessor) Run(ctx context.Context) error {
-
-	if p.running.Swap(true) {
-		return errors.New("processor already running")
-	}
-
-	p.logger.Debug("AYYY")
-
-	// TODO:
-	// 1) Call on init, wait until complete success, then
-	//		- this is where subscriptions will explicitly happen as seen above
-	//		- if this fails, the processor will not start and the error will be returned
-	// 2) Kick off all scheduled "every" list task
-
-	return nil
+	return nil, nil
 }
