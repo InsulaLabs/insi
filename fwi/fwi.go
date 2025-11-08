@@ -132,6 +132,9 @@ type FWI interface {
 
 	// IsReady returns true if the initial entity sync has completed successfully.
 	IsReady() bool
+
+	// WaitForReady blocks until the initial entity sync completes or the context is cancelled.
+	WaitForReady(ctx context.Context) error
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -893,6 +896,10 @@ func (f *fwiImpl) IsReady() bool {
 	default:
 		return false
 	}
+}
+
+func (f *fwiImpl) WaitForReady(ctx context.Context) error {
+	return f.waitForSync(ctx)
 }
 
 func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, error) {
