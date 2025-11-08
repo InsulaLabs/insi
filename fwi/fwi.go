@@ -526,7 +526,7 @@ func NewFWI(ctx context.Context, insiCfg *client.Config, logger *slog.Logger) (F
 
 	go func() {
 		f.syncOnce.Do(func() {
-			entities, err := f.GetAllEntities(ctx)
+			entities, err := f.loadAllEntitiesFromDB(ctx)
 			if err != nil {
 				f.syncErr = err
 				l.Error("failed to load entities during initialization", "error", err)
@@ -691,17 +691,13 @@ func (f *fwiImpl) CreateOrLoadEntity(
 	return entity, nil
 }
 
-func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
-	if err := f.waitForSync(ctx); err != nil {
-		return nil, err
-	}
-
+func (f *fwiImpl) loadAllEntitiesFromDB(ctx context.Context) ([]Entity, error) {
 	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
 		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
 	})
 	if err != nil {
 		if errors.Is(err, client.ErrKeyNotFound) {
-			return []Entity{}, nil // No entities found is not an error.
+			return []Entity{}, nil
 		}
 		return nil, err
 	}
@@ -735,6 +731,14 @@ func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 	}
 
 	return entities, nil
+}
+
+func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
+	if err := f.waitForSync(ctx); err != nil {
+		return nil, err
+	}
+
+	return f.loadAllEntitiesFromDB(ctx)
 }
 
 func (f *fwiImpl) GetEntity(ctx context.Context, name string) (Entity, error) {
