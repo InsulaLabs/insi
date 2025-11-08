@@ -129,6 +129,9 @@ type FWI interface {
 
 	// GetOpsPerSecond retrieves the current operations-per-second metrics for the node.
 	GetOpsPerSecond(ctx context.Context) (*models.OpsPerSecondCounters, error)
+
+	// IsReady returns true if the initial entity sync has completed successfully.
+	IsReady() bool
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -176,6 +179,10 @@ type fwiImpl struct {
 	entities              map[string]Entity
 	mu                    sync.RWMutex
 	logger                *slog.Logger
+
+	syncComplete chan struct{}
+	syncErr      error
+	syncOnce     sync.Once
 }
 
 type entityRecord struct {
@@ -482,7 +489,16 @@ func (a *aliasesImpl) ListAliases(ctx context.Context) ([]string, error) {
 	})
 }
 
-func NewFWI(insiCfg *client.Config, logger *slog.Logger) (FWI, error) {
+func (f *fwiImpl) waitForSync(ctx context.Context) error {
+	select {
+	case <-f.syncComplete:
+		return f.syncErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func NewFWI(ctx context.Context, insiCfg *client.Config, logger *slog.Logger) (FWI, error) {
 	l := logger.WithGroup("fwi")
 
 	rootInsiClient, err := client.NewClient(insiCfg)
@@ -501,25 +517,33 @@ func NewFWI(insiCfg *client.Config, logger *slog.Logger) (FWI, error) {
 		entities:              make(map[string]Entity),
 		logger:                l,
 		insiCfg:               insiCfg,
+		syncComplete:          make(chan struct{}),
 	}
 
 	if _, err := f.rootInsiClient.Ping(); err != nil {
 		return nil, err
 	}
 
-	// load the entites that are already created
-	entities, err := f.GetAllEntities(context.Background())
-	if err != nil {
-		return nil, err
-	}
+	go func() {
+		f.syncOnce.Do(func() {
+			entities, err := f.GetAllEntities(ctx)
+			if err != nil {
+				f.syncErr = err
+				l.Error("failed to load entities during initialization", "error", err)
+				return
+			}
 
-	for _, entity := range entities {
-		f.mu.Lock()
-		f.entities[entity.GetName()] = entity
-		f.mu.Unlock()
-	}
+			f.mu.Lock()
+			for _, entity := range entities {
+				f.entities[entity.GetName()] = entity
+			}
+			f.mu.Unlock()
 
-	l.Info("FWI initialized", "loaded_entities", len(entities))
+			l.Info("FWI entity sync complete", "loaded_entities", len(entities))
+			close(f.syncComplete)
+		})
+	}()
+
 	return f, nil
 }
 
@@ -528,7 +552,10 @@ func (f *fwiImpl) CreateEntity(
 	name string,
 	maxlimits models.Limits,
 ) (Entity, error) {
-	// To enforce name uniqueness without using it as a key, we must check all existing entities.
+	if err := f.waitForSync(ctx); err != nil {
+		return nil, err
+	}
+
 	existingEntity, err := f.findEntityByName(ctx, name)
 	if err != nil && !errors.Is(err, errEntityNotFound) {
 		return nil, fmt.Errorf("error checking for existing entity: %w", err)
@@ -627,7 +654,10 @@ func (f *fwiImpl) CreateOrLoadEntity(
 	name string,
 	maxlimits models.Limits,
 ) (Entity, error) {
-	// First, check the in-memory cache for the entity.
+	if err := f.waitForSync(ctx); err != nil {
+		return nil, err
+	}
+
 	f.mu.RLock()
 	entity, ok := f.entities[name]
 	f.mu.RUnlock()
@@ -662,6 +692,10 @@ func (f *fwiImpl) CreateOrLoadEntity(
 }
 
 func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
+	if err := f.waitForSync(ctx); err != nil {
+		return nil, err
+	}
+
 	keys, err := client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() ([]string, error) {
 		return f.rootInsiClient.IterateByPrefix(EntityPrefix, 0, 2048)
 	})
@@ -704,7 +738,10 @@ func (f *fwiImpl) GetAllEntities(ctx context.Context) ([]Entity, error) {
 }
 
 func (f *fwiImpl) GetEntity(ctx context.Context, name string) (Entity, error) {
-	// Check the local in-memory map first for performance.
+	if err := f.waitForSync(ctx); err != nil {
+		return nil, err
+	}
+
 	f.mu.RLock()
 	entity, ok := f.entities[name]
 	f.mu.RUnlock()
@@ -730,7 +767,10 @@ func (f *fwiImpl) GetEntity(ctx context.Context, name string) (Entity, error) {
 }
 
 func (f *fwiImpl) DeleteEntity(ctx context.Context, name string) error {
-	// To delete an entity by name, we first have to find it to get its UUID.
+	if err := f.waitForSync(ctx); err != nil {
+		return err
+	}
+
 	entity, err := f.findEntityByName(ctx, name)
 	if err != nil {
 		return err // Will be errEntityNotFound if it doesn't exist.
@@ -769,6 +809,10 @@ func (f *fwiImpl) UpdateEntityLimits(
 	name string,
 	newLimits models.Limits,
 ) error {
+	if err := f.waitForSync(ctx); err != nil {
+		return err
+	}
+
 	entity, err := f.GetEntity(ctx, name)
 	if err != nil {
 		return err // Will be errEntityNotFound if it doesn't exist.
@@ -829,9 +873,22 @@ func (f *fwiImpl) UpdateEntityLimits(
 }
 
 func (f *fwiImpl) GetOpsPerSecond(ctx context.Context) (*models.OpsPerSecondCounters, error) {
+	if err := f.waitForSync(ctx); err != nil {
+		return nil, err
+	}
+
 	return client.WithRetries(ctx, client.CONFIG_MAX_VOID_RETRIES, f.logger, func() (*models.OpsPerSecondCounters, error) {
 		return f.rootInsiClient.GetOpsPerSecond()
 	})
+}
+
+func (f *fwiImpl) IsReady() bool {
+	select {
+	case <-f.syncComplete:
+		return f.syncErr == nil
+	default:
+		return false
+	}
 }
 
 func (f *fwiImpl) findEntityByName(ctx context.Context, name string) (Entity, error) {

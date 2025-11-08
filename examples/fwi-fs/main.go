@@ -74,7 +74,7 @@ func main() {
 	logger.Info("waiting for cluster to initialize...")
 	time.Sleep(5 * time.Second)
 
-	fwiInstance, err := setupFWI(cfg, logger)
+	fwiInstance, err := setupFWI(ctx, cfg, logger)
 	if err != nil {
 		logger.Error("failed to setup FWI", "error", err)
 		rt.Stop()
@@ -244,7 +244,7 @@ func generateClusterConfig(homeDir string) (*config.Cluster, error) {
 	}, nil
 }
 
-func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
+func setupFWI(ctx context.Context, cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 	endpoints := make([]client.Endpoint, 0, len(cfg.Nodes))
 	for _, node := range cfg.Nodes {
 		endpoints = append(endpoints, client.Endpoint{
@@ -287,7 +287,7 @@ func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 	}
 	logger.Info("successfully set limits for the root API key")
 
-	return fwi.NewFWI(
+	return fwi.NewFWI(ctx,
 		&client.Config{
 			ConnectionType: client.ConnectionTypeRandom,
 			Endpoints:      endpoints,
