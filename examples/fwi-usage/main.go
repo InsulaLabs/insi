@@ -101,7 +101,7 @@ func main() {
 
 	// `setupFWI` is a helper that encapsulates the boilerplate of creating the FWI instance.
 	// It creates a root client and uses it to initialize the FWI service.
-	fwiInstance, err := setupFWI(cfg, logger)
+	fwiInstance, err := setupFWI(ctx, cfg, logger)
 	if err != nil {
 		logger.Error("failed to setup FWI", "error", err)
 		rt.Stop() // a failed setup should stop the runtime
@@ -298,7 +298,7 @@ func generateClusterConfig(homeDir string) (*config.Cluster, error) {
 // setupFWI initializes the FWI service client. It handles the creation of a
 // root-level API client that has permissions to create entities, and then
 // initializes the FWI instance which will be used to manage those entities.
-func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
+func setupFWI(ctx context.Context, cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 	// The FWI client needs to know the endpoints of the cluster nodes.
 	endpoints := make([]client.Endpoint, 0, len(cfg.Nodes))
 	for _, node := range cfg.Nodes {
@@ -352,7 +352,7 @@ func setupFWI(cfg *config.Cluster, logger *slog.Logger) (fwi.FWI, error) {
 
 	// NewFWI takes the root client and a base configuration that will be used
 	// for the clients it creates for each entity.
-	return fwi.NewFWI(
+	return fwi.NewFWI(ctx,
 		&client.Config{
 			ConnectionType: client.ConnectionTypeRandom,
 			Endpoints:      endpoints,
